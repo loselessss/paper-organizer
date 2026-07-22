@@ -36,6 +36,7 @@ class AppSettings:
     cloud_max_parallel_requests: int = 1
     cloud_monthly_budget_usd: float = 0.0
     minimum_age_seconds: int = 30
+    scan_interval_seconds: int = 300
 
     def validate(self) -> None:
         if self.schema_version != 1:
@@ -67,6 +68,8 @@ class AppSettings:
             raise ValueError("Cloud provider model names cannot be empty")
         if self.minimum_age_seconds < 0:
             raise ValueError("minimum_age_seconds cannot be negative")
+        if not 5 <= self.scan_interval_seconds <= 3600:
+            raise ValueError("scan_interval_seconds must be between 5 and 3600")
         if self.input_dir and self.library_root:
             input_path = Path(self.input_dir).expanduser().resolve()
             library_path = Path(self.library_root).expanduser().resolve()

@@ -1,6 +1,7 @@
 """Application services that connect UI actions to core and infrastructure."""
 
 from .ai_settings import AiSettingsController, AiSettingsView
+from .analysis_queue import AnalysisQueueItem, AnalysisQueueStore
 from .library_workflow import (
     EditablePaperMetadata,
     LibraryEntry,
@@ -21,6 +22,8 @@ from .summary_service import (
 __all__ = [
     "AiSettingsController",
     "AiSettingsView",
+    "AnalysisQueueItem",
+    "AnalysisQueueStore",
     "EditablePaperMetadata",
     "LibraryEntry",
     "LibraryWorkflowController",

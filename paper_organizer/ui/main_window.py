@@ -10,7 +10,11 @@ from paper_organizer.application.summary_service import ImmediateSummaryControll
 
 from .ai_settings_dialog import AiSettingsDialog
 from .immediate_summary_widget import ImmediateSummaryWidget
-from .library_workflow_widget import CollectionReviewWidget, LibraryWidget
+from .library_workflow_widget import (
+    AnalysisQueueWidget,
+    CollectionReviewWidget,
+    LibraryWidget,
+)
 
 
 class PaperOrganizerWindow(QMainWindow):
@@ -28,15 +32,21 @@ class PaperOrganizerWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.collection_widget = None
+        self.queue_widget = None
         self.library_widget = None
         if library_workflow is not None:
             self.collection_widget = CollectionReviewWidget(library_workflow, self)
+            self.queue_widget = AnalysisQueueWidget(library_workflow, self)
             self.library_widget = LibraryWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
+            self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
             self.tabs.addTab(self.collection_widget, "수집 및 검토")
+            self.tabs.addTab(self.queue_widget, "분석 큐")
             self.tabs.addTab(self.library_widget, "라이브러리")
         self.summary_widget = ImmediateSummaryWidget(immediate_summary, self)
         self.tabs.addTab(self.summary_widget, "즉시 요약")
+        if self.queue_widget is not None:
+            self.queue_widget.summary_requested.connect(self._open_queue_in_summary)
         self.setCentralWidget(self.tabs)
 
         settings_action = QAction("요약 AI 설정...", self)
@@ -47,6 +57,13 @@ class PaperOrganizerWindow(QMainWindow):
 
     def show_ai_settings(self) -> None:
         AiSettingsDialog(self._ai_settings, self).exec_()
+
+    def _open_queue_in_summary(self, path: str) -> None:
+        self.summary_widget.select_pdf(path)
+        self.tabs.setCurrentWidget(self.summary_widget)
+        self.statusBar().showMessage(
+            "분석 큐의 PDF를 빠른 요약에 넣었습니다. 미리보기 전에는 전송되지 않습니다."
+        )
 
     def closeEvent(self, event) -> None:
         collection_busy = bool(

@@ -54,6 +54,13 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             settings.validate()
 
+    def test_scan_interval_is_adjustable_but_bounded(self):
+        AppSettings(scan_interval_seconds=300).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(scan_interval_seconds=4).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(scan_interval_seconds=3601).validate()
+
 
 if __name__ == "__main__":
     unittest.main()

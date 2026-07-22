@@ -8,6 +8,7 @@ from PyQt5.QtCore import QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -17,6 +18,7 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -31,6 +33,7 @@ from paper_organizer.application.library_workflow import (
     ReviewItem,
     ReviewScan,
 )
+from paper_organizer.application.analysis_queue import AnalysisQueueItem
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
@@ -101,6 +104,7 @@ class MetadataForm(QGroupBox):
 
 class CollectionReviewWidget(QWidget):
     library_changed = pyqtSignal()
+    queue_changed = pyqtSignal()
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -109,7 +113,6 @@ class CollectionReviewWidget(QWidget):
         self._worker: _ScanWorker | None = None
         self._schedule_followup = False
         self._auto_timer = QTimer(self)
-        self._auto_timer.setInterval(15_000)
         self._auto_timer.timeout.connect(lambda: self.scan_now(False))
 
         root = QVBoxLayout(self)
@@ -118,12 +121,24 @@ class CollectionReviewWidget(QWidget):
         input_row, self.input_edit = self._path_row(self._browse_input)
         library_row, self.library_edit = self._path_row(self._browse_library)
         sync_row, self.sync_edit = self._path_row(self._browse_sync, allow_clear=True)
-        self.auto_check = QCheckBox("15초 간격으로 가볍게 검색 (분석은 안정된 새 PDF만 1회)")
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItem("저사양/절전", "eco")
+        self.profile_combo.addItem("균형", "balanced")
+        self.profile_combo.addItem("고성능", "performance")
+        self.interval_spin = QSpinBox()
+        self.interval_spin.setRange(5, 3600)
+        self.interval_spin.setSuffix("초")
+        self.interval_spin.setToolTip("5초에서 1시간 사이로 설정할 수 있습니다.")
+        self.profile_combo.currentIndexChanged.connect(self._profile_changed)
+        self.interval_spin.valueChanged.connect(self._apply_timer_interval)
+        self.auto_check = QCheckBox("설정한 주기로 가볍게 검색 (안정된 새 PDF만 1회 분석)")
         save_paths = QPushButton("폴더 설정 저장")
         save_paths.clicked.connect(self._save_paths)
         path_form.addRow("입력 폴더", input_row)
         path_form.addRow("PDF 라이브러리", library_row)
         path_form.addRow("OneDrive JSON 미러", sync_row)
+        path_form.addRow("시스템 부하", self.profile_combo)
+        path_form.addRow("스캔 주기", self.interval_spin)
         path_form.addRow("자동 감시", self.auto_check)
         path_form.addRow("", save_paths)
         root.addWidget(paths)
@@ -191,6 +206,9 @@ class CollectionReviewWidget(QWidget):
         self.input_edit.setText(str(input_dir))
         self.library_edit.setText(str(library_root))
         self.sync_edit.setText(settings.metadata_sync_dir)
+        profile_index = self.profile_combo.findData(settings.resource_profile)
+        self.profile_combo.setCurrentIndex(max(0, profile_index))
+        self.interval_spin.setValue(settings.scan_interval_seconds)
         self.auto_check.setChecked(settings.auto_enabled)
         self._set_auto_enabled(settings.auto_enabled)
 
@@ -219,6 +237,8 @@ class CollectionReviewWidget(QWidget):
                 Path(self.library_edit.text().strip()),
                 auto_enabled=self.auto_check.isChecked(),
                 metadata_sync_dir=Path(sync_text) if sync_text else None,
+                resource_profile=self.profile_combo.currentData(),
+                scan_interval_seconds=self.interval_spin.value(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))
@@ -227,10 +247,21 @@ class CollectionReviewWidget(QWidget):
         self.status_label.setText("폴더 설정을 저장했습니다.")
 
     def _set_auto_enabled(self, enabled: bool) -> None:
+        self._apply_timer_interval()
         if enabled:
             self._auto_timer.start()
         else:
             self._auto_timer.stop()
+
+    def _apply_timer_interval(self) -> None:
+        if hasattr(self, "interval_spin"):
+            self._auto_timer.setInterval(self.interval_spin.value() * 1000)
+
+    def _profile_changed(self) -> None:
+        defaults = {"eco": 300, "balanced": 60, "performance": 15}
+        profile = self.profile_combo.currentData()
+        if profile in defaults:
+            self.interval_spin.setValue(defaults[profile])
 
     def scan_now(self, schedule_followup: bool = True) -> None:
         if self.is_busy():
@@ -263,6 +294,7 @@ class CollectionReviewWidget(QWidget):
         if result.pending_stability and self._schedule_followup:
             self.status_label.setText(self.status_label.text() + " · 잠시 후 한 번 더 확인합니다.")
             QTimer.singleShot(1500, lambda: self.scan_now(False))
+        self.queue_changed.emit()
 
     def _scan_failed(self, message: str) -> None:
         self.status_label.setText(f"검색 실패: {message}")
@@ -329,6 +361,7 @@ class CollectionReviewWidget(QWidget):
             message += f"\nJSON 미러 경고: {result.sync_warning}"
         QMessageBox.information(self, "논문 정리 완료", message)
         self.library_changed.emit()
+        self.queue_changed.emit()
         self.scan_now(False)
 
     def _trash_selected(self) -> None:
@@ -349,6 +382,7 @@ class CollectionReviewWidget(QWidget):
         QMessageBox.information(
             self, "앱 휴지통 이동 완료", f"작업 ID: {operation.operation_id}"
         )
+        self.queue_changed.emit()
         self.scan_now(False)
 
     def _restore_trash(self) -> None:
@@ -369,10 +403,132 @@ class CollectionReviewWidget(QWidget):
             QMessageBox.warning(self, "복원 실패", str(exc))
             return
         QMessageBox.information(self, "복원 완료", f"복원 위치: {restored}")
+        self.queue_changed.emit()
         self.scan_now(True)
 
     def is_busy(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+
+class AnalysisQueueWidget(QWidget):
+    summary_requested = pyqtSignal(str)
+
+    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._items: list[AnalysisQueueItem] = []
+        root = QVBoxLayout(self)
+        note = QLabel(
+            "새로 발견된 PDF가 재시작 후에도 유지되는 분석 대기열입니다. "
+            "AI가 준비되지 않았으면 자동 호출하지 않고 여기에서 기다립니다."
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["우선순위", "상태", "제목", "파일"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemSelectionChanged.connect(self._selection_changed)
+        root.addWidget(self.table, 1)
+        actions = QHBoxLayout()
+        refresh_button = QPushButton("새로고침")
+        self.priority_button = QPushButton("최우선으로 표시")
+        self.summary_button = QPushButton("즉시 요약으로 보내기")
+        self.remove_button = QPushButton("큐에서만 제거")
+        refresh_button.clicked.connect(self.refresh)
+        self.priority_button.clicked.connect(self._toggle_priority)
+        self.summary_button.clicked.connect(self._send_to_summary)
+        self.remove_button.clicked.connect(self._remove_selected)
+        actions.addWidget(refresh_button)
+        actions.addWidget(self.priority_button)
+        actions.addWidget(self.summary_button)
+        actions.addWidget(self.remove_button)
+        actions.addStretch(1)
+        root.addLayout(actions)
+        self.status_label = QLabel()
+        root.addWidget(self.status_label)
+        self._selection_changed()
+        self.refresh()
+
+    def refresh(self) -> None:
+        try:
+            self._items = self._controller.analysis_queue()
+        except Exception as exc:
+            self._items = []
+            self.status_label.setText(f"분석 큐 읽기 실패: {exc}")
+        self.table.setRowCount(len(self._items))
+        status_labels = {
+            "pending_review": "검토 대기",
+            "organized_pending_analysis": "정리됨 · 분석 대기",
+            "analyzing": "분석 중",
+            "completed": "완료",
+            "failed": "실패",
+        }
+        for row, item in enumerate(self._items):
+            values = [
+                "높음" if item.priority else "보통",
+                status_labels.get(item.status, item.status),
+                item.title,
+                item.path,
+            ]
+            for column, value in enumerate(values):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+        self.status_label.setText(f"분석 큐 {len(self._items)}개")
+        self._selection_changed()
+
+    def _selected(self) -> AnalysisQueueItem | None:
+        row = self.table.currentRow()
+        return self._items[row] if 0 <= row < len(self._items) else None
+
+    def _selection_changed(self) -> None:
+        item = self._selected()
+        enabled = item is not None
+        self.priority_button.setEnabled(enabled)
+        self.summary_button.setEnabled(bool(item and Path(item.path).is_file()))
+        self.remove_button.setEnabled(enabled)
+        if item:
+            self.priority_button.setText(
+                "보통 우선순위로 변경" if item.priority else "최우선으로 표시"
+            )
+
+    def _toggle_priority(self) -> None:
+        item = self._selected()
+        if item is None:
+            return
+        try:
+            self._controller.set_queue_priority(item.queue_id, not bool(item.priority))
+        except Exception as exc:
+            QMessageBox.warning(self, "우선순위 변경 실패", str(exc))
+            return
+        self.refresh()
+
+    def _send_to_summary(self) -> None:
+        item = self._selected()
+        if item is None:
+            return
+        if not Path(item.path).is_file():
+            QMessageBox.warning(self, "파일 없음", "큐에 기록된 PDF를 찾을 수 없습니다.")
+            return
+        self.summary_requested.emit(item.path)
+
+    def _remove_selected(self) -> None:
+        item = self._selected()
+        if item is None:
+            return
+        if QMessageBox.question(
+            self,
+            "큐 항목 제거",
+            "분석 큐 기록만 제거합니다. PDF와 색인 JSON은 삭제되지 않습니다. 계속할까요?",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            self._controller.remove_from_queue(item.queue_id)
+        except Exception as exc:
+            QMessageBox.warning(self, "큐 제거 실패", str(exc))
+            return
+        self.refresh()
 
 
 class LibraryWidget(QWidget):

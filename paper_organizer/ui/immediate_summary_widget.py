@@ -231,3 +231,11 @@ class ImmediateSummaryWidget(QWidget):
 
     def is_busy(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+    def select_pdf(self, path: str | Path) -> None:
+        """Load a queued paper without starting or transmitting an AI request."""
+        self.path_edit.setText(str(path))
+        quick_index = self.mode_combo.findData(SummaryMode.QUICK.value)
+        if quick_index >= 0:
+            self.mode_combo.setCurrentIndex(quick_index)
+        self.setFocus()

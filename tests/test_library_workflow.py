@@ -76,6 +76,7 @@ class LibraryWorkflowTests(unittest.TestCase):
             write_pdf(source, academic_pages())
             result = self._scan_twice(controller)
             self.assertEqual(len(result.items), 1)
+            self.assertEqual(controller.analysis_queue()[0].status, "pending_review")
             metadata = EditablePaperMetadata(
                 title="Curated Paper",
                 authors=["A. Researcher"],
@@ -89,10 +90,16 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertTrue(organized.pdf_path.is_file())
             self.assertTrue(organized.sidecar_path.is_file())
             self.assertFalse(source.exists())
+            self.assertEqual(
+                controller.analysis_queue()[0].status, "organized_pending_analysis"
+            )
             index = json.loads((library / "index" / "library.json").read_text(encoding="utf-8"))
             self.assertEqual(index["work_count"], 1)
             mirrored = list((root / "OneDrive" / "Paper JSON" / "sidecars").rglob("*.paper.json"))
             self.assertEqual(len(mirrored), 1)
+            self.assertTrue(
+                (root / "OneDrive" / "Paper JSON" / "state" / "analysis-queue.json").is_file()
+            )
             manifest = json.loads(
                 (root / "OneDrive" / "Paper JSON" / "sync-manifest.json").read_text(
                     encoding="utf-8"
@@ -150,9 +157,14 @@ class LibraryWorkflowTests(unittest.TestCase):
             manifest = json.loads(operation.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["kind"], "unorganized_duplicate")
             self.assertIsNone(manifest["restored_at"])
+            self.assertEqual(len(controller.analysis_queue()), 1)
+            self.assertEqual(
+                controller.analysis_queue()[0].title, "Published Paper"
+            )
             restored = controller.restore_trash(controller.list_trash()[0])
             self.assertTrue(restored.is_file())
             self.assertEqual(controller.list_trash(), [])
+            self.assertEqual(len(controller.analysis_queue()), 2)
 
 
 if __name__ == "__main__":

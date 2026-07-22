@@ -15,6 +15,11 @@ from typing import Any, Iterable
 
 import fitz
 
+from paper_organizer.application.analysis_queue import (
+    AnalysisQueueError,
+    AnalysisQueueItem,
+    AnalysisQueueStore,
+)
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
     build_identity_from_pages,
@@ -397,6 +402,8 @@ class LibraryWorkflowController:
         *,
         auto_enabled: bool,
         metadata_sync_dir: Path | None = None,
+        resource_profile: str | None = None,
+        scan_interval_seconds: int | None = None,
     ) -> AppSettings:
         input_path = input_dir.expanduser().resolve()
         library_path = library_root.expanduser().resolve()
@@ -411,6 +418,10 @@ class LibraryWorkflowController:
             str(metadata_sync_dir.expanduser().resolve()) if metadata_sync_dir else ""
         )
         settings.auto_enabled = bool(auto_enabled)
+        if resource_profile is not None:
+            settings.resource_profile = resource_profile
+        if scan_interval_seconds is not None:
+            settings.scan_interval_seconds = scan_interval_seconds
         save_settings(settings, self._settings_path)
         self._library_cache = None
         return settings
@@ -428,6 +439,7 @@ class LibraryWorkflowController:
         references = tuple(_library_references(library_root)) if library_root.is_dir() else ()
         items: list[ReviewItem] = []
         problems: list[ScanProblem] = []
+        queue_updated = False
         for found in stable:
             cached = self._cache.get(found.path)
             key = (found.observation.size, found.observation.modified_ns)
@@ -447,9 +459,24 @@ class LibraryWorkflowController:
                     duplicate=_best_duplicate(identity, references),
                 )
                 self._cache[found.path] = (*key, item)
+                try:
+                    self._queue().enqueue(
+                        path=item.path,
+                        file_sha256=item.identity.file_sha256,
+                        title=item.metadata.title,
+                    )
+                    queue_updated = True
+                except (OSError, AnalysisQueueError) as exc:
+                    problems.append(ScanProblem(found.path, str(exc)))
                 items.append(item)
             except Exception as exc:
                 problems.append(ScanProblem(found.path, str(exc)))
+        if queue_updated:
+            sync = self.sync_metadata()
+            problems.extend(
+                ScanProblem(library_root, f"JSON 미러: {message}")
+                for message in sync.problems
+            )
         candidate_set = {path.resolve() for path in candidates}
         self._cache = {
             path: value for path, value in self._cache.items() if path.resolve() in candidate_set
@@ -497,8 +524,19 @@ class LibraryWorkflowController:
         self._tracker.forget(source)
         self._cache.pop(source, None)
         self._library_cache = None
+        warnings: list[str] = []
+        try:
+            self._queue().relocate(
+                item.identity.file_sha256,
+                destination,
+                status="organized_pending_analysis",
+                title=metadata.title,
+            )
+        except (OSError, AnalysisQueueError) as exc:
+            warnings.append(f"분석 큐: {exc}")
         sync = self.sync_metadata()
-        warning = "; ".join(sync.problems)
+        warnings.extend(sync.problems)
+        warning = "; ".join(warnings)
         return OrganizedPaper(destination, sidecar, warning)
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
@@ -537,6 +575,11 @@ class LibraryWorkflowController:
             raise LibraryWorkflowError(f"휴지통 이동을 완료하지 못했습니다: {exc}") from None
         self._tracker.forget(source)
         self._cache.pop(source, None)
+        try:
+            self._queue().remove(f"sha256:{item.identity.file_sha256}")
+        except AnalysisQueueError:
+            pass
+        self.sync_metadata()
         return TrashOperation(operation_id, manifest, destination)
 
     def list_trash(self) -> list[TrashEntry]:
@@ -598,7 +641,32 @@ class LibraryWorkflowController:
                 shutil.move(str(destination), str(trashed))
             raise LibraryWorkflowError(f"복원 기록을 저장하지 못했습니다: {exc}") from None
         self._tracker.forget(destination)
+        try:
+            self._queue().enqueue(
+                path=destination,
+                file_sha256=str(data["sha256"]),
+                title=destination.stem,
+            )
+        except (OSError, AnalysisQueueError):
+            pass
+        self.sync_metadata()
         return destination
+
+    def analysis_queue(self) -> list[AnalysisQueueItem]:
+        return self._queue().load()
+
+    def set_queue_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
+        item = self._queue().set_priority(queue_id, high)
+        self.sync_metadata()
+        return item
+
+    def remove_from_queue(self, queue_id: str) -> None:
+        self._queue().remove(queue_id)
+        self.sync_metadata()
+
+    def _queue(self) -> AnalysisQueueStore:
+        _input_dir, root = self.configured_paths()
+        return AnalysisQueueStore(root)
 
     def list_library(self, query: str = "") -> list[LibraryEntry]:
         _input_dir, root = self.configured_paths()
@@ -692,7 +760,7 @@ class LibraryWorkflowController:
         sources: list[tuple[Path, Path]] = []
         for sidecar in iter_sidecars(root):
             sources.append((sidecar, Path("sidecars") / sidecar.relative_to(root / "papers")))
-        for section in ("index", "history"):
+        for section in ("index", "history", "state"):
             section_root = root / section
             if section_root.is_dir():
                 for source in section_root.rglob("*.json"):
