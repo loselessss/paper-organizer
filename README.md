@@ -17,10 +17,13 @@ Windows에서 다운로드한 학술 PDF를 로컬에서 판별·정리하고 JS
 ## 개발 실행
 
 ```powershell
+git clone --recurse-submodules <paper-organizer-repository-url>
 python -m unittest discover -s tests -v
 python run.py identity "C:\path\to\paper.pdf"
 python run.py reindex "C:\path\to\library"
 ```
 
-GUI와 sPDF submodule 통합은 다음 구현 단계에서 추가합니다. 요약용 Ollama
-모델은 설치본에 포함하지 않고 설치 후 사용자가 선택해 다운로드하도록 설계합니다.
+`vendor/spdf`는 sPDF `main`을 추적하는 submodule입니다. GUI 브리지는 지연
+로딩하므로 PyQt5가 없는 코어 테스트 환경에서도 패키지를 가져올 수 있습니다.
+요약용 Ollama 모델은 설치본에 포함하지 않고 설치 후 사용자가 선택해
+다운로드하도록 설계합니다.

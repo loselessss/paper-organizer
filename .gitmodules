@@ -1,0 +1,4 @@
+[submodule "vendor/spdf"]
+	path = vendor/spdf
+	url = https://github.com/loselessss/sPDF.git
+	branch = main
