@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-organizer"
-version = "0.2.1"
+version = "0.3.0"
 description = "Local-first academic PDF organizer and searchable JSON library"
 readme = "README.md"
 requires-python = ">=3.12"

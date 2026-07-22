@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, QTimer, pyqtSignal
@@ -34,6 +35,7 @@ from paper_organizer.application.library_workflow import (
     ReviewScan,
 )
 from paper_organizer.application.analysis_queue import AnalysisQueueItem
+from paper_organizer.application.cloud_metadata_sync import MetadataConflict
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
@@ -532,6 +534,8 @@ class AnalysisQueueWidget(QWidget):
 
 
 class LibraryWidget(QWidget):
+    metadata_changed = pyqtSignal()
+
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
@@ -623,6 +627,7 @@ class LibraryWidget(QWidget):
             status += f" OneDrive JSON 미러 경고: {updated.sync_warning}"
         self.refresh()
         self.status_label.setText(status)
+        self.metadata_changed.emit()
 
     def _open_selected(self) -> None:
         entry = self._selected()
@@ -631,3 +636,124 @@ class LibraryWidget(QWidget):
                 open_pdf(entry.pdf_path, self)
             except Exception as exc:
                 QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+
+
+class CloudSyncWidget(QWidget):
+    metadata_changed = pyqtSignal()
+
+    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._conflicts: list[MetadataConflict] = []
+        root = QVBoxLayout(self)
+        note = QLabel(
+            "로컬 sidecar는 원본으로 보존하고, OneDrive의 portable-library.json은 "
+            "클라우드 편집용으로 사용합니다. 양쪽이 모두 바뀐 경우에만 여기에서 선택합니다."
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["논문", "충돌 유형", "설명"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemSelectionChanged.connect(self._selection_changed)
+        root.addWidget(self.table, 1)
+        comparison = QHBoxLayout()
+        local_group = QGroupBox("로컬 원본")
+        local_layout = QVBoxLayout(local_group)
+        self.local_json = QTextEdit()
+        self.local_json.setReadOnly(True)
+        local_layout.addWidget(self.local_json)
+        cloud_group = QGroupBox("클라우드 편집본")
+        cloud_layout = QVBoxLayout(cloud_group)
+        self.cloud_json = QTextEdit()
+        self.cloud_json.setReadOnly(True)
+        cloud_layout.addWidget(self.cloud_json)
+        comparison.addWidget(local_group, 1)
+        comparison.addWidget(cloud_group, 1)
+        root.addLayout(comparison, 1)
+        actions = QHBoxLayout()
+        refresh_button = QPushButton("동기화 및 충돌 확인")
+        self.local_button = QPushButton("로컬 원본 사용")
+        self.cloud_button = QPushButton("클라우드 편집본 적용")
+        refresh_button.clicked.connect(self.refresh)
+        self.local_button.clicked.connect(lambda: self._resolve("local"))
+        self.cloud_button.clicked.connect(lambda: self._resolve("cloud"))
+        actions.addWidget(refresh_button)
+        actions.addWidget(self.local_button)
+        actions.addWidget(self.cloud_button)
+        actions.addStretch(1)
+        root.addLayout(actions)
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+        self._selection_changed()
+
+    def refresh(self) -> None:
+        try:
+            self._conflicts = list(self._controller.metadata_conflicts())
+            self.metadata_changed.emit()
+        except Exception as exc:
+            self._conflicts = []
+            self.status_label.setText(f"동기화 확인 실패: {exc}")
+        self.table.setRowCount(len(self._conflicts))
+        for row, conflict in enumerate(self._conflicts):
+            values = [conflict.title, conflict.kind, conflict.message]
+            for column, value in enumerate(values):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+        if self._conflicts:
+            self.status_label.setText(
+                f"자동 병합하지 않은 충돌 {len(self._conflicts)}개 · 항목을 선택해 사용할 값을 결정하세요."
+            )
+        else:
+            settings = self._controller.settings()
+            self.status_label.setText(
+                "충돌이 없습니다."
+                if settings.metadata_sync_dir
+                else "수집 및 검토 화면에서 OneDrive JSON 미러 폴더를 먼저 지정하세요."
+            )
+        self._selection_changed()
+
+    def _selected(self) -> MetadataConflict | None:
+        row = self.table.currentRow()
+        return self._conflicts[row] if 0 <= row < len(self._conflicts) else None
+
+    def _selection_changed(self) -> None:
+        conflict = self._selected()
+        self.local_button.setEnabled(conflict is not None)
+        self.cloud_button.setEnabled(bool(conflict and conflict.can_use_cloud))
+        if conflict is None:
+            self.local_json.clear()
+            self.cloud_json.clear()
+            return
+        dump = lambda value: json.dumps(
+            value, ensure_ascii=False, indent=2, sort_keys=True
+        ) if value is not None else "(없음)"
+        self.local_json.setPlainText(dump(conflict.local_record))
+        self.cloud_json.setPlainText(dump(conflict.cloud_record))
+        self.local_button.setText(
+            "클라우드 고아 항목 제거"
+            if conflict.local_record is None
+            else "로컬 원본 사용"
+        )
+
+    def _resolve(self, choice: str) -> None:
+        conflict = self._selected()
+        if conflict is None:
+            return
+        label = "로컬 원본" if choice == "local" else "클라우드 편집본"
+        if QMessageBox.question(
+            self,
+            "동기화 충돌 해결",
+            f"'{conflict.title}'에 {label}을(를) 사용해 충돌을 해결할까요? "
+            "클라우드 값을 적용하면 현재 로컬 JSON은 이력에 보관됩니다.",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            self._controller.resolve_metadata_conflict(conflict.record_id, choice)
+        except Exception as exc:
+            QMessageBox.warning(self, "충돌 해결 실패", str(exc))
+            return
+        self.refresh()

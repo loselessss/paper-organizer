@@ -95,17 +95,31 @@ class LibraryWorkflowTests(unittest.TestCase):
             )
             index = json.loads((library / "index" / "library.json").read_text(encoding="utf-8"))
             self.assertEqual(index["work_count"], 1)
-            mirrored = list((root / "OneDrive" / "Paper JSON" / "sidecars").rglob("*.paper.json"))
+            mirrored = list(
+                (root / "OneDrive" / "Paper JSON" / "backup" / "sidecars").rglob(
+                    "*.paper.json"
+                )
+            )
             self.assertEqual(len(mirrored), 1)
             self.assertTrue(
-                (root / "OneDrive" / "Paper JSON" / "state" / "analysis-queue.json").is_file()
+                (root / "OneDrive" / "Paper JSON" / "portable-library.json").is_file()
+            )
+            self.assertTrue(
+                (
+                    root
+                    / "OneDrive"
+                    / "Paper JSON"
+                    / "backup"
+                    / "state"
+                    / "analysis-queue.json"
+                ).is_file()
             )
             manifest = json.loads(
                 (root / "OneDrive" / "Paper JSON" / "sync-manifest.json").read_text(
                     encoding="utf-8"
                 )
             )
-            self.assertEqual(manifest["mode"], "local-authoritative-mirror")
+            self.assertEqual(manifest["mode"], "original-backup-plus-portable-sync")
 
     def test_library_metadata_is_editable_with_history_and_reindex(self):
         with tempfile.TemporaryDirectory() as temp:

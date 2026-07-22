@@ -2,6 +2,11 @@
 
 from .ai_settings import AiSettingsController, AiSettingsView
 from .analysis_queue import AnalysisQueueItem, AnalysisQueueStore
+from .cloud_metadata_sync import (
+    CloudMetadataSynchronizer,
+    CloudSyncOutcome,
+    MetadataConflict,
+)
 from .library_workflow import (
     EditablePaperMetadata,
     LibraryEntry,
@@ -24,6 +29,9 @@ __all__ = [
     "AiSettingsView",
     "AnalysisQueueItem",
     "AnalysisQueueStore",
+    "CloudMetadataSynchronizer",
+    "CloudSyncOutcome",
+    "MetadataConflict",
     "EditablePaperMetadata",
     "LibraryEntry",
     "LibraryWorkflowController",

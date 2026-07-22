@@ -20,6 +20,11 @@ from paper_organizer.application.analysis_queue import (
     AnalysisQueueItem,
     AnalysisQueueStore,
 )
+from paper_organizer.application.cloud_metadata_sync import (
+    CloudMetadataSyncError,
+    CloudMetadataSynchronizer,
+    MetadataConflict,
+)
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
     build_identity_from_pages,
@@ -149,6 +154,8 @@ class MetadataSyncResult:
     destination: Path | None
     copied_files: int
     problems: tuple[str, ...] = ()
+    conflict_count: int = 0
+    portable_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -743,10 +750,10 @@ class LibraryWorkflowController:
         )
 
     def sync_metadata(self) -> MetadataSyncResult:
-        """Mirror JSON metadata to an optional OneDrive-compatible folder.
+        """Back up original JSON and synchronize a separate portable edit file.
 
-        Local sidecars remain authoritative. A cloud sync lock therefore never rolls
-        back or damages a completed local PDF organization operation.
+        Local sidecars remain recoverable originals. Cloud edits are applied only when
+        one side changed; concurrent changes are reported for explicit resolution.
         """
         settings = self.settings()
         if not settings.metadata_sync_dir:
@@ -759,12 +766,22 @@ class LibraryWorkflowController:
             )
         sources: list[tuple[Path, Path]] = []
         for sidecar in iter_sidecars(root):
-            sources.append((sidecar, Path("sidecars") / sidecar.relative_to(root / "papers")))
+            sources.append(
+                (
+                    sidecar,
+                    Path("backup") / "sidecars" / sidecar.relative_to(root / "papers"),
+                )
+            )
         for section in ("index", "history", "state"):
             section_root = root / section
             if section_root.is_dir():
                 for source in section_root.rglob("*.json"):
-                    sources.append((source, Path(section) / source.relative_to(section_root)))
+                    sources.append(
+                        (
+                            source,
+                            Path("backup") / section / source.relative_to(section_root),
+                        )
+                    )
         copied = 0
         problems: list[str] = []
         for source, relative in sources:
@@ -774,20 +791,62 @@ class LibraryWorkflowController:
             except OSError as exc:
                 problems.append(f"{relative.as_posix()}: {exc}")
         try:
+            outcome = CloudMetadataSynchronizer(root, destination).synchronize()
+            if outcome.imported_records:
+                self._library_cache = None
+        except (OSError, CloudMetadataSyncError) as exc:
+            outcome = None
+            problems.append(f"portable-library.json: {exc}")
+        try:
             _atomic_json_write(
                 destination / "sync-manifest.json",
                 {
                     "schema_version": 1,
-                    "mode": "local-authoritative-mirror",
+                    "mode": "original-backup-plus-portable-sync",
                     "source_library": str(root),
                     "updated_at": _now_iso(),
                     "copied_files": copied,
+                    "portable_file": "portable-library.json",
+                    "conflict_count": len(outcome.conflicts) if outcome else 0,
                     "problems": problems,
                 },
             )
         except OSError as exc:
             problems.append(f"sync-manifest.json: {exc}")
-        return MetadataSyncResult(destination, copied, tuple(problems))
+        return MetadataSyncResult(
+            destination,
+            copied,
+            tuple(problems),
+            conflict_count=len(outcome.conflicts) if outcome else 0,
+            portable_path=outcome.portable_path if outcome else None,
+        )
+
+    def metadata_conflicts(self) -> tuple[MetadataConflict, ...]:
+        synchronizer = self._cloud_synchronizer()
+        if synchronizer is None:
+            return ()
+        outcome = synchronizer.synchronize()
+        if outcome.imported_records:
+            self._library_cache = None
+            self.sync_metadata()
+            return synchronizer.synchronize().conflicts
+        return outcome.conflicts
+
+    def resolve_metadata_conflict(self, record_id: str, choice: str) -> tuple[MetadataConflict, ...]:
+        synchronizer = self._cloud_synchronizer()
+        if synchronizer is None:
+            raise LibraryWorkflowError("OneDrive JSON 미러 폴더가 설정되지 않았습니다.")
+        outcome = synchronizer.resolve(record_id, choice)
+        self._library_cache = None
+        self.sync_metadata()
+        return outcome.conflicts
+
+    def _cloud_synchronizer(self) -> CloudMetadataSynchronizer | None:
+        settings = self.settings()
+        if not settings.metadata_sync_dir:
+            return None
+        _input_dir, root = self.configured_paths()
+        return CloudMetadataSynchronizer(root, Path(settings.metadata_sync_dir))
 
     def update_library_metadata(
         self, entry: LibraryEntry, metadata: EditablePaperMetadata
