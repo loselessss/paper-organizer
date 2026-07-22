@@ -25,5 +25,8 @@ python run.py reindex "C:\path\to\library"
 
 `vendor/spdf`는 sPDF `main`을 추적하는 submodule입니다. GUI 브리지는 지연
 로딩하므로 PyQt5가 없는 코어 테스트 환경에서도 패키지를 가져올 수 있습니다.
-요약용 Ollama 모델은 설치본에 포함하지 않고 설치 후 사용자가 선택해
-다운로드하도록 설계합니다.
+요약 AI는 로컬 Ollama(기본값), OpenAI API, Anthropic Claude API 중에서
+선택할 수 있습니다. Ollama 모델은 설치본에 포함하지 않고 설치 후 선택
+다운로드하며, 클라우드 API는 사용자가 전송에 동의한 요청에만 사용합니다.
+API 키는 설정 JSON이나 Git에 저장하지 않고 OS 자격 증명 저장소(선택 의존성
+`cloud`) 또는 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` 환경 변수에서 읽습니다.

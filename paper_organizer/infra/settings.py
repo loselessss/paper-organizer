@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from dataclasses import asdict, dataclass, fields
@@ -26,6 +27,13 @@ class AppSettings:
     resource_profile: str = "eco"
     model_profile: str = "auto"
     selected_model: str = ""
+    summary_provider: str = "ollama"
+    openai_model: str = "gpt-5.6"
+    anthropic_model: str = "claude-sonnet-4-6"
+    cloud_processing_consent: bool = False
+    cloud_request_profile: str = "conservative"
+    cloud_max_parallel_requests: int = 1
+    cloud_monthly_budget_usd: float = 0.0
     minimum_age_seconds: int = 30
 
     def validate(self) -> None:
@@ -35,6 +43,27 @@ class AppSettings:
             raise ValueError("resource_profile must be eco, balanced or performance")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
+        if self.summary_provider not in {"ollama", "openai", "anthropic"}:
+            raise ValueError("summary_provider must be ollama, openai or anthropic")
+        if not isinstance(self.cloud_processing_consent, bool):
+            raise ValueError("cloud_processing_consent must be a boolean")
+        if self.cloud_request_profile not in {
+            "conservative",
+            "standard",
+            "high_throughput",
+        }:
+            raise ValueError("Unsupported cloud_request_profile")
+        if not 1 <= self.cloud_max_parallel_requests <= 16:
+            raise ValueError("cloud_max_parallel_requests must be between 1 and 16")
+        if (
+            isinstance(self.cloud_monthly_budget_usd, bool)
+            or not isinstance(self.cloud_monthly_budget_usd, (int, float))
+            or not math.isfinite(self.cloud_monthly_budget_usd)
+            or self.cloud_monthly_budget_usd < 0
+        ):
+            raise ValueError("cloud_monthly_budget_usd must be a finite non-negative number")
+        if not self.openai_model.strip() or not self.anthropic_model.strip():
+            raise ValueError("Cloud provider model names cannot be empty")
         if self.minimum_age_seconds < 0:
             raise ValueError("minimum_age_seconds cannot be negative")
         if self.input_dir and self.library_root:

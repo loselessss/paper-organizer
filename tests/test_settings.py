@@ -20,6 +20,9 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(load_settings(path), expected)
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["resource_profile"], "eco")
+            self.assertEqual(saved["summary_provider"], "ollama")
+            self.assertNotIn("api_key", saved)
+            self.assertNotIn("OPENAI_API_KEY", path.read_text(encoding="utf-8"))
 
     def test_same_input_and_library_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -32,6 +35,24 @@ class SettingsTests(unittest.TestCase):
             path = Path(temp) / "settings.json"
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path), AppSettings())
+
+    def test_unknown_summary_provider_is_rejected(self):
+        settings = AppSettings(summary_provider="unknown")
+        with self.assertRaises(ValueError):
+            settings.validate()
+
+    def test_high_throughput_cloud_profile_is_supported(self):
+        settings = AppSettings(
+            cloud_request_profile="high_throughput",
+            cloud_max_parallel_requests=8,
+            cloud_monthly_budget_usd=0,
+        )
+        settings.validate()
+
+    def test_cloud_parallelism_is_bounded(self):
+        settings = AppSettings(cloud_max_parallel_requests=17)
+        with self.assertRaises(ValueError):
+            settings.validate()
 
 
 if __name__ == "__main__":
