@@ -541,6 +541,12 @@ OpenAI는 Responses API의 `text.format` JSON Schema, Anthropic은 Messages API�
 
 API 키는 `settings.json`, sidecar, 로그, 크래시 보고서와 Git에 절대 기록하지 않는다. Windows에서는 OS 자격 증명 저장소를 사용하고, 개발·관리 환경에서는 `OPENAI_API_KEY`와 `ANTHROPIC_API_KEY` 환경 변수를 읽을 수 있다. UI에는 키 전체를 다시 표시하지 않고 등록 여부·마지막 검증 시각과 삭제/교체만 제공한다.
 
+배포판의 OpenAI·Anthropic endpoint는 공식 HTTPS 주소로 고정하고 일반 설정으로 바꾸지 못하게 한다. HTTP 전송 계층도 인증 헤더가 붙은 요청의 호스트 허용 목록을 다시 검사하며, 인증 헤더가 있는 요청의 HTTP redirect는 거부한다. 제공자 객체는 평문 키를 장기간 보유하지 않고 요청 직전에 보안 저장소에서 읽는다. UI·진단에는 마지막 네 글자만 표시하며 `Authorization`, `x-api-key`, `sk-` 계열 문자열은 공통 redactor를 거친다. Anthropic Admin API 키처럼 필요 이상의 권한을 가진 키는 입력 단계와 호출 단계에서 거부한다.
+
+환경 변수는 개발·관리 환경의 폴백일 뿐 일반 사용자 UI의 저장 방식으로 사용하지 않는다. OCR·sPDF 보조 프로세스를 시작할 때는 상속 환경에서 `OPENAI_API_KEY`와 `ANTHROPIC_API_KEY`를 제거해 관계없는 자식 프로세스에 키가 전달되지 않게 한다.
+
+`.env` 계열 파일은 Git에서 제외하고 CI는 추적 파일의 OpenAI·Anthropic 키 형태를 검사한다. 탐지 보고에는 키 값 대신 파일·줄·키 종류만 표시한다. 탐지되면 커밋에서 문자열을 지우는 것에 그치지 않고 제공자 콘솔에서 해당 키를 폐기·교체한다.
+
 클라우드를 처음 선택할 때 다음 내용을 보여주고 동의를 받는다.
 
 - 제공자 이름과 실제 모델 ID

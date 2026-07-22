@@ -21,12 +21,12 @@ def build_provider(
         return OllamaProvider(settings.selected_model, http_client=http_client)
     if settings.summary_provider == "openai":
         return OpenAIProvider(
-            secret_store.get("openai"),
+            lambda: secret_store.get("openai"),
             settings.openai_model,
             http_client=http_client,
         )
     return AnthropicProvider(
-        secret_store.get("anthropic"),
+        lambda: secret_store.get("anthropic"),
         settings.anthropic_model,
         http_client=http_client,
     )

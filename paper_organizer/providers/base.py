@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 
 SUMMARY_SCHEMA: dict[str, Any] = {
@@ -33,6 +33,8 @@ SYSTEM_INSTRUCTIONS = (
     "Return Korean prose for summary_ko and preserve technical names accurately. "
     "If evidence is missing, use an empty string or empty list instead of guessing."
 )
+
+ApiKeySource = str | None | Callable[[], str | None]
 
 
 class ProviderError(RuntimeError):
@@ -136,8 +138,11 @@ def require_cloud_consent(request: SummaryRequest) -> None:
         )
 
 
-def require_api_key(api_key: str | None, provider: str) -> str:
-    value = (api_key or "").strip()
+def require_api_key(api_key_source: ApiKeySource, provider: str) -> str:
+    raw = api_key_source() if callable(api_key_source) else api_key_source
+    value = (raw or "").strip()
     if not value:
         raise ProviderError(f"No {provider} API key is configured")
+    if provider.lower() == "anthropic" and value.lower().startswith("sk-ant-admin"):
+        raise ProviderError("Anthropic Admin API keys are not accepted")
     return value

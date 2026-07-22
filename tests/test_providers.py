@@ -1,6 +1,8 @@
 import json
+import inspect
 import unittest
 from typing import Any, Mapping
+from urllib.request import Request
 
 from paper_organizer.providers import (
     AnthropicProvider,
@@ -12,6 +14,10 @@ from paper_organizer.providers import (
     cloud_request_policy,
 )
 from paper_organizer.infra.settings import AppSettings
+from paper_organizer.providers.http import (
+    UrllibJsonHttpClient,
+    _CredentialSafeRedirectHandler,
+)
 
 
 SUMMARY = {
@@ -136,6 +142,66 @@ class ProviderTests(unittest.TestCase):
                 SummaryRequest("paper text", cloud_consent=True)
             )
         self.assertEqual(client.calls, [])
+
+    def test_api_key_source_is_read_at_request_time(self):
+        current_key = ["first-key"]
+        client = FakeHttpClient(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": json.dumps(SUMMARY)}
+                        ],
+                    }
+                ]
+            }
+        )
+        provider = OpenAIProvider(lambda: current_key[0], http_client=client)
+        current_key[0] = "rotated-key"
+
+        provider.summarize(SummaryRequest("paper text", cloud_consent=True))
+
+        self.assertEqual(
+            client.calls[0]["headers"]["Authorization"], "Bearer rotated-key"
+        )
+
+    def test_anthropic_admin_key_is_rejected(self):
+        client = FakeHttpClient({})
+        admin_key = "sk-ant-" + "admin-example-key"
+        with self.assertRaisesRegex(ProviderError, "Admin API keys"):
+            AnthropicProvider(admin_key, http_client=client).summarize(
+                SummaryRequest("paper text", cloud_consent=True)
+            )
+        self.assertEqual(client.calls, [])
+
+    def test_cloud_endpoints_are_not_constructor_options(self):
+        self.assertNotIn("endpoint", inspect.signature(OpenAIProvider).parameters)
+        self.assertNotIn("endpoint", inspect.signature(AnthropicProvider).parameters)
+
+    def test_transport_rejects_credentials_for_untrusted_host(self):
+        with self.assertRaisesRegex(ProviderError, "untrusted host"):
+            UrllibJsonHttpClient().post_json(
+                "https://example.invalid/collect",
+                {"Authorization": "Bearer secret"},
+                {"data": "paper text"},
+                1,
+            )
+
+    def test_transport_refuses_redirect_with_credentials(self):
+        request = Request(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": "Bearer secret"},
+        )
+        with self.assertRaisesRegex(ProviderError, "redirect"):
+            _CredentialSafeRedirectHandler().redirect_request(
+                request,
+                None,
+                307,
+                "Temporary Redirect",
+                {},
+                "https://example.invalid/collect",
+            )
 
     def test_high_throughput_policy_honors_explicit_parallelism(self):
         policy = cloud_request_policy(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from .base import (
+    ApiKeySource,
     SUMMARY_SCHEMA,
     SYSTEM_INSTRUCTIONS,
     JsonHttpClient,
@@ -18,22 +19,23 @@ from .base import (
 from .http import UrllibJsonHttpClient
 
 
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+
 class OpenAIProvider:
     name = "openai"
     is_cloud = True
 
     def __init__(
         self,
-        api_key: str | None,
+        api_key: ApiKeySource,
         model: str = "gpt-5.6",
         http_client: JsonHttpClient | None = None,
-        endpoint: str = "https://api.openai.com/v1/responses",
         timeout_seconds: float = 120,
     ) -> None:
-        self._api_key = api_key
+        self._api_key_source = api_key
         self.model = model.strip()
         self._http = http_client or UrllibJsonHttpClient()
-        self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
         if not self.model:
             raise ValueError("OpenAI model cannot be empty")
@@ -41,7 +43,7 @@ class OpenAIProvider:
     def summarize(self, request: SummaryRequest) -> SummaryResult:
         request.validate()
         require_cloud_consent(request)
-        api_key = require_api_key(self._api_key, "OpenAI")
+        api_key = require_api_key(self._api_key_source, "OpenAI")
         payload: dict[str, Any] = {
             "model": self.model,
             "instructions": SYSTEM_INSTRUCTIONS,
@@ -58,7 +60,7 @@ class OpenAIProvider:
             },
         }
         response = self._http.post_json(
-            self._endpoint,
+            OPENAI_RESPONSES_URL,
             {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
             payload,
             self._timeout_seconds,

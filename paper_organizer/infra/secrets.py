@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Protocol
 
 
@@ -21,11 +22,47 @@ class SecretStore(Protocol):
     def delete(self, provider: str) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class SecretStatus:
+    provider: str
+    configured: bool
+    masked_hint: str
+
+
 def _validate_provider(provider: str) -> str:
     normalized = provider.strip().lower()
     if normalized not in ENVIRONMENT_KEYS:
         raise ValueError(f"Unsupported secret provider: {provider}")
     return normalized
+
+
+def mask_secret(secret: str | None) -> str:
+    """Return a UI-safe hint without exposing enough material to reuse the key."""
+    value = (secret or "").strip()
+    if not value:
+        return ""
+    suffix = value[-4:] if len(value) >= 4 else ""
+    return f"••••{suffix}" if suffix else "••••"
+
+
+def get_secret_status(store: SecretStore, provider: str) -> SecretStatus:
+    normalized = _validate_provider(provider)
+    secret = store.get(normalized)
+    return SecretStatus(
+        provider=normalized,
+        configured=bool(secret),
+        masked_hint=mask_secret(secret),
+    )
+
+
+def sanitized_child_environment(
+    environment: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Prevent development fallback keys from leaking into child processes."""
+    result = dict(os.environ if environment is None else environment)
+    for variable_name in ENVIRONMENT_KEYS.values():
+        result.pop(variable_name, None)
+    return result
 
 
 class EnvironmentSecretStore:

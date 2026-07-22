@@ -30,3 +30,5 @@ python run.py reindex "C:\path\to\library"
 다운로드하며, 클라우드 API는 사용자가 전송에 동의한 요청에만 사용합니다.
 API 키는 설정 JSON이나 Git에 저장하지 않고 OS 자격 증명 저장소(선택 의존성
 `cloud`) 또는 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` 환경 변수에서 읽습니다.
+클라우드 키는 요청 시점에만 조회하고 공식 API 주소에만 전송하며, 화면에는
+마지막 네 글자만 표시합니다. Anthropic Admin API 키는 허용하지 않습니다.

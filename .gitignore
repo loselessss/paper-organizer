@@ -14,6 +14,9 @@ Output/
 *.lock
 .idea/
 .vscode/
+.env
+.env.*
+!.env.example
 
 # Local application/runtime data
 .paper-organizer/

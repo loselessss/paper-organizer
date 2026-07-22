@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from .base import (
+    ApiKeySource,
     SUMMARY_SCHEMA,
     SYSTEM_INSTRUCTIONS,
     JsonHttpClient,
@@ -18,22 +19,23 @@ from .base import (
 from .http import UrllibJsonHttpClient
 
 
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+
+
 class AnthropicProvider:
     name = "anthropic"
     is_cloud = True
 
     def __init__(
         self,
-        api_key: str | None,
+        api_key: ApiKeySource,
         model: str = "claude-sonnet-4-6",
         http_client: JsonHttpClient | None = None,
-        endpoint: str = "https://api.anthropic.com/v1/messages",
         timeout_seconds: float = 120,
     ) -> None:
-        self._api_key = api_key
+        self._api_key_source = api_key
         self.model = model.strip()
         self._http = http_client or UrllibJsonHttpClient()
-        self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
         if not self.model:
             raise ValueError("Anthropic model cannot be empty")
@@ -41,7 +43,7 @@ class AnthropicProvider:
     def summarize(self, request: SummaryRequest) -> SummaryResult:
         request.validate()
         require_cloud_consent(request)
-        api_key = require_api_key(self._api_key, "Anthropic")
+        api_key = require_api_key(self._api_key_source, "Anthropic")
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": request.max_output_tokens,
@@ -52,7 +54,7 @@ class AnthropicProvider:
             },
         }
         response = self._http.post_json(
-            self._endpoint,
+            ANTHROPIC_MESSAGES_URL,
             {
                 "Content-Type": "application/json",
                 "x-api-key": api_key,
