@@ -66,13 +66,19 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.collection_widget.interval_spin.value(), 300)
             self.assertFalse(window.collection_widget.remove_source_check.isChecked())
             self.assertEqual(
+                window.library_widget.apply_pdf_button.text(),
+                "편집본을 PaperPack에 적용",
+            )
+            self.assertFalse(window.library_widget.apply_pdf_button.isEnabled())
+            self.assertFalse(window.library_widget.discard_pdf_button.isEnabled())
+            self.assertEqual(
                 window.collection_widget.form.venue_edit.placeholderText(),
                 "저널명 또는 학회명",
             )
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.4.0", splash_labels)
+            self.assertIn("Version 0.5.0", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             dialog.close()

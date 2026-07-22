@@ -61,6 +61,12 @@ Each successful edit appends `history/revision-NNNN.json`. A history entry recor
 the complete metadata snapshot, the content checksum, edit timestamp, and editor.
 The embedded PDF is not duplicated in history.
 
+When an embedded PDF is replaced, the revision also contains a `change` object with
+`kind: "pdf_replaced"`, the previous and current PDF SHA-256 values, and the new byte
+length. PDF replacement uses the current PDF checksum and package revision as an
+optimistic lock, so a stale working copy cannot overwrite a concurrently edited
+package.
+
 ## Updates and extensions
 
 An update is written to a temporary archive in the same directory, fully verified,
@@ -70,6 +76,11 @@ if generation or verification fails.
 Version 1 writers preserve unknown safe ZIP entries when rewriting a package. New
 optional data should live below `extensions/<vendor-or-project>/`. A reader must not
 silently rewrite a package with a newer unsupported schema version.
+
+Applications should edit an extracted working copy, never `document/paper.pdf` in
+place. A saved working copy is committed only after explicit user confirmation. A
+discard operation deletes only the working copy. Successful PDF replacement updates
+the package metadata identity and marks derived content and AI analysis as stale.
 
 ## Library and cloud synchronization
 

@@ -125,6 +125,43 @@ class AnalysisQueueStore:
         self._replace(items, updated)
         return updated
 
+    def replace_file(
+        self,
+        old_file_sha256: str,
+        new_file_sha256: str,
+        path: Path,
+        *,
+        title: str,
+        status: str = "organized_pending_analysis",
+    ) -> AnalysisQueueItem:
+        """Replace a queue identity after the stored PDF bytes change."""
+
+        self._validate_status(status)
+        items = self.load()
+        old_id = f"sha256:{old_file_sha256}"
+        new_id = f"sha256:{new_file_sha256}"
+        old = next((item for item in items if item.queue_id == old_id), None)
+        existing_new = next((item for item in items if item.queue_id == new_id), None)
+        basis = old or existing_new
+        now = _now_iso()
+        updated = AnalysisQueueItem(
+            queue_id=new_id,
+            path=str(path.resolve()),
+            file_sha256=new_file_sha256,
+            title=title.strip() or path.stem,
+            status=status,
+            priority=basis.priority if basis else 0,
+            added_at=basis.added_at if basis else now,
+            updated_at=now,
+            last_error="",
+        )
+        remaining = [
+            item for item in items if item.queue_id not in {old_id, new_id}
+        ]
+        remaining.append(updated)
+        self._save(remaining)
+        return updated
+
     def set_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
         items = self.load()
         existing = self._find(items, queue_id)

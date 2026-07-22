@@ -121,17 +121,18 @@ def _history_bytes(
     content_sha256: str,
     changed_at: str,
     changed_by: str,
+    change: dict[str, Any] | None = None,
 ) -> bytes:
-    return _json_bytes(
-        {
-            "revision": revision,
-            "changed_at": changed_at,
-            "changed_by": changed_by,
-            "content_sha256": content_sha256,
-            "metadata": metadata,
-        },
-        "history",
-    )
+    value: dict[str, Any] = {
+        "revision": revision,
+        "changed_at": changed_at,
+        "changed_by": changed_by,
+        "content_sha256": content_sha256,
+        "metadata": metadata,
+    }
+    if change is not None:
+        value["change"] = change
+    return _json_bytes(value, "history")
 
 
 def _manifest(
@@ -545,6 +546,139 @@ def update_paperpack(
                         _sha256_bytes(content_bytes),
                         now,
                         changed_by,
+                    ),
+                )
+                for name in extension_names:
+                    _copy_entry(source, destination, name)
+        verify_paperpack(temp_path)
+        os.replace(temp_path, target)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+    return inspect_paperpack(target)
+
+
+def replace_paperpack_pdf(
+    path: Path,
+    pdf_path: Path,
+    metadata: dict[str, Any],
+    *,
+    content: dict[str, Any] | None = None,
+    expected_pdf_sha256: str | None = None,
+    expected_revision: int | None = None,
+    changed_by: str = "user",
+) -> PaperPackInfo:
+    """Atomically replace the embedded PDF after optimistic-lock checks.
+
+    The caller supplies the metadata that describes the new PDF. The current
+    package is left untouched when the edit is not a PDF, the package changed
+    since the working copy was created, or verification of the replacement
+    archive fails.
+    """
+
+    target = path.expanduser().resolve()
+    edited = pdf_path.expanduser().resolve()
+    if not edited.is_file():
+        raise PaperPackError(f"edited PDF not found: {edited}")
+    with edited.open("rb") as stream:
+        if stream.read(5) != b"%PDF-":
+            raise PaperPackError("edited file is not a PDF")
+    edited_sha256, edited_size = _sha256_file(edited)
+    metadata_bytes = _json_bytes(metadata, "metadata")
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{target.stem}-", suffix=".tmp", dir=str(target.parent)
+    )
+    os.close(handle)
+    temp_path = Path(temp_name)
+    try:
+        with zipfile.ZipFile(target, "r") as source:
+            old_manifest = _read_manifest(source)
+            document = old_manifest["document"]
+            old_sha256 = str(document["sha256"])
+            old_revision = int(old_manifest["revision"])
+            if expected_pdf_sha256 is not None and old_sha256 != expected_pdf_sha256:
+                raise PaperPackError(
+                    "paperpack PDF changed after the editable copy was created"
+                )
+            if expected_revision is not None and old_revision != expected_revision:
+                raise PaperPackError(
+                    "paperpack revision changed after the editable copy was created"
+                )
+            if edited_sha256 == old_sha256:
+                raise PaperPackError("edited PDF is unchanged")
+            content_bytes = (
+                _json_bytes(content, "content")
+                if content is not None
+                else _read_json_entry(
+                    source,
+                    old_manifest,
+                    "content",
+                    CONTENT_ENTRY,
+                    MAX_CONTENT_BYTES,
+                )
+            )
+            revision = old_revision + 1
+            now = _now_iso()
+            manifest = _manifest(
+                original_name=str(document["original_name"]),
+                pdf_sha256=edited_sha256,
+                pdf_size=edited_size,
+                metadata_bytes=metadata_bytes,
+                content_bytes=content_bytes,
+                revision=revision,
+                created_at=str(old_manifest["created_at"]),
+                updated_at=now,
+                created_by=str(old_manifest.get("created_by", "paper-organizer")),
+            )
+            history_names = sorted(
+                name
+                for name in source.namelist()
+                if name.startswith(HISTORY_PREFIX) and name.endswith(".json")
+            )
+            reserved = {
+                MIMETYPE_ENTRY,
+                MANIFEST_ENTRY,
+                PDF_ENTRY,
+                METADATA_ENTRY,
+                CONTENT_ENTRY,
+                *history_names,
+            }
+            extension_names = [
+                name for name in source.namelist() if name not in reserved
+            ]
+            with zipfile.ZipFile(temp_path, "w", allowZip64=True) as destination:
+                _write_bytes(
+                    destination,
+                    MIMETYPE_ENTRY,
+                    PAPERPACK_MIMETYPE.encode("ascii"),
+                    stored=True,
+                )
+                _write_bytes(
+                    destination, MANIFEST_ENTRY, _json_bytes(manifest, "manifest")
+                )
+                destination.write(edited, PDF_ENTRY, compress_type=zipfile.ZIP_STORED)
+                _write_bytes(destination, METADATA_ENTRY, metadata_bytes)
+                _write_bytes(destination, CONTENT_ENTRY, content_bytes)
+                for name in history_names:
+                    _copy_entry(source, destination, name)
+                _write_bytes(
+                    destination,
+                    _history_entry(revision),
+                    _history_bytes(
+                        revision,
+                        metadata,
+                        _sha256_bytes(content_bytes),
+                        now,
+                        changed_by,
+                        change={
+                            "kind": "pdf_replaced",
+                            "previous_pdf_sha256": old_sha256,
+                            "pdf_sha256": edited_sha256,
+                            "size_bytes": edited_size,
+                        },
                     ),
                 )
                 for name in extension_names:

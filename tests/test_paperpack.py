@@ -1,9 +1,11 @@
 import hashlib
+import json
 import tempfile
 import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from paper_organizer.core.paperpack import (
     CONTENT_ENTRY,
@@ -19,6 +21,7 @@ from paper_organizer.core.paperpack import (
     import_pdf_to_paperpack,
     load_paperpack_content,
     load_paperpack_metadata,
+    replace_paperpack_pdf,
     update_paperpack,
     verify_paperpack,
 )
@@ -140,6 +143,80 @@ class PaperPackTests(unittest.TestCase):
                 self.assertEqual(
                     archive.read("extensions/example/data.txt"), b"future data"
                 )
+
+    def test_replace_pdf_updates_manifest_metadata_and_history(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _pdf, pack = self._create(root)
+            before = inspect_paperpack(pack)
+            edited = root / "edited.pdf"
+            edited_bytes = PDF_BYTES + b"\n% edited annotation\n"
+            edited.write_bytes(edited_bytes)
+            metadata = {
+                "identity": {"work_id": "doi:10.1000/test"},
+                "title": "Edited PDF",
+            }
+
+            after = replace_paperpack_pdf(
+                pack,
+                edited,
+                metadata,
+                expected_pdf_sha256=before.pdf_sha256,
+                expected_revision=before.revision,
+            )
+
+            self.assertEqual(after.revision, 2)
+            self.assertEqual(after.pdf_sha256, hashlib.sha256(edited_bytes).hexdigest())
+            self.assertEqual(load_paperpack_metadata(pack)["title"], "Edited PDF")
+            with zipfile.ZipFile(pack) as archive:
+                self.assertEqual(archive.read(PDF_ENTRY), edited_bytes)
+                history = json.loads(archive.read("history/revision-0002.json"))
+                self.assertEqual(history["change"]["kind"], "pdf_replaced")
+                self.assertEqual(
+                    history["change"]["previous_pdf_sha256"], before.pdf_sha256
+                )
+
+    def test_replace_pdf_conflict_and_invalid_input_leave_pack_untouched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _pdf, pack = self._create(root)
+            original = pack.read_bytes()
+            edited = root / "edited.pdf"
+            edited.write_bytes(PDF_BYTES + b"changed")
+            metadata = load_paperpack_metadata(pack)
+
+            with self.assertRaisesRegex(PaperPackError, "changed after"):
+                replace_paperpack_pdf(
+                    pack,
+                    edited,
+                    metadata,
+                    expected_pdf_sha256="0" * 64,
+                )
+            self.assertEqual(pack.read_bytes(), original)
+
+            edited.write_text("not a PDF", encoding="utf-8")
+            with self.assertRaisesRegex(PaperPackError, "not a PDF"):
+                replace_paperpack_pdf(pack, edited, metadata)
+            self.assertEqual(pack.read_bytes(), original)
+
+    def test_replace_pdf_install_failure_leaves_original_pack(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _pdf, pack = self._create(root)
+            original = pack.read_bytes()
+            edited = root / "edited.pdf"
+            edited.write_bytes(PDF_BYTES + b"changed")
+            with mock.patch(
+                "paper_organizer.core.paperpack.os.replace",
+                side_effect=OSError("simulated install failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "simulated"):
+                    replace_paperpack_pdf(
+                        pack,
+                        edited,
+                        load_paperpack_metadata(pack),
+                    )
+            self.assertEqual(pack.read_bytes(), original)
 
     def test_rejects_wrong_extension_and_non_pdf(self):
         with tempfile.TemporaryDirectory() as temp:

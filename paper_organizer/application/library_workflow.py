@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ from paper_organizer.application.legacy_migration import (
 )
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
+    PdfIdentityError,
     build_identity_from_pages,
     compare_identities,
     extract_page_texts,
@@ -50,6 +52,8 @@ from paper_organizer.core.paperpack import (
     extract_paperpack_pdf,
     import_pdf_to_paperpack,
     inspect_paperpack,
+    load_paperpack_metadata,
+    replace_paperpack_pdf,
     update_paperpack,
 )
 from paper_organizer.infra.settings import (
@@ -161,6 +165,28 @@ class LibraryEntry:
     work_id: str
     source_variant: str
     record: dict[str, Any] = field(repr=False, compare=False)
+    sync_warning: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPackWorkingCopy:
+    paperpack_path: Path
+    pdf_path: Path
+    base_pdf_sha256: str
+    current_pdf_sha256: str
+    base_revision: int
+    current_revision: int
+    changed: bool
+    conflicted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPackPdfUpdate:
+    paperpack_path: Path
+    working_pdf_path: Path
+    previous_pdf_sha256: str
+    pdf_sha256: str
+    revision: int
     sync_warning: str = ""
 
 
@@ -835,6 +861,235 @@ class LibraryWorkflowController:
             return extract_paperpack_pdf(source, cached)
         except (OSError, PaperPackError) as exc:
             raise LibraryWorkflowError(f"paperpack PDF를 열 수 없습니다: {exc}") from None
+
+    def materialize_editable_pdf(self, path: Path) -> Path:
+        """Return an isolated PDF working copy for sPDF editing."""
+
+        source = path.expanduser().resolve()
+        if source.suffix.casefold() == ".pdf":
+            return self.materialize_pdf(source)
+        source, workspace_pdf, state_path = self._paperpack_edit_paths(source)
+        if workspace_pdf.exists() != state_path.exists():
+            raise LibraryWorkflowError(
+                "paperpack 편집 작업공간이 불완전합니다. 편집본 폐기 후 다시 여세요."
+            )
+        if workspace_pdf.is_file():
+            status = self.paperpack_working_copy(source)
+            if status is None:
+                raise LibraryWorkflowError("paperpack 편집 상태를 읽을 수 없습니다.")
+            if status.changed or not status.conflicted:
+                return workspace_pdf
+        try:
+            info = inspect_paperpack(source)
+            extract_paperpack_pdf(source, workspace_pdf)
+            _atomic_json_write(
+                state_path,
+                {
+                    "schema_version": 1,
+                    "paperpack_path": str(source),
+                    "base_pdf_sha256": info.pdf_sha256,
+                    "base_revision": info.revision,
+                    "created_at": _now_iso(),
+                },
+            )
+            return workspace_pdf
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"paperpack 편집본을 준비할 수 없습니다: {exc}"
+            ) from None
+
+    def paperpack_working_copy(
+        self, path: Path
+    ) -> PaperPackWorkingCopy | None:
+        """Inspect a saved working copy without changing either copy."""
+
+        source, workspace_pdf, state_path = self._paperpack_edit_paths(path)
+        if not workspace_pdf.exists() and not state_path.exists():
+            return None
+        if not workspace_pdf.is_file() or not state_path.is_file():
+            raise LibraryWorkflowError("paperpack 편집 작업공간이 불완전합니다.")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or state.get("schema_version") != 1:
+                raise ValueError("unsupported edit state")
+            if Path(str(state["paperpack_path"])).resolve() != source:
+                raise ValueError("working copy belongs to another paperpack")
+            base_sha256 = str(state["base_pdf_sha256"])
+            base_revision = int(state["base_revision"])
+            current_sha256 = sha256_file(workspace_pdf)
+            info = inspect_paperpack(source)
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+            PaperPackError,
+        ) as exc:
+            raise LibraryWorkflowError(
+                f"paperpack 편집 상태를 읽을 수 없습니다: {exc}"
+            ) from None
+        return PaperPackWorkingCopy(
+            paperpack_path=source,
+            pdf_path=workspace_pdf,
+            base_pdf_sha256=base_sha256,
+            current_pdf_sha256=current_sha256,
+            base_revision=base_revision,
+            current_revision=info.revision,
+            changed=current_sha256 != base_sha256,
+            conflicted=(
+                info.pdf_sha256 != base_sha256 or info.revision != base_revision
+            ),
+        )
+
+    def apply_paperpack_working_copy(self, path: Path) -> PaperPackPdfUpdate:
+        """Commit a saved sPDF working copy as a verified paperpack revision."""
+
+        status = self.paperpack_working_copy(path)
+        if status is None:
+            raise LibraryWorkflowError("적용할 paperpack 편집본이 없습니다.")
+        if not status.changed:
+            raise LibraryWorkflowError("편집본에 저장된 변경이 없습니다.")
+        if status.conflicted:
+            raise LibraryWorkflowError(
+                "편집 중 paperpack이 변경되었습니다. 편집본을 덮어쓰지 않았습니다."
+            )
+        try:
+            page_texts = extract_page_texts(status.pdf_path)
+            new_identity = build_identity_from_pages(
+                status.current_pdf_sha256, page_texts
+            )
+            record = load_paperpack_metadata(status.paperpack_path)
+            now = _now_iso()
+            record["id"] = new_identity.file_id
+            record["identity"] = new_identity.to_dict()
+            file_data = record.setdefault("file", {})
+            file_data.update(
+                {
+                    "sha256": new_identity.file_sha256,
+                    "size_bytes": status.pdf_path.stat().st_size,
+                    "page_count": new_identity.page_count,
+                }
+            )
+            workflow = record.setdefault("workflow", {})
+            workflow.update(
+                {
+                    "status": "organized",
+                    "needs_reanalysis": True,
+                    "content_stale": True,
+                    "pdf_edited_at": now,
+                    "updated_at": now,
+                }
+            )
+            curation = record.setdefault("curation", {})
+            curation.update(
+                {
+                    "revision": int(curation.get("revision", 0)) + 1,
+                    "last_edited_at": now,
+                    "last_edited_by": "user:spdf",
+                }
+            )
+            record.setdefault("provenance", {})["last_pdf_editor"] = "sPDF"
+            info = replace_paperpack_pdf(
+                status.paperpack_path,
+                status.pdf_path,
+                record,
+                expected_pdf_sha256=status.base_pdf_sha256,
+                expected_revision=status.base_revision,
+                changed_by="user:spdf",
+            )
+        except (OSError, ValueError, PdfIdentityError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"편집본을 paperpack에 적용할 수 없습니다: {exc}"
+            ) from None
+
+        _source, _workspace_pdf, state_path = self._paperpack_edit_paths(
+            status.paperpack_path
+        )
+        _atomic_json_write(
+            state_path,
+            {
+                "schema_version": 1,
+                "paperpack_path": str(status.paperpack_path),
+                "base_pdf_sha256": info.pdf_sha256,
+                "base_revision": info.revision,
+                "created_at": _now_iso(),
+            },
+        )
+        old_cache = (
+            self.configured_paths()[1]
+            / "cache"
+            / "pdf"
+            / f"{status.base_pdf_sha256}.pdf"
+        )
+        try:
+            old_cache.unlink(missing_ok=True)
+            status.pdf_path.with_suffix(status.pdf_path.suffix + ".bak").unlink(
+                missing_ok=True
+            )
+        except OSError:
+            pass
+
+        warnings: list[str] = []
+        try:
+            title = str(
+                record.get("bibliography", {}).get("title")
+                or status.paperpack_path.stem
+            )
+            self._queue().replace_file(
+                status.base_pdf_sha256,
+                info.pdf_sha256,
+                status.paperpack_path,
+                title=title,
+            )
+            rebuild_library_index(self.configured_paths()[1])
+        except (OSError, AnalysisQueueError) as exc:
+            warnings.append(f"파생 색인 갱신: {exc}")
+        self._library_cache = None
+        sync = self.sync_metadata()
+        warnings.extend(sync.problems)
+        return PaperPackPdfUpdate(
+            paperpack_path=status.paperpack_path,
+            working_pdf_path=status.pdf_path,
+            previous_pdf_sha256=status.base_pdf_sha256,
+            pdf_sha256=info.pdf_sha256,
+            revision=info.revision,
+            sync_warning="; ".join(warnings),
+        )
+
+    def discard_paperpack_working_copy(self, path: Path) -> bool:
+        """Remove only the isolated editable copy; never touch the paperpack."""
+
+        _source, workspace_pdf, state_path = self._paperpack_edit_paths(path)
+        existed = workspace_pdf.exists() or state_path.exists()
+        for candidate in (
+            workspace_pdf,
+            workspace_pdf.with_suffix(workspace_pdf.suffix + ".bak"),
+            state_path,
+        ):
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError as exc:
+                raise LibraryWorkflowError(
+                    f"paperpack 편집본을 폐기할 수 없습니다: {exc}"
+                ) from None
+        return existed
+
+    def _paperpack_edit_paths(self, path: Path) -> tuple[Path, Path, Path]:
+        source = path.expanduser().resolve()
+        _input_dir, root = self.configured_paths()
+        papers_root = (root / "papers").resolve()
+        if (
+            source.suffix.casefold() != PAPERPACK_SUFFIX
+            or not source.is_file()
+            or not _inside(papers_root, source)
+        ):
+            raise LibraryWorkflowError(
+                "라이브러리 안의 paperpack만 편집 작업공간을 만들 수 있습니다."
+            )
+        key = hashlib.sha256(str(source).encode("utf-8")).hexdigest()
+        edit_root = root / "cache" / "editing" / key
+        return source, edit_root / "working.pdf", edit_root / "state.json"
 
     def set_queue_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
         item = self._queue().set_priority(queue_id, high)

@@ -16,8 +16,10 @@ from paper_organizer.infra.settings import load_settings, save_settings
 from paper_organizer.models.paper import DuplicateKind
 from paper_organizer.core.paperpack import (
     PAPERPACK_SUFFIX,
+    extract_paperpack_pdf,
     inspect_paperpack,
     load_paperpack_metadata,
+    update_paperpack,
 )
 
 
@@ -193,6 +195,74 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(opened.suffix, ".pdf")
             self.assertTrue(opened.is_file())
             self.assertEqual(opened.read_bytes(), source.read_bytes())
+
+    def test_spdf_working_copy_applies_as_new_paperpack_revision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "paper.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Editable Paper")
+            )
+            before = inspect_paperpack(organized.pdf_path)
+
+            working = controller.materialize_editable_pdf(organized.pdf_path)
+            self.assertNotEqual(working, controller.materialize_pdf(organized.pdf_path))
+            with working.open("ab") as stream:
+                stream.write(b"\n% sPDF saved annotation\n")
+            pending = controller.paperpack_working_copy(organized.pdf_path)
+            self.assertIsNotNone(pending)
+            self.assertTrue(pending.changed)
+            self.assertFalse(pending.conflicted)
+
+            result = controller.apply_paperpack_working_copy(organized.pdf_path)
+
+            self.assertEqual(result.revision, before.revision + 1)
+            self.assertNotEqual(result.pdf_sha256, before.pdf_sha256)
+            saved = load_paperpack_metadata(organized.pdf_path)
+            self.assertEqual(saved["file"]["sha256"], result.pdf_sha256)
+            self.assertTrue(saved["workflow"]["needs_reanalysis"])
+            self.assertTrue(saved["workflow"]["content_stale"])
+            extracted = extract_paperpack_pdf(
+                organized.pdf_path, root / "after-edit.pdf"
+            )
+            self.assertEqual(extracted.read_bytes(), working.read_bytes())
+            queue = controller.analysis_queue()
+            self.assertEqual(len(queue), 1)
+            self.assertEqual(queue[0].file_sha256, result.pdf_sha256)
+            self.assertEqual(queue[0].status, "organized_pending_analysis")
+            clean = controller.paperpack_working_copy(organized.pdf_path)
+            self.assertFalse(clean.changed)
+            self.assertFalse(clean.conflicted)
+
+    def test_spdf_working_copy_detects_conflict_and_can_be_discarded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Conflict Paper")
+            )
+            working = controller.materialize_editable_pdf(organized.pdf_path)
+            with working.open("ab") as stream:
+                stream.write(b"\n% local edit\n")
+            update_paperpack(
+                organized.pdf_path,
+                load_paperpack_metadata(organized.pdf_path),
+                changed_by="concurrent-test",
+            )
+
+            status = controller.paperpack_working_copy(organized.pdf_path)
+            self.assertTrue(status.changed)
+            self.assertTrue(status.conflicted)
+            with self.assertRaisesRegex(Exception, "변경되었습니다"):
+                controller.apply_paperpack_working_copy(organized.pdf_path)
+            self.assertTrue(controller.discard_paperpack_working_copy(organized.pdf_path))
+            self.assertFalse(working.exists())
+            self.assertIsNone(controller.paperpack_working_copy(organized.pdf_path))
 
     def test_researchgate_variant_can_only_be_moved_to_recoverable_trash_after_match(self):
         with tempfile.TemporaryDirectory() as temp:

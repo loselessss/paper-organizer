@@ -588,12 +588,20 @@ class LibraryWidget(QWidget):
         actions = QHBoxLayout()
         self.save_button = QPushButton("수정 저장 및 재색인")
         self.open_button = QPushButton("sPDF로 열기")
+        self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
+        self.discard_pdf_button = QPushButton("편집본 폐기")
         self.save_button.clicked.connect(self._save_selected)
         self.open_button.clicked.connect(self._open_selected)
+        self.apply_pdf_button.clicked.connect(self._apply_pdf_edit)
+        self.discard_pdf_button.clicked.connect(self._discard_pdf_edit)
         self.save_button.setEnabled(False)
         self.open_button.setEnabled(False)
+        self.apply_pdf_button.setEnabled(False)
+        self.discard_pdf_button.setEnabled(False)
         actions.addWidget(self.save_button)
         actions.addWidget(self.open_button)
+        actions.addWidget(self.apply_pdf_button)
+        actions.addWidget(self.discard_pdf_button)
         actions.addStretch(1)
         root.addLayout(actions)
         self.status_label = QLabel()
@@ -624,6 +632,8 @@ class LibraryWidget(QWidget):
         self.form.set_metadata(None)
         self.save_button.setEnabled(False)
         self.open_button.setEnabled(False)
+        self.apply_pdf_button.setEnabled(False)
+        self.discard_pdf_button.setEnabled(False)
         self.status_label.setText(f"논문 파일 {len(self._entries)}개")
 
     def _selected(self) -> LibraryEntry | None:
@@ -635,6 +645,20 @@ class LibraryWidget(QWidget):
         self.form.set_metadata(entry.metadata if entry else None)
         self.save_button.setEnabled(entry is not None)
         self.open_button.setEnabled(bool(entry and entry.pdf_path.is_file()))
+        self._refresh_pdf_edit_actions(entry)
+
+    def _refresh_pdf_edit_actions(self, entry: LibraryEntry | None) -> None:
+        is_pack = bool(entry and entry.pdf_path.suffix.casefold() == ".paperpack")
+        self.apply_pdf_button.setEnabled(is_pack)
+        if not is_pack:
+            self.discard_pdf_button.setEnabled(False)
+            return
+        try:
+            self.discard_pdf_button.setEnabled(
+                self._controller.paperpack_working_copy(entry.pdf_path) is not None
+            )
+        except Exception:
+            self.discard_pdf_button.setEnabled(True)
 
     def _save_selected(self) -> None:
         entry = self._selected()
@@ -657,9 +681,54 @@ class LibraryWidget(QWidget):
         entry = self._selected()
         if entry:
             try:
-                open_pdf(self._controller.materialize_pdf(entry.pdf_path), self)
+                editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
+                open_pdf(editable_pdf, self)
+                self._refresh_pdf_edit_actions(entry)
             except Exception as exc:
                 QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+
+    def _apply_pdf_edit(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        if QMessageBox.question(
+            self,
+            "PaperPack에 편집본 적용",
+            "sPDF에서 먼저 저장한 변경만 적용됩니다. 저장된 편집본으로 "
+            "PaperPack의 PDF를 교체할까요?",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            result = self._controller.apply_paperpack_working_copy(entry.pdf_path)
+        except Exception as exc:
+            QMessageBox.warning(self, "편집본 적용 실패", str(exc))
+            return
+        message = f"편집된 PDF를 PaperPack 리비전 {result.revision}로 저장했습니다."
+        if result.sync_warning:
+            message += f" 경고: {result.sync_warning}"
+        self.refresh(True)
+        self.status_label.setText(message)
+        self.metadata_changed.emit()
+
+    def _discard_pdf_edit(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        if QMessageBox.question(
+            self,
+            "편집본 폐기",
+            "PaperPack 원본은 유지하고 sPDF 작업 복사본만 삭제할까요?",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            removed = self._controller.discard_paperpack_working_copy(entry.pdf_path)
+        except Exception as exc:
+            QMessageBox.warning(self, "편집본 폐기 실패", str(exc))
+            return
+        self._refresh_pdf_edit_actions(entry)
+        self.status_label.setText(
+            "sPDF 편집본을 폐기했습니다." if removed else "폐기할 편집본이 없습니다."
+        )
 
 
 class CloudSyncWidget(QWidget):
