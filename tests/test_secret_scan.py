@@ -31,6 +31,23 @@ class SecretScanTests(unittest.TestCase):
             ):
                 self.assertEqual(find_potential_secrets(root), [])
 
+    def test_finds_personal_windows_path_without_returning_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "README.md"
+            personal_path = "C:/" + "Users/" + "Private Person/Documents/project"
+            source.write_text(personal_path, encoding="utf-8")
+            with patch(
+                "scripts.check_secrets.tracked_files", return_value=[source]
+            ):
+                findings = find_potential_secrets(root)
+
+        self.assertEqual(
+            findings,
+            [(Path("README.md"), 1, "personal Windows user path")],
+        )
+        self.assertNotIn(personal_path, repr(findings))
+
 
 if __name__ == "__main__":
     unittest.main()

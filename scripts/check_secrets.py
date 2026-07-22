@@ -10,6 +10,10 @@ from pathlib import Path
 KEY_PATTERNS = (
     ("Anthropic API key", re.compile(rb"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
     ("OpenAI API key", re.compile(rb"\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b")),
+    (
+        "personal Windows user path",
+        re.compile(rb"\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\r\n]+[\\/]", re.IGNORECASE),
+    ),
 )
 EXCLUDED_PREFIXES = ("vendor/spdf/",)
 

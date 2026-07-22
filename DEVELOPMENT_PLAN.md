@@ -2,8 +2,8 @@
 
 - 작성일: 2026-07-22
 - 대상 환경: Windows 데스크톱, 개인용 로컬 애플리케이션
-- 신규 프로젝트 위치: `<paper-organizer repository>`
-- 참고 구현: `vendor/spdf legacy organizer`
+- 프로젝트 위치: 저장소 루트(사용자 환경에 독립적인 상대경로 사용)
+- 참고 구현: 저장소에 포함된 `vendor/spdf` submodule과 기존 Organizer 설계
 
 ## 1. 프로젝트 목표
 

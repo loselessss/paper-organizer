@@ -17,7 +17,7 @@ Windows에서 다운로드한 학술 PDF를 로컬에서 판별·정리하고 JS
 ## 개발 실행
 
 ```powershell
-Set-Location '<paper-organizer repository>'
+Set-Location '<paper-organizer 저장소 폴더>'
 python -m pip install -e '.[gui]'
 python -m unittest discover -s tests -v
 python run.py identity "C:\path\to\paper.pdf"
@@ -28,7 +28,7 @@ python -m paper_organizer.gui
 가상환경을 사용하는 현재 개발 PC에서는 다음 명령으로 바로 실행할 수 있습니다.
 
 ```powershell
-& '<paper-organizer repository>\.venv\Scripts\paper-organizer-gui.exe'
+.\.venv\Scripts\paper-organizer-gui.exe
 ```
 
 `vendor/spdf`는 sPDF `main`을 추적하는 submodule입니다. GUI 브리지는 지연
