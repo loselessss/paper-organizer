@@ -106,6 +106,19 @@ class CliTests(unittest.TestCase):
                 )
             self.assertTrue(pdf.is_file())
 
+    def test_legacy_migration_cleanup_requires_explicit_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaisesRegex(ValueError, "confirm-move-legacy"):
+                main(
+                    [
+                        "paperpack",
+                        "migrate-legacy",
+                        str(root),
+                        "--move-legacy-to-trash",
+                    ]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,8 @@ python run.py paperpack create "C:\path\to\paper.pdf" metadata.json paper.paperp
 python run.py paperpack inspect paper.paperpack
 python run.py paperpack extract paper.paperpack restored.pdf
 python run.py paperpack extract-many "C:\path\to\library\papers" --output-dir "C:\handoff\pdfs" --recursive
+python run.py paperpack migrate-legacy "C:\path\to\library"
+python run.py paperpack restore-migration "C:\path\to\library" migration-YYYYMMDD-HHMMSS-id
 python -m paper_organizer.gui
 ```
 
@@ -39,6 +41,14 @@ python -m paper_organizer.gui
 일치한 뒤 원본 패키지를 제거하려면 `--remove-source --confirm-remove-source`를 함께
 지정해야 합니다. 하나라도 손상되었거나 추출에 실패하면 생성 중인 출력물을 정리하고
 어떤 `.paperpack`도 제거하지 않습니다. 기존 출력 PDF는 덮어쓰지 않습니다.
+
+기존 PDF/sidecar 라이브러리는 GUI의 `레거시 변환` 탭이나 `paperpack migrate-legacy`
+명령으로 일괄 변환할 수 있습니다. 기본값은 기존 파일 유지입니다. 전체 변환·검증 후
+기존 파일을 앱 휴지통으로 옮기려면 CLI에서
+`--move-legacy-to-trash --confirm-move-legacy`를 함께 지정합니다.
+휴지통으로 옮긴 기존 PDF와 JSON은 `레거시 변환` 탭 또는
+`paperpack restore-migration` 명령으로 원래 위치에 복원할 수 있으며, 변환된
+paperpack은 그대로 유지됩니다.
 
 가상환경을 사용하는 현재 개발 PC에서는 다음 명령으로 바로 실행할 수 있습니다.
 

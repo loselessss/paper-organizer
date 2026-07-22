@@ -14,6 +14,13 @@ from .library_workflow import (
     ReviewItem,
     ReviewScan,
 )
+from .legacy_migration import (
+    LegacyMigrationCandidate,
+    LegacyMigrationPreview,
+    LegacyMigrationResult,
+    LegacyMigrationService,
+    LegacyMigrationTrashEntry,
+)
 from .summary_service import (
     PreparedSummary,
     ImmediateSummaryController,
@@ -37,6 +44,11 @@ __all__ = [
     "LibraryWorkflowController",
     "ReviewItem",
     "ReviewScan",
+    "LegacyMigrationCandidate",
+    "LegacyMigrationPreview",
+    "LegacyMigrationResult",
+    "LegacyMigrationService",
+    "LegacyMigrationTrashEntry",
     "PreparedSummary",
     "ImmediateSummaryController",
     "SummaryExecution",

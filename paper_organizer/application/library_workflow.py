@@ -25,6 +25,12 @@ from paper_organizer.application.cloud_metadata_sync import (
     CloudMetadataSynchronizer,
     MetadataConflict,
 )
+from paper_organizer.application.legacy_migration import (
+    LegacyMigrationPreview,
+    LegacyMigrationResult,
+    LegacyMigrationService,
+    LegacyMigrationTrashEntry,
+)
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
     build_identity_from_pages,
@@ -892,6 +898,36 @@ class LibraryWorkflowController:
 
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
+
+    def legacy_migration_preview(self) -> LegacyMigrationPreview:
+        _input_dir, root = self.configured_paths()
+        return LegacyMigrationService(root).preview()
+
+    def migrate_legacy_papers(
+        self,
+        metadata_paths: Iterable[Path],
+        *,
+        move_legacy_to_trash: bool = False,
+    ) -> LegacyMigrationResult:
+        _input_dir, root = self.configured_paths()
+        result = LegacyMigrationService(root).migrate(
+            metadata_paths,
+            move_legacy_to_trash=move_legacy_to_trash,
+        )
+        self._library_cache = None
+        self.sync_metadata()
+        return result
+
+    def legacy_migration_trash(self) -> tuple[LegacyMigrationTrashEntry, ...]:
+        _input_dir, root = self.configured_paths()
+        return LegacyMigrationService(root).list_trash()
+
+    def restore_legacy_migration(self, operation_id: str) -> tuple[Path, ...]:
+        _input_dir, root = self.configured_paths()
+        restored = LegacyMigrationService(root).restore_trash(operation_id)
+        self._library_cache = None
+        self.sync_metadata()
+        return restored
 
     def warm_startup_cache(self) -> StartupSnapshot:
         """Read lightweight JSON state for the splash startup worker."""

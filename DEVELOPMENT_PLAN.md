@@ -1165,6 +1165,8 @@ Organizer 전용 수정은 submodule 내부에 직접 넣지 않는다. sPDF 공
   기존 sidecar와 paperpack이 함께 있으면 같은 `file_id`의 paperpack을 우선한다.
 - 입력 PDF 원본 유지/검증 후 삭제 설정과 유지한 원본의 반복 스캔 방지 영수증을 추가했다.
 - sPDF와 즉시 요약은 paperpack 내부 PDF를 요청 시에만 검증·캐시 추출한다.
+- `레거시 변환` 탭과 CLI에서 기존 PDF/sidecar를 일괄 paperpack으로 변환한다.
+  기본은 기존 파일 유지이며 선택 시 전체 성공 후 앱 휴지통으로 이동·복원한다.
 - 기존 sidecar 묶음을 일괄 변환하는 마이그레이션 UI는 다음 단계다.
 
 - 다운로드 폴더를 기본 입력으로 제안하고 사용자 지정 입력 폴더를 저장한다.

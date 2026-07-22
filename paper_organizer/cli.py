@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from paper_organizer import __version__
+from paper_organizer.application.legacy_migration import LegacyMigrationService
 from paper_organizer.core.document_identity import analyze_pdf_identity
 from paper_organizer.core.indexer import rebuild_library_index
 from paper_organizer.core.paperpack import (
@@ -142,6 +143,41 @@ def _paperpack_extract_many(
     return 0
 
 
+def _paperpack_migrate_legacy(
+    library: Path,
+    *,
+    move_legacy_to_trash: bool,
+    confirm_move_legacy: bool,
+) -> int:
+    if move_legacy_to_trash and not confirm_move_legacy:
+        raise ValueError(
+            "--move-legacy-to-trash를 사용하려면 --confirm-move-legacy도 지정해야 합니다"
+        )
+    service = LegacyMigrationService(library)
+    preview = service.preview()
+    for problem in preview.problems:
+        print(f"확인 필요: {problem.path} — {problem.message}")
+    if not preview.candidates:
+        print(
+            f"변환할 레거시 논문이 없습니다. 이미 변환됨 {preview.already_migrated}개"
+        )
+        return 2 if preview.problems else 0
+    result = service.migrate(
+        [item.metadata_path for item in preview.candidates],
+        move_legacy_to_trash=move_legacy_to_trash,
+    )
+    print(f"레거시 변환 완료: {len(result.items)}개")
+    if result.trash_operation_id:
+        print(f"앱 휴지통 작업: {result.trash_operation_id}")
+    return 2 if preview.problems else 0
+
+
+def _paperpack_restore_migration(library: Path, operation_id: str) -> int:
+    restored = LegacyMigrationService(library).restore_trash(operation_id)
+    print(f"마이그레이션 원본 복원 완료: {len(restored)}개")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="paper-organizer")
     parser.add_argument("--version", action="version", version=__version__)
@@ -197,6 +233,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="원본 제거를 명시적으로 재확인합니다",
     )
+    migrate = paperpack_commands.add_parser(
+        "migrate-legacy", help="기존 PDF/sidecar 라이브러리를 일괄 변환합니다"
+    )
+    migrate.add_argument("library", type=Path)
+    migrate.add_argument(
+        "--move-legacy-to-trash",
+        action="store_true",
+        help="전체 변환 성공 후 기존 PDF/JSON을 앱 휴지통으로 이동합니다",
+    )
+    migrate.add_argument(
+        "--confirm-move-legacy",
+        action="store_true",
+        help="기존 파일의 앱 휴지통 이동을 명시적으로 재확인합니다",
+    )
+    restore_migration = paperpack_commands.add_parser(
+        "restore-migration", help="앱 휴지통의 레거시 원본을 복원합니다"
+    )
+    restore_migration.add_argument("library", type=Path)
+    restore_migration.add_argument("operation_id")
     return parser
 
 
@@ -228,4 +283,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 remove_source=args.remove_source,
                 confirm_remove_source=args.confirm_remove_source,
             )
+        if args.paperpack_command == "migrate-legacy":
+            return _paperpack_migrate_legacy(
+                args.library,
+                move_legacy_to_trash=args.move_legacy_to_trash,
+                confirm_move_legacy=args.confirm_move_legacy,
+            )
+        if args.paperpack_command == "restore-migration":
+            return _paperpack_restore_migration(args.library, args.operation_id)
     raise AssertionError(f"Unhandled command: {args.command}")

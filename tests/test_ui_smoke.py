@@ -60,9 +60,11 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
             self.assertEqual(window.tabs.tabText(1), "분석 큐")
             self.assertEqual(window.tabs.tabText(3), "클라우드 동기화")
-            self.assertEqual(window.tabs.tabText(4), "즉시 요약")
+            self.assertEqual(window.tabs.tabText(4), "레거시 변환")
+            self.assertEqual(window.tabs.tabText(5), "즉시 요약")
             self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
             self.assertEqual(window.collection_widget.interval_spin.value(), 300)
+            self.assertFalse(window.collection_widget.remove_source_check.isChecked())
             self.assertEqual(
                 window.collection_widget.form.venue_edit.placeholderText(),
                 "저널명 또는 학회명",
