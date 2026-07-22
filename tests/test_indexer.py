@@ -24,6 +24,7 @@ def record(file_id: str, relative_path: str, variant: str) -> dict:
             "title": "Example Paper",
             "authors": ["A. Researcher"],
             "year": 2025,
+            "venue": "Nature Methods",
         },
         "classification": {
             "category": "Medicine & Life Science",
@@ -67,6 +68,8 @@ class IndexerTests(unittest.TestCase):
             self.assertEqual(index["file_count"], 2)
             work = index["works"][0]
             self.assertEqual(work["representative_file_id"], "sha256:pub")
+            self.assertEqual(work["venue"], "Nature Methods")
+            self.assertIn("nature methods", work["search_text"])
             self.assertIn("dmem", work["search_text"])
             saved = json.loads(
                 (root / "index" / "library.json").read_text(encoding="utf-8")

@@ -63,10 +63,14 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(4), "즉시 요약")
             self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
             self.assertEqual(window.collection_widget.interval_spin.value(), 300)
+            self.assertEqual(
+                window.collection_widget.form.venue_edit.placeholderText(),
+                "저널명 또는 학회명",
+            )
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.3.0", splash_labels)
+            self.assertIn("Version 0.3.1", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             dialog.close()

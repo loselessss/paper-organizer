@@ -63,6 +63,8 @@ class MetadataForm(QGroupBox):
         self.authors_edit.setPlaceholderText("쉼표로 구분")
         self.year_edit = QLineEdit()
         self.year_edit.setMaximumWidth(100)
+        self.venue_edit = QLineEdit()
+        self.venue_edit.setPlaceholderText("저널명 또는 학회명")
         self.category_edit = QLineEdit("Uncategorized")
         self.subcategory_edit = QLineEdit("General")
         self.tags_edit = QLineEdit()
@@ -72,6 +74,7 @@ class MetadataForm(QGroupBox):
         form.addRow("제목", self.title_edit)
         form.addRow("저자", self.authors_edit)
         form.addRow("연도", self.year_edit)
+        form.addRow("저널/학회", self.venue_edit)
         form.addRow("분야", self.category_edit)
         form.addRow("세부분야", self.subcategory_edit)
         form.addRow("태그", self.tags_edit)
@@ -82,6 +85,7 @@ class MetadataForm(QGroupBox):
         self.title_edit.setText(value.title)
         self.authors_edit.setText(", ".join(value.authors))
         self.year_edit.setText(str(value.year or ""))
+        self.venue_edit.setText(value.venue)
         self.category_edit.setText(value.category)
         self.subcategory_edit.setText(value.subcategory)
         self.tags_edit.setText(", ".join(value.tags))
@@ -97,6 +101,7 @@ class MetadataForm(QGroupBox):
             title=self.title_edit.text().strip(),
             authors=split_values(self.authors_edit.text()),
             year=int(year_text) if year_text else None,
+            venue=self.venue_edit.text().strip(),
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
             tags=split_values(self.tags_edit.text()),
@@ -550,8 +555,10 @@ class LibraryWidget(QWidget):
         search_row.addWidget(self.search_edit, 1)
         search_row.addWidget(refresh_button)
         root.addLayout(search_row)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["제목", "저자", "연도", "분야", "판본"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["제목", "저널/학회", "저자", "연도", "분야", "판본"]
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -590,6 +597,7 @@ class LibraryWidget(QWidget):
             metadata = entry.metadata
             values = [
                 metadata.title,
+                metadata.venue,
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",

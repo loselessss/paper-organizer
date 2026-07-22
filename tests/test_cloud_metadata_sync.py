@@ -24,7 +24,12 @@ def sidecar_record(title: str = "Original Title") -> dict:
             "work_id": "doi:10.1000/cloud-test",
             "source_variant": "publisher",
         },
-        "bibliography": {"title": title, "authors": ["A. Author"], "year": 2026},
+        "bibliography": {
+            "title": title,
+            "authors": ["A. Author"],
+            "year": 2026,
+            "venue": "Nature Methods",
+        },
         "classification": {"category": "Science", "subcategory": "General", "tags": []},
         "description": {"summary_ko": "원본 설명", "keywords": []},
         "experimental_details": {"culture_media": [{"name": "DMEM"}]},
@@ -58,6 +63,8 @@ class CloudMetadataSyncTests(unittest.TestCase):
             self.assertEqual(first.exported_records, 1)
             self.assertEqual(first.conflicts, ())
             self.assertNotIn(str(root), sync.portable_path.read_text(encoding="utf-8"))
+            portable = json.loads(sync.portable_path.read_text(encoding="utf-8"))
+            self.assertEqual(portable["papers"][0]["bibliography"]["venue"], "Nature Methods")
             edit_portable(sync.portable_path, "Cloud Edited Title")
             second = sync.synchronize()
             self.assertEqual(second.imported_records, 1)

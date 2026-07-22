@@ -73,6 +73,7 @@ class EditablePaperMetadata:
     title: str = ""
     authors: list[str] = field(default_factory=list)
     year: int | None = None
+    venue: str = ""
     category: str = "Uncategorized"
     subcategory: str = "General"
     tags: list[str] = field(default_factory=list)
@@ -297,6 +298,7 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
         title=str(bibliography.get("title", "")),
         authors=[str(value) for value in bibliography.get("authors", [])],
         year=year,
+        venue=str(bibliography.get("venue", "")),
         category=str(classification.get("category") or "Uncategorized"),
         subcategory=str(classification.get("subcategory") or "General"),
         tags=[str(value) for value in classification.get("tags", [])],
@@ -705,6 +707,7 @@ class LibraryWorkflowController:
                     metadata.title,
                     *metadata.authors,
                     str(metadata.year or ""),
+                    metadata.venue,
                     metadata.category,
                     metadata.subcategory,
                     *metadata.tags,
@@ -875,6 +878,7 @@ class LibraryWorkflowController:
                     "bibliography.title": "user",
                     "bibliography.authors": "user",
                     "bibliography.year": "user",
+                    "bibliography.venue": "user",
                     "classification.category": "user",
                     "classification.subcategory": "user",
                     "classification.tags": "user",
@@ -921,7 +925,12 @@ def _validate_metadata(metadata: EditablePaperMetadata) -> None:
 
 def _apply_metadata(record: dict[str, Any], metadata: EditablePaperMetadata) -> None:
     record.setdefault("bibliography", {}).update(
-        {"title": metadata.title.strip(), "authors": metadata.authors, "year": metadata.year}
+        {
+            "title": metadata.title.strip(),
+            "authors": metadata.authors,
+            "year": metadata.year,
+            "venue": metadata.venue.strip(),
+        }
     )
     record.setdefault("classification", {}).update(
         {
@@ -999,6 +1008,7 @@ def _new_sidecar(
         "bibliography.title": "user",
         "bibliography.authors": "user",
         "bibliography.year": "user",
+        "bibliography.venue": "user",
         "classification.category": "user",
         "classification.subcategory": "user",
         "classification.tags": "user",

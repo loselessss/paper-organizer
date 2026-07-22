@@ -81,6 +81,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                 title="Curated Paper",
                 authors=["A. Researcher"],
                 year=2026,
+                venue="Nature Methods",
                 category="Life Science",
                 subcategory="Cell Biology",
                 tags=["DMEM", "A549"],
@@ -95,6 +96,8 @@ class LibraryWorkflowTests(unittest.TestCase):
             )
             index = json.loads((library / "index" / "library.json").read_text(encoding="utf-8"))
             self.assertEqual(index["work_count"], 1)
+            self.assertEqual(index["works"][0]["venue"], "Nature Methods")
+            self.assertEqual(len(controller.list_library("nature methods")), 1)
             mirrored = list(
                 (root / "OneDrive" / "Paper JSON" / "backup" / "sidecars").rglob(
                     "*.paper.json"
@@ -135,6 +138,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                     title="After",
                     authors=["Curator"],
                     year=2025,
+                    venue="Cell",
                     category="Edited",
                     subcategory="Index",
                     tags=["medium", "DMEM"],
@@ -142,6 +146,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(updated.metadata.title, "After")
+            self.assertEqual(updated.metadata.venue, "Cell")
             self.assertEqual(controller.list_library("dmem")[0].metadata.title, "After")
             history = list((library / "history").rglob("revision-*.paper.json"))
             self.assertEqual(len(history), 1)
