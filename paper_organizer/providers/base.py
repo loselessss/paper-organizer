@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 
+from paper_organizer.infra.secrets import validate_api_key
+
 
 SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -140,9 +142,10 @@ def require_cloud_consent(request: SummaryRequest) -> None:
 
 def require_api_key(api_key_source: ApiKeySource, provider: str) -> str:
     raw = api_key_source() if callable(api_key_source) else api_key_source
-    value = (raw or "").strip()
-    if not value:
-        raise ProviderError(f"No {provider} API key is configured")
-    if provider.lower() == "anthropic" and value.lower().startswith("sk-ant-admin"):
-        raise ProviderError("Anthropic Admin API keys are not accepted")
-    return value
+    try:
+        return validate_api_key(provider, raw)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "API key cannot be empty":
+            message = f"No {provider} API key is configured"
+        raise ProviderError(message) from None

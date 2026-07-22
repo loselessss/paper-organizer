@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package
-        run: python -m pip install -e .
+        run: python -m pip install -e .[gui]
       - name: Compile
         run: python -m compileall -q paper_organizer scripts tests run.py
       - name: Secret scan

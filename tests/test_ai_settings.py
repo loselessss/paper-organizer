@@ -1,0 +1,108 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from paper_organizer.application.ai_settings import AiSettingsController
+
+
+class MemorySecretStore:
+    def __init__(self):
+        self.values: dict[str, str] = {}
+
+    def get(self, provider):
+        return self.values.get(provider)
+
+    def set(self, provider, secret):
+        self.values[provider] = secret
+
+    def delete(self, provider):
+        self.values.pop(provider, None)
+
+
+class AiSettingsControllerTests(unittest.TestCase):
+    def test_saves_provider_preferences_without_api_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            store = MemorySecretStore()
+            controller = AiSettingsController(store, path)
+            view = controller.save_preferences(
+                provider="openai",
+                model="gpt-test",
+                cloud_processing_consent=True,
+                cloud_request_profile="high_throughput",
+                cloud_max_parallel_requests=6,
+                cloud_monthly_budget_usd=0,
+            )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(view.provider, "openai")
+        self.assertEqual(view.model, "gpt-test")
+        self.assertEqual(view.effective_parallel_requests, 6)
+        self.assertIsNone(view.cloud_monthly_budget_usd)
+        self.assertNotIn("api_key", saved)
+
+    def test_key_status_is_masked_and_key_can_be_deleted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            store = MemorySecretStore()
+            controller = AiSettingsController(store, path)
+            controller.save_preferences(
+                provider="anthropic",
+                model="claude-test",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=10,
+            )
+            view = controller.save_api_key("anthropic", "private-key-1234")
+            status = controller.key_status("anthropic")
+            deleted = controller.delete_api_key("anthropic")
+
+        self.assertTrue(view.key_configured)
+        self.assertEqual(status.masked_hint, "••••1234")
+        self.assertFalse(hasattr(status, "secret"))
+        self.assertFalse(deleted.key_configured)
+
+    def test_rejects_anthropic_admin_key_before_storage(self):
+        store = MemorySecretStore()
+        controller = AiSettingsController(store, Path("unused.json"))
+        admin_key = "sk-ant-" + "admin-example-secret"
+        with self.assertRaisesRegex(ValueError, "Admin API keys"):
+            controller.save_api_key("anthropic", admin_key)
+        self.assertEqual(store.values, {})
+
+    def test_provider_models_are_preserved_independently(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            controller = AiSettingsController(MemorySecretStore(), path)
+            controller.save_preferences(
+                provider="openai",
+                model="gpt-custom",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+            )
+            controller.save_preferences(
+                provider="anthropic",
+                model="claude-custom",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+            )
+            openai_view = controller.save_preferences(
+                provider="openai",
+                model="gpt-custom",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+            )
+
+        self.assertEqual(openai_view.model, "gpt-custom")
+
+
+if __name__ == "__main__":
+    unittest.main()

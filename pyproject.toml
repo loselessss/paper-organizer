@@ -13,11 +13,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["PyQt5>=5.15"]
+gui = ["PyQt5>=5.15", "keyring>=25"]
 cloud = ["keyring>=25"]
 
 [project.scripts]
 paper-organizer = "paper_organizer.cli:main"
+paper-organizer-gui = "paper_organizer.gui:main"
 
 [tool.setuptools.packages.find]
 include = ["paper_organizer*"]

@@ -36,6 +36,16 @@ def _validate_provider(provider: str) -> str:
     return normalized
 
 
+def validate_api_key(provider: str, secret: str | None) -> str:
+    normalized = _validate_provider(provider)
+    value = (secret or "").strip()
+    if not value:
+        raise ValueError("API key cannot be empty")
+    if normalized == "anthropic" and value.lower().startswith("sk-ant-admin"):
+        raise ValueError("Anthropic Admin API keys are not accepted")
+    return value
+
+
 def mask_secret(secret: str | None) -> str:
     """Return a UI-safe hint without exposing enough material to reuse the key."""
     value = (secret or "").strip()
@@ -103,9 +113,7 @@ class KeyringSecretStore:
 
     def set(self, provider: str, secret: str) -> None:
         normalized = _validate_provider(provider)
-        value = secret.strip()
-        if not value:
-            raise ValueError("API key cannot be empty")
+        value = validate_api_key(normalized, secret)
         self._keyring.set_password(self._service_name, normalized, value)
 
     def delete(self, provider: str) -> None:

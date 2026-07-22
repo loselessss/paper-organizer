@@ -21,6 +21,8 @@ git clone --recurse-submodules <paper-organizer-repository-url>
 python -m unittest discover -s tests -v
 python run.py identity "C:\path\to\paper.pdf"
 python run.py reindex "C:\path\to\library"
+python -m pip install -e .[gui]
+paper-organizer-gui
 ```
 
 `vendor/spdf`는 sPDF `main`을 추적하는 submodule입니다. GUI 브리지는 지연
@@ -32,3 +34,8 @@ API 키는 설정 JSON이나 Git에 저장하지 않고 OS 자격 증명 저장�
 `cloud`) 또는 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` 환경 변수에서 읽습니다.
 클라우드 키는 요청 시점에만 조회하고 공식 API 주소에만 전송하며, 화면에는
 마지막 네 글자만 표시합니다. Anthropic Admin API 키는 허용하지 않습니다.
+
+현재 GUI 셸에는 제공자·모델·키·클라우드 처리량을 관리하는 AI 설정 화면과
+PDF 전송 범위·페이지·예상 토큰을 먼저 보여주는 즉시 요약 위젯이 연결되어
+있습니다. 즉시 요약은 임시 분석으로만 표시되며 PDF를 이동하거나 정식 색인을
+수정하지 않습니다.
