@@ -24,6 +24,7 @@ class AppSettings:
     input_dir: str = ""
     library_root: str = ""
     metadata_sync_dir: str = ""
+    remove_source_after_import: bool = False
     auto_enabled: bool = False
     resource_profile: str = "eco"
     model_profile: str = "auto"
@@ -41,6 +42,8 @@ class AppSettings:
     def validate(self) -> None:
         if self.schema_version != 1:
             raise ValueError(f"Unsupported settings schema: {self.schema_version}")
+        if not isinstance(self.remove_source_after_import, bool):
+            raise ValueError("remove_source_after_import must be a boolean")
         if self.resource_profile not in {"eco", "balanced", "performance"}:
             raise ValueError("resource_profile must be eco, balanced or performance")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:

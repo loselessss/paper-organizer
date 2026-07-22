@@ -11,7 +11,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from paper_organizer.core.indexer import iter_sidecars, load_sidecar, rebuild_library_index
+from paper_organizer.core.indexer import (
+    iter_record_paths,
+    load_record,
+    rebuild_library_index,
+)
+from paper_organizer.core.paperpack import (
+    PAPERPACK_SUFFIX,
+    PaperPackError,
+    update_paperpack,
+)
 
 
 PORTABLE_SCHEMA_VERSION = 1
@@ -266,12 +275,21 @@ class CloudMetadataSynchronizer:
     def _local_records(self) -> tuple[dict[str, dict[str, Any]], dict[str, Path]]:
         records: dict[str, dict[str, Any]] = {}
         sidecars: dict[str, Path] = {}
-        for sidecar in iter_sidecars(self.library_root):
+        for sidecar in iter_record_paths(self.library_root):
             try:
-                portable = _portable_record(load_sidecar(sidecar))
-            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                portable = _portable_record(load_record(sidecar))
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                json.JSONDecodeError,
+                PaperPackError,
+            ):
                 continue
             record_id = portable["record_id"]
+            if record_id in records:
+                continue
             records[record_id] = portable
             sidecars[record_id] = sidecar
         return records, sidecars
@@ -362,7 +380,7 @@ class CloudMetadataSynchronizer:
         originals: dict[Path, dict[str, Any]] = {}
         try:
             for _record_id, portable, sidecar in updates:
-                record = load_sidecar(sidecar)
+                record = load_record(sidecar)
                 originals[sidecar] = copy.deepcopy(record)
                 self._backup_revision(record)
                 for section in EDITABLE_SECTIONS:
@@ -377,11 +395,20 @@ class CloudMetadataSynchronizer:
                 curation["last_edited_at"] = _now_iso()
                 curation["last_edited_by"] = "cloud_sync"
                 record.setdefault("workflow", {})["updated_at"] = _now_iso()
-                _atomic_json_write(sidecar, record)
+                if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+                    update_paperpack(sidecar, record, changed_by="cloud_sync")
+                else:
+                    _atomic_json_write(sidecar, record)
             rebuild_library_index(self.library_root)
         except Exception as exc:
             for sidecar, original in originals.items():
-                _atomic_json_write(sidecar, original)
+                if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+                    try:
+                        update_paperpack(sidecar, original, changed_by="rollback")
+                    except PaperPackError:
+                        pass
+                else:
+                    _atomic_json_write(sidecar, original)
             try:
                 rebuild_library_index(self.library_root)
             except Exception:

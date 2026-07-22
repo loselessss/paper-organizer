@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from paper_organizer.core.indexer import rebuild_library_index
+from paper_organizer.core.paperpack import create_paperpack
 
 
 def record(file_id: str, relative_path: str, variant: str) -> dict:
@@ -89,6 +90,49 @@ class IndexerTests(unittest.TestCase):
                 (root / "index" / "errors.json").read_text(encoding="utf-8")
             )
             self.assertEqual(len(error_data["problems"]), 1)
+
+    def test_rebuild_reads_paperpack_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            papers = root / "papers"
+            papers.mkdir()
+            pdf = root / "source.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nindex fixture\n%%EOF\n")
+            packed = record(
+                "sha256:packed",
+                "papers/example.paperpack",
+                "publisher",
+            )
+            create_paperpack(papers / "example.paperpack", pdf, packed)
+            index, problems = rebuild_library_index(root)
+            self.assertEqual(problems, [])
+            self.assertEqual(index["work_count"], 1)
+            self.assertEqual(index["file_count"], 1)
+            self.assertEqual(index["works"][0]["venue"], "Nature Methods")
+
+    def test_paperpack_wins_over_same_file_legacy_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            papers = root / "papers"
+            papers.mkdir()
+            pdf = root / "source.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nindex fixture\n%%EOF\n")
+            packed = record(
+                "sha256:same",
+                "papers/example.paperpack",
+                "publisher",
+            )
+            packed["bibliography"]["title"] = "PaperPack Title"
+            create_paperpack(papers / "example.paperpack", pdf, packed)
+            legacy = record("sha256:same", "papers/example.pdf", "publisher")
+            legacy["bibliography"]["title"] = "Legacy Title"
+            (papers / "example.pdf.paper.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+            index, problems = rebuild_library_index(root)
+            self.assertEqual(problems, [])
+            self.assertEqual(index["file_count"], 1)
+            self.assertEqual(index["works"][0]["title"], "PaperPack Title")
 
 
 if __name__ == "__main__":

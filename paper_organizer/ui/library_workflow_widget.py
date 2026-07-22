@@ -139,14 +139,21 @@ class CollectionReviewWidget(QWidget):
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
         self.interval_spin.valueChanged.connect(self._apply_timer_interval)
         self.auto_check = QCheckBox("설정한 주기로 가볍게 검색 (안정된 새 PDF만 1회 분석)")
+        self.remove_source_check = QCheckBox(
+            "paperpack 검증 완료 후 입력 폴더의 원본 PDF 삭제"
+        )
+        self.remove_source_check.setToolTip(
+            "기본값은 원본 유지입니다. 삭제 실패 시 새 paperpack을 롤백합니다."
+        )
         save_paths = QPushButton("폴더 설정 저장")
         save_paths.clicked.connect(self._save_paths)
         path_form.addRow("입력 폴더", input_row)
-        path_form.addRow("PDF 라이브러리", library_row)
+        path_form.addRow("PaperPack 라이브러리", library_row)
         path_form.addRow("OneDrive JSON 미러", sync_row)
         path_form.addRow("시스템 부하", self.profile_combo)
         path_form.addRow("스캔 주기", self.interval_spin)
         path_form.addRow("자동 감시", self.auto_check)
+        path_form.addRow("입력 PDF", self.remove_source_check)
         path_form.addRow("", save_paths)
         root.addWidget(paths)
 
@@ -177,7 +184,7 @@ class CollectionReviewWidget(QWidget):
 
         review_actions = QHBoxLayout()
         self.open_button = QPushButton("sPDF로 열기")
-        self.organize_button = QPushButton("승인 후 라이브러리로 이동")
+        self.organize_button = QPushButton("승인 후 paperpack으로 보관")
         self.trash_button = QPushButton("확인된 중복을 앱 휴지통으로 이동")
         self.restore_button = QPushButton("앱 휴지통에서 복원…")
         self.open_button.clicked.connect(self._open_selected)
@@ -217,6 +224,7 @@ class CollectionReviewWidget(QWidget):
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         self.interval_spin.setValue(settings.scan_interval_seconds)
         self.auto_check.setChecked(settings.auto_enabled)
+        self.remove_source_check.setChecked(settings.remove_source_after_import)
         self._set_auto_enabled(settings.auto_enabled)
 
     def _browse_input(self) -> None:
@@ -225,7 +233,9 @@ class CollectionReviewWidget(QWidget):
             self.input_edit.setText(path)
 
     def _browse_library(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "PDF 라이브러리 선택", self.library_edit.text())
+        path = QFileDialog.getExistingDirectory(
+            self, "PaperPack 라이브러리 선택", self.library_edit.text()
+        )
         if path:
             self.library_edit.setText(path)
 
@@ -246,6 +256,7 @@ class CollectionReviewWidget(QWidget):
                 metadata_sync_dir=Path(sync_text) if sync_text else None,
                 resource_profile=self.profile_combo.currentData(),
                 scan_interval_seconds=self.interval_spin.value(),
+                remove_source_after_import=self.remove_source_check.isChecked(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))
@@ -363,7 +374,7 @@ class CollectionReviewWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "논문 이동 실패", str(exc))
             return
-        message = f"이동 완료: {result.pdf_path}"
+        message = f"PaperPack 보관 완료: {result.pdf_path}"
         if result.sync_warning:
             message += f"\nJSON 미러 경고: {result.sync_warning}"
         QMessageBox.information(self, "논문 정리 완료", message)
@@ -518,7 +529,12 @@ class AnalysisQueueWidget(QWidget):
         if not Path(item.path).is_file():
             QMessageBox.warning(self, "파일 없음", "큐에 기록된 PDF를 찾을 수 없습니다.")
             return
-        self.summary_requested.emit(item.path)
+        try:
+            pdf = self._controller.materialize_pdf(Path(item.path))
+        except Exception as exc:
+            QMessageBox.warning(self, "PDF 준비 실패", str(exc))
+            return
+        self.summary_requested.emit(str(pdf))
 
     def _remove_selected(self) -> None:
         item = self._selected()
@@ -527,7 +543,7 @@ class AnalysisQueueWidget(QWidget):
         if QMessageBox.question(
             self,
             "큐 항목 제거",
-            "분석 큐 기록만 제거합니다. PDF와 색인 JSON은 삭제되지 않습니다. 계속할까요?",
+            "분석 큐 기록만 제거합니다. PDF와 paperpack은 삭제되지 않습니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
         try:
@@ -566,7 +582,7 @@ class LibraryWidget(QWidget):
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
         root.addWidget(self.table, 1)
-        self.form = MetadataForm("선택한 논문의 JSON 색인 편집")
+        self.form = MetadataForm("선택한 논문의 PaperPack 색인 편집")
         self.form.set_metadata(None)
         root.addWidget(self.form)
         actions = QHBoxLayout()
@@ -630,7 +646,7 @@ class LibraryWidget(QWidget):
             QMessageBox.warning(self, "색인 저장 실패", str(exc))
             return
         self._entries[self.table.currentRow()] = updated
-        status = "sidecar JSON 저장 및 통합 인덱스 재생성을 완료했습니다."
+        status = "PaperPack 메타데이터 저장 및 통합 인덱스 재생성을 완료했습니다."
         if updated.sync_warning:
             status += f" OneDrive JSON 미러 경고: {updated.sync_warning}"
         self.refresh()
@@ -641,7 +657,7 @@ class LibraryWidget(QWidget):
         entry = self._selected()
         if entry:
             try:
-                open_pdf(entry.pdf_path, self)
+                open_pdf(self._controller.materialize_pdf(entry.pdf_path), self)
             except Exception as exc:
                 QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
 
@@ -655,7 +671,7 @@ class CloudSyncWidget(QWidget):
         self._conflicts: list[MetadataConflict] = []
         root = QVBoxLayout(self)
         note = QLabel(
-            "로컬 sidecar는 원본으로 보존하고, OneDrive의 portable-library.json은 "
+            "로컬 paperpack은 원본으로 보존하고, OneDrive의 portable-library.json은 "
             "클라우드 편집용으로 사용합니다. 양쪽이 모두 바뀐 경우에만 여기에서 선택합니다."
         )
         note.setWordWrap(True)

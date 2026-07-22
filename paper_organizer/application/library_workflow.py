@@ -34,9 +34,17 @@ from paper_organizer.core.document_identity import (
 )
 from paper_organizer.core.indexer import (
     SIDECAR_SUFFIX,
-    iter_sidecars,
-    load_sidecar,
+    iter_record_paths,
+    load_record,
     rebuild_library_index,
+)
+from paper_organizer.core.paperpack import (
+    PAPERPACK_SUFFIX,
+    PaperPackError,
+    extract_paperpack_pdf,
+    import_pdf_to_paperpack,
+    inspect_paperpack,
+    update_paperpack,
 )
 from paper_organizer.infra.settings import (
     AppSettings,
@@ -218,6 +226,86 @@ def _atomic_file_copy(source: Path, destination: Path) -> None:
         raise
 
 
+def _import_receipts_path(library_root: Path) -> Path:
+    return library_root / "state" / "imported-sources.json"
+
+
+def _load_import_receipts(library_root: Path) -> dict[str, dict[str, Any]]:
+    path = _import_receipts_path(library_root)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != 1 or not isinstance(data.get("sources"), dict):
+            return {}
+        return {
+            str(key): value
+            for key, value in data["sources"].items()
+            if isinstance(value, dict)
+        }
+    except (OSError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _source_is_already_imported(
+    path: Path,
+    size: int,
+    modified_ns: int,
+    library_root: Path,
+    receipts: dict[str, dict[str, Any]],
+) -> bool:
+    receipt = receipts.get(str(path.resolve()))
+    if not receipt:
+        return False
+    try:
+        unchanged = int(receipt.get("size_bytes", -1)) == size and int(
+            receipt.get("modified_ns", -1)
+        ) == modified_ns
+    except (TypeError, ValueError):
+        return False
+    if not unchanged:
+        return False
+    relative = str(receipt.get("paperpack_relative_path", ""))
+    if not relative:
+        return False
+    try:
+        paperpack = _resolved_library_path(library_root, relative)
+    except LibraryWorkflowError:
+        return False
+    if not paperpack.is_file() or paperpack.suffix.casefold() != PAPERPACK_SUFFIX:
+        return False
+    try:
+        inspect_paperpack(paperpack)
+    except (OSError, PaperPackError):
+        return False
+    return True
+
+
+def _record_imported_source(
+    library_root: Path,
+    source: Path,
+    paperpack: Path,
+    file_sha256: str,
+) -> None:
+    stat = source.stat()
+    records = _load_import_receipts(library_root)
+    records[str(source.resolve())] = {
+        "size_bytes": stat.st_size,
+        "modified_ns": stat.st_mtime_ns,
+        "file_sha256": file_sha256,
+        "paperpack_relative_path": paperpack.relative_to(library_root).as_posix(),
+        "imported_at": _now_iso(),
+    }
+    _atomic_json_write(
+        _import_receipts_path(library_root),
+        {
+            "schema_version": 1,
+            "updated_at": _now_iso(),
+            "sources": records,
+        },
+    )
+
+
 def _inside(root: Path, path: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
@@ -250,6 +338,16 @@ def _unique_destination(directory: Path, original_name: str) -> Path:
     number = 2
     while candidate.exists() or Path(f"{candidate}{SIDECAR_SUFFIX}").exists():
         candidate = directory / f"{stem} ({number}).pdf"
+        number += 1
+    return candidate
+
+
+def _unique_paperpack_destination(directory: Path, original_name: str) -> Path:
+    stem = _safe_component(Path(original_name).stem, "paper")
+    candidate = directory / f"{stem}{PAPERPACK_SUFFIX}"
+    number = 2
+    while candidate.exists():
+        candidate = directory / f"{stem} ({number}){PAPERPACK_SUFFIX}"
         number += 1
     return candidate
 
@@ -345,12 +443,28 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
 
 
 def _library_references(root: Path) -> Iterable[tuple[dict[str, Any], Path, Path, DocumentIdentity]]:
-    for sidecar in iter_sidecars(root):
+    seen_file_ids: set[str] = set()
+    for record_path in iter_record_paths(root):
         try:
-            record = load_sidecar(sidecar)
-            pdf_path = _resolved_library_path(root, str(record["file"]["relative_path"]))
-            yield record, pdf_path, sidecar, _identity_from_record(record)
-        except (OSError, ValueError, TypeError, KeyError, LibraryWorkflowError):
+            record = load_record(record_path)
+            storage_path = _resolved_library_path(
+                root, str(record["file"]["relative_path"])
+            )
+            if record_path.suffix.casefold() == PAPERPACK_SUFFIX:
+                storage_path = record_path.resolve()
+            identity = _identity_from_record(record)
+            if identity.file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(identity.file_id)
+            yield record, storage_path, record_path, identity
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            LibraryWorkflowError,
+            PaperPackError,
+        ):
             continue
 
 
@@ -413,6 +527,7 @@ class LibraryWorkflowController:
         metadata_sync_dir: Path | None = None,
         resource_profile: str | None = None,
         scan_interval_seconds: int | None = None,
+        remove_source_after_import: bool | None = None,
     ) -> AppSettings:
         input_path = input_dir.expanduser().resolve()
         library_path = library_root.expanduser().resolve()
@@ -431,6 +546,8 @@ class LibraryWorkflowController:
             settings.resource_profile = resource_profile
         if scan_interval_seconds is not None:
             settings.scan_interval_seconds = scan_interval_seconds
+        if remove_source_after_import is not None:
+            settings.remove_source_after_import = bool(remove_source_after_import)
         save_settings(settings, self._settings_path)
         self._library_cache = None
         return settings
@@ -440,11 +557,26 @@ class LibraryWorkflowController:
         input_dir, library_root = self.configured_paths()
         if not input_dir.is_dir():
             raise LibraryWorkflowError("입력 폴더가 존재하지 않습니다. 설정에서 지정하세요.")
+        receipts = _load_import_receipts(library_root)
         candidates = list(iter_pdf_candidates(input_dir))
-        stable = self._tracker.scan(
-            input_dir,
-            minimum_age_seconds=settings.minimum_age_seconds,
-        )
+        active_candidates: list[Path] = []
+        for path in candidates:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if not _source_is_already_imported(
+                path, stat.st_size, stat.st_mtime_ns, library_root, receipts
+            ):
+                active_candidates.append(path)
+        stable = [
+            found
+            for found in self._tracker.scan(
+                input_dir,
+                minimum_age_seconds=settings.minimum_age_seconds,
+            )
+            if found.path in active_candidates
+        ]
         references = tuple(_library_references(library_root)) if library_root.is_dir() else ()
         items: list[ReviewItem] = []
         problems: list[ScanProblem] = []
@@ -486,19 +618,20 @@ class LibraryWorkflowController:
                 ScanProblem(library_root, f"JSON 미러: {message}")
                 for message in sync.problems
             )
-        candidate_set = {path.resolve() for path in candidates}
+        candidate_set = {path.resolve() for path in active_candidates}
         self._cache = {
             path: value for path, value in self._cache.items() if path.resolve() in candidate_set
         }
         return ReviewScan(
             items=tuple(sorted(items, key=lambda item: item.path.name.casefold())),
-            pending_stability=max(0, len(candidates) - len(stable)),
+            pending_stability=max(0, len(active_candidates) - len(stable)),
             problems=tuple(problems),
         )
 
     def organize(self, item: ReviewItem, metadata: EditablePaperMetadata) -> OrganizedPaper:
         _validate_metadata(metadata)
         _input_dir, library_root = self.configured_paths()
+        settings = self.settings()
         source = item.path.resolve()
         if not source.is_file():
             raise LibraryWorkflowError("원본 PDF를 찾을 수 없습니다.")
@@ -508,22 +641,23 @@ class LibraryWorkflowController:
         subcategory = _safe_component(metadata.subcategory, "General")
         destination_dir = library_root / "papers" / category / subcategory
         destination_dir.mkdir(parents=True, exist_ok=True)
-        destination = _unique_destination(destination_dir, source.name)
-        sidecar = Path(f"{destination}{SIDECAR_SUFFIX}")
+        destination = _unique_paperpack_destination(destination_dir, source.name)
         record = _new_sidecar(item, metadata, source, destination, library_root)
-        moved = False
         try:
-            shutil.move(str(source), str(destination))
-            moved = True
-            _atomic_json_write(sidecar, record)
+            import_result = import_pdf_to_paperpack(
+                destination,
+                source,
+                record,
+                remove_source=settings.remove_source_after_import,
+            )
             rebuild_library_index(library_root)
         except Exception as exc:
             try:
-                if sidecar.exists():
-                    sidecar.unlink()
-                if moved and destination.exists() and not source.exists():
-                    shutil.move(str(destination), str(source))
-            except OSError:
+                if destination.exists() and not source.exists():
+                    extract_paperpack_pdf(destination, source)
+                if destination.exists():
+                    destination.unlink()
+            except (OSError, PaperPackError):
                 pass
             try:
                 rebuild_library_index(library_root)
@@ -534,6 +668,16 @@ class LibraryWorkflowController:
         self._cache.pop(source, None)
         self._library_cache = None
         warnings: list[str] = []
+        if not import_result.source_removed:
+            try:
+                _record_imported_source(
+                    library_root,
+                    source,
+                    destination,
+                    item.identity.file_sha256,
+                )
+            except OSError as exc:
+                warnings.append(f"입력 PDF 처리 기록: {exc}")
         try:
             self._queue().relocate(
                 item.identity.file_sha256,
@@ -546,7 +690,7 @@ class LibraryWorkflowController:
         sync = self.sync_metadata()
         warnings.extend(sync.problems)
         warning = "; ".join(warnings)
-        return OrganizedPaper(destination, sidecar, warning)
+        return OrganizedPaper(destination, destination, warning)
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
         if item.duplicate is None or not item.duplicate.confirmed:
@@ -664,6 +808,28 @@ class LibraryWorkflowController:
     def analysis_queue(self) -> list[AnalysisQueueItem]:
         return self._queue().load()
 
+    def materialize_pdf(self, path: Path) -> Path:
+        """Return a real PDF path, extracting a verified paperpack lazily."""
+
+        source = path.expanduser().resolve()
+        if source.suffix.casefold() == ".pdf":
+            if not source.is_file():
+                raise LibraryWorkflowError("PDF 파일을 찾을 수 없습니다.")
+            return source
+        if source.suffix.casefold() != PAPERPACK_SUFFIX or not source.is_file():
+            raise LibraryWorkflowError("PDF 또는 paperpack 파일을 찾을 수 없습니다.")
+        _input_dir, root = self.configured_paths()
+        if not _inside((root / "papers").resolve(), source):
+            raise LibraryWorkflowError("라이브러리 밖의 paperpack은 열 수 없습니다.")
+        try:
+            info = inspect_paperpack(source)
+            cached = root / "cache" / "pdf" / f"{info.pdf_sha256}.pdf"
+            if cached.is_file() and sha256_file(cached) == info.pdf_sha256:
+                return cached
+            return extract_paperpack_pdf(source, cached)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(f"paperpack PDF를 열 수 없습니다: {exc}") from None
+
     def set_queue_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
         item = self._queue().set_priority(queue_id, high)
         self.sync_metadata()
@@ -753,10 +919,10 @@ class LibraryWorkflowController:
         )
 
     def sync_metadata(self) -> MetadataSyncResult:
-        """Back up original JSON and synchronize a separate portable edit file.
+        """Export paperpack JSON and synchronize a separate portable edit file.
 
-        Local sidecars remain recoverable originals. Cloud edits are applied only when
-        one side changed; concurrent changes are reported for explicit resolution.
+        Local paperpacks remain authoritative. Cloud edits are applied only when one
+        side changed; concurrent changes are reported for explicit resolution.
         """
         settings = self.settings()
         if not settings.metadata_sync_dir:
@@ -768,13 +934,23 @@ class LibraryWorkflowController:
                 destination, 0, ("JSON 동기화 폴더는 라이브러리 밖에 지정하세요.",)
             )
         sources: list[tuple[Path, Path]] = []
-        for sidecar in iter_sidecars(root):
-            sources.append(
-                (
-                    sidecar,
-                    Path("backup") / "sidecars" / sidecar.relative_to(root / "papers"),
+        paperpack_exports: list[tuple[Path, Path]] = []
+        for record_path in iter_record_paths(root):
+            relative = record_path.relative_to(root / "papers")
+            if record_path.suffix.casefold() == PAPERPACK_SUFFIX:
+                paperpack_exports.append(
+                    (
+                        record_path,
+                        Path("backup")
+                        / "paperpacks"
+                        / relative.parent
+                        / f"{record_path.name}.metadata.json",
+                    )
                 )
-            )
+            else:
+                sources.append(
+                    (record_path, Path("backup") / "sidecars" / relative)
+                )
         for section in ("index", "history", "state"):
             section_root = root / section
             if section_root.is_dir():
@@ -787,6 +963,12 @@ class LibraryWorkflowController:
                     )
         copied = 0
         problems: list[str] = []
+        for paperpack, relative in paperpack_exports:
+            try:
+                _atomic_json_write(destination / relative, load_record(paperpack))
+                copied += 1
+            except (OSError, ValueError, PaperPackError) as exc:
+                problems.append(f"{relative.as_posix()}: {exc}")
         for source, relative in sources:
             try:
                 _atomic_file_copy(source, destination / relative)
@@ -858,16 +1040,20 @@ class LibraryWorkflowController:
         _input_dir, root = self.configured_paths()
         sidecar = entry.sidecar_path.resolve()
         papers_root = (root / "papers").resolve()
-        if not _inside(papers_root, sidecar) or not sidecar.name.endswith(SIDECAR_SUFFIX):
+        is_paperpack = sidecar.suffix.casefold() == PAPERPACK_SUFFIX
+        is_legacy_sidecar = sidecar.name.endswith(SIDECAR_SUFFIX)
+        if not _inside(papers_root, sidecar) or not (
+            is_paperpack or is_legacy_sidecar
+        ):
             raise LibraryWorkflowError("라이브러리 밖의 색인은 수정할 수 없습니다.")
-        current = load_sidecar(sidecar)
+        current = load_record(sidecar)
         original = json.loads(json.dumps(current))
         curation = current.setdefault("curation", {})
         revision = int(curation.get("revision", 0)) + 1
         file_hash = str(current.get("file", {}).get("sha256") or "unknown").replace(":", "-")
         history = root / "history" / _safe_component(file_hash, "unknown")
         backup = history / f"revision-{revision - 1:04d}.paper.json"
-        if not backup.exists():
+        if is_legacy_sidecar and not backup.exists():
             _atomic_json_write(backup, original)
         _apply_metadata(current, metadata)
         curation.update(
@@ -890,10 +1076,19 @@ class LibraryWorkflowController:
         )
         current.setdefault("workflow", {})["updated_at"] = _now_iso()
         try:
-            _atomic_json_write(sidecar, current)
+            if is_paperpack:
+                update_paperpack(sidecar, current, changed_by="user")
+            else:
+                _atomic_json_write(sidecar, current)
             rebuild_library_index(root)
         except Exception as exc:
-            _atomic_json_write(sidecar, original)
+            if is_paperpack:
+                try:
+                    update_paperpack(sidecar, original, changed_by="rollback")
+                except Exception:
+                    pass
+            else:
+                _atomic_json_write(sidecar, original)
             try:
                 rebuild_library_index(root)
             except Exception:

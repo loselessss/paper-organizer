@@ -1,4 +1,4 @@
-"""Branded splash screen and asynchronous JSON startup loader."""
+"""Branded splash screen and asynchronous library startup loader."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def create_splash() -> QSplashScreen:
         "color: #d8e4f3; background: transparent; font-family: 'Segoe UI'; font-size: 11pt;"
     )
     splash.showMessage(
-        "JSON 색인과 메타데이터를 읽는 중…",
+        "PaperPack과 JSON 색인을 읽는 중…",
         Qt.AlignLeft | Qt.AlignBottom,
         QColor("#ffffff"),
     )

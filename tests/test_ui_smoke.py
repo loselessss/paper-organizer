@@ -70,7 +70,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.3.1", splash_labels)
+            self.assertIn("Version 0.4.0", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             dialog.close()

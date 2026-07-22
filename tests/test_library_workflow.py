@@ -14,6 +14,11 @@ from paper_organizer.application.library_workflow import (
 )
 from paper_organizer.infra.settings import load_settings, save_settings
 from paper_organizer.models.paper import DuplicateKind
+from paper_organizer.core.paperpack import (
+    PAPERPACK_SUFFIX,
+    inspect_paperpack,
+    load_paperpack_metadata,
+)
 
 
 def academic_pages() -> list[str]:
@@ -43,7 +48,9 @@ def write_pdf(path: Path, pages: list[str]) -> None:
 
 
 class LibraryWorkflowTests(unittest.TestCase):
-    def _controller(self, root: Path, *, sync: bool = False):
+    def _controller(
+        self, root: Path, *, sync: bool = False, remove_source: bool = False
+    ):
         input_dir = root / "downloads"
         library = root / "library"
         input_dir.mkdir()
@@ -54,6 +61,7 @@ class LibraryWorkflowTests(unittest.TestCase):
             library,
             auto_enabled=False,
             metadata_sync_dir=(root / "OneDrive" / "Paper JSON") if sync else None,
+            remove_source_after_import=remove_source,
         )
         settings = load_settings(settings_path)
         settings.minimum_age_seconds = 0
@@ -68,7 +76,7 @@ class LibraryWorkflowTests(unittest.TestCase):
     def test_downloads_is_the_default_input_folder(self):
         self.assertEqual(default_input_dir(), Path.home() / "Downloads")
 
-    def test_organize_writes_sidecar_index_and_onedrive_json_mirror(self):
+    def test_organize_writes_paperpack_index_and_onedrive_json_mirror(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             controller, input_dir, library = self._controller(root, sync=True)
@@ -90,7 +98,10 @@ class LibraryWorkflowTests(unittest.TestCase):
             organized = controller.organize(result.items[0], metadata)
             self.assertTrue(organized.pdf_path.is_file())
             self.assertTrue(organized.sidecar_path.is_file())
-            self.assertFalse(source.exists())
+            self.assertEqual(organized.pdf_path.suffix, PAPERPACK_SUFFIX)
+            self.assertEqual(organized.pdf_path, organized.sidecar_path)
+            self.assertTrue(source.exists())
+            self.assertEqual(controller.scan().items, ())
             self.assertEqual(
                 controller.analysis_queue()[0].status, "organized_pending_analysis"
             )
@@ -99,8 +110,8 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(index["works"][0]["venue"], "Nature Methods")
             self.assertEqual(len(controller.list_library("nature methods")), 1)
             mirrored = list(
-                (root / "OneDrive" / "Paper JSON" / "backup" / "sidecars").rglob(
-                    "*.paper.json"
+                (root / "OneDrive" / "Paper JSON" / "backup" / "paperpacks").rglob(
+                    "*.metadata.json"
                 )
             )
             self.assertEqual(len(mirrored), 1)
@@ -148,11 +159,40 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(updated.metadata.title, "After")
             self.assertEqual(updated.metadata.venue, "Cell")
             self.assertEqual(controller.list_library("dmem")[0].metadata.title, "After")
-            history = list((library / "history").rglob("revision-*.paper.json"))
-            self.assertEqual(len(history), 1)
-            saved = json.loads(updated.sidecar_path.read_text(encoding="utf-8"))
+            self.assertEqual(inspect_paperpack(updated.sidecar_path).revision, 2)
+            saved = load_paperpack_metadata(updated.sidecar_path)
             self.assertEqual(saved["curation"]["revision"], 2)
             self.assertEqual(saved["curation"]["last_edited_by"], "user")
+
+    def test_organize_can_remove_input_pdf_after_verified_pack_creation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(
+                root, remove_source=True
+            )
+            source = input_dir / "paper.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Moved into paperpack")
+            )
+            self.assertFalse(source.exists())
+            self.assertTrue(organized.pdf_path.is_file())
+
+    def test_materialize_pdf_extracts_verified_cache_for_viewer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "paper.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Viewer Copy")
+            )
+            opened = controller.materialize_pdf(organized.pdf_path)
+            self.assertEqual(opened.suffix, ".pdf")
+            self.assertTrue(opened.is_file())
+            self.assertEqual(opened.read_bytes(), source.read_bytes())
 
     def test_researchgate_variant_can_only_be_moved_to_recoverable_trash_after_match(self):
         with tempfile.TemporaryDirectory() as temp:

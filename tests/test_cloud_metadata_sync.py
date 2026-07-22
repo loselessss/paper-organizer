@@ -4,6 +4,11 @@ import unittest
 from pathlib import Path
 
 from paper_organizer.application.cloud_metadata_sync import CloudMetadataSynchronizer
+from paper_organizer.core.paperpack import (
+    create_paperpack,
+    inspect_paperpack,
+    load_paperpack_metadata,
+)
 
 
 def sidecar_record(title: str = "Original Title") -> dict:
@@ -52,6 +57,32 @@ def edit_portable(path: Path, title: str) -> None:
 
 
 class CloudMetadataSyncTests(unittest.TestCase):
+    def test_cloud_edit_updates_paperpack_revision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            library = root / "library"
+            papers = library / "papers" / "Science" / "General"
+            papers.mkdir(parents=True)
+            source = root / "paper.pdf"
+            source.write_bytes(b"%PDF-1.7\ncloud fixture\n%%EOF\n")
+            record = sidecar_record()
+            record["file"]["current_name"] = "paper.paperpack"
+            record["file"]["relative_path"] = (
+                "papers/Science/General/paper.paperpack"
+            )
+            pack = papers / "paper.paperpack"
+            create_paperpack(pack, source, record)
+            sync = CloudMetadataSynchronizer(library, root / "OneDrive")
+            sync.synchronize()
+            edit_portable(sync.portable_path, "Cloud Packed Title")
+            outcome = sync.synchronize()
+            self.assertEqual(outcome.imported_records, 1)
+            self.assertEqual(
+                load_paperpack_metadata(pack)["bibliography"]["title"],
+                "Cloud Packed Title",
+            )
+            self.assertEqual(inspect_paperpack(pack).revision, 2)
+
     def test_cloud_only_edit_is_imported_with_local_history(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -1,4 +1,4 @@
-"""Rebuild the compact library index from per-PDF sidecar JSON files."""
+"""Rebuild the compact index from paperpacks and legacy sidecar JSON files."""
 
 from __future__ import annotations
 
@@ -9,6 +9,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from paper_organizer.core.paperpack import (
+    PAPERPACK_SUFFIX,
+    PaperPackError,
+    iter_paperpacks,
+    load_paperpack_metadata,
+)
 
 
 SIDECAR_SUFFIX = ".paper.json"
@@ -26,6 +33,13 @@ def iter_sidecars(library_root: Path) -> Iterable[Path]:
     if not papers.is_dir():
         return ()
     return papers.rglob(f"*{SIDECAR_SUFFIX}")
+
+
+def iter_record_paths(library_root: Path) -> Iterable[Path]:
+    """Yield canonical paperpacks first, followed by legacy JSON sidecars."""
+
+    yield from iter_paperpacks(library_root)
+    yield from iter_sidecars(library_root)
 
 
 def _nested(data: dict[str, Any], *keys: str, default: Any = "") -> Any:
@@ -85,6 +99,23 @@ def load_sidecar(path: Path) -> dict[str, Any]:
     if not isinstance(file_data, dict) or not file_data.get("relative_path"):
         raise ValueError("file.relative_path is required")
     return data
+
+
+def load_record(path: Path) -> dict[str, Any]:
+    """Load index metadata from a paperpack or a legacy sidecar."""
+
+    if path.suffix.casefold() == PAPERPACK_SUFFIX:
+        data = load_paperpack_metadata(path)
+        if not isinstance(data, dict):
+            raise ValueError("paperpack metadata root must be an object")
+        identity = data.get("identity")
+        if not isinstance(identity, dict) or not identity.get("work_id"):
+            raise ValueError("identity.work_id is required")
+        file_data = data.get("file")
+        if not isinstance(file_data, dict) or not file_data.get("relative_path"):
+            raise ValueError("file.relative_path is required")
+        return data
+    return load_sidecar(path)
 
 
 def _variant(record: dict[str, Any]) -> dict[str, Any]:
@@ -204,12 +235,20 @@ def rebuild_library_index(
     library_root: Path,
 ) -> tuple[dict[str, Any], list[IndexProblem]]:
     records: list[dict[str, Any]] = []
+    seen_record_ids: set[str] = set()
     problems: list[IndexProblem] = []
-    for sidecar in iter_sidecars(library_root):
+    for source in iter_record_paths(library_root):
         try:
-            records.append(load_sidecar(sidecar))
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            problems.append(IndexProblem(str(sidecar), str(exc)))
+            record = load_record(source)
+            identity = record.get("identity", {})
+            record_id = str(identity.get("file_id") or record.get("id") or "")
+            if record_id and record_id in seen_record_ids:
+                continue
+            if record_id:
+                seen_record_ids.add(record_id)
+            records.append(record)
+        except (OSError, ValueError, json.JSONDecodeError, PaperPackError) as exc:
+            problems.append(IndexProblem(str(source), str(exc)))
     index = build_library_index(records)
     _atomic_json_write(library_root / "index" / "library.json", index)
     _atomic_json_write(
