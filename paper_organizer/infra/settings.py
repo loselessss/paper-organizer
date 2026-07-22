@@ -23,6 +23,7 @@ class AppSettings:
     schema_version: int = 1
     input_dir: str = ""
     library_root: str = ""
+    metadata_sync_dir: str = ""
     auto_enabled: bool = False
     resource_profile: str = "eco"
     model_profile: str = "auto"
@@ -71,6 +72,12 @@ class AppSettings:
             library_path = Path(self.library_root).expanduser().resolve()
             if os.path.normcase(str(input_path)) == os.path.normcase(str(library_path)):
                 raise ValueError("input_dir and library_root must be different")
+        if self.metadata_sync_dir:
+            sync_path = Path(self.metadata_sync_dir).expanduser().resolve()
+            if self.input_dir and os.path.normcase(str(sync_path)) == os.path.normcase(
+                str(Path(self.input_dir).expanduser().resolve())
+            ):
+                raise ValueError("metadata_sync_dir and input_dir must be different")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

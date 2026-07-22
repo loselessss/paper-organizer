@@ -32,26 +32,40 @@ class UiSmokeTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_ai_settings_and_summary_shell_construct(self):
-        from PyQt5.QtWidgets import QLineEdit
+        from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer.application.summary_service import (
             ImmediateSummaryController,
         )
+        from paper_organizer.application.library_workflow import LibraryWorkflowController
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
+        from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
             store = MemorySecretStore()
             ai_controller = AiSettingsController(store, path)
             summary_controller = ImmediateSummaryController(store, path)
+            workflow_controller = LibraryWorkflowController(path)
             dialog = AiSettingsDialog(ai_controller)
-            window = PaperOrganizerWindow(ai_controller, summary_controller)
+            window = PaperOrganizerWindow(
+                ai_controller, summary_controller, workflow_controller
+            )
+            splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
             self.assertFalse(window.summary_widget.run_button.isEnabled())
-            self.assertEqual(window.tabs.tabText(0), "즉시 요약")
+            self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
+            self.assertEqual(window.tabs.tabText(2), "즉시 요약")
+            self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
+            self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
+            splash_labels = {label.text() for label in splash.findChildren(QLabel)}
+            self.assertIn("Paper Organizer", splash_labels)
+            self.assertIn("Version 0.2.0", splash_labels)
+            self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
+            splash.close()
             dialog.close()
             window.close()
 

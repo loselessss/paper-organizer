@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-organizer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first academic PDF organizer and searchable JSON library"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,3 +22,6 @@ paper-organizer-gui = "paper_organizer.gui:main"
 
 [tool.setuptools.packages.find]
 include = ["paper_organizer*"]
+
+[tool.setuptools.package-data]
+paper_organizer = ["assets/*.png"]
