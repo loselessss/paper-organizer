@@ -27,7 +27,8 @@ from .library_workflow_widget import (
     LibraryWidget,
 )
 from .lifecycle_dialog import LifecyclePreferencesDialog
-from .migration_widget import LegacyMigrationWidget
+from .migration_widget import LegacyMigrationDialog
+from .pdf_export_dialog import PdfExportDialog
 from .startup_splash import splash_asset_path
 
 
@@ -50,11 +51,11 @@ class PaperOrganizerWindow(QMainWindow):
         self.setWindowTitle("Paper Organizer")
         self.resize(980, 720)
 
+        self._library_workflow = library_workflow
         self.tabs = QTabWidget()
         self.collection_widget = None
         self.queue_widget = None
         self.library_widget = None
-        self.migration_widget = None
         if library_workflow is not None:
             self.collection_widget = CollectionReviewWidget(library_workflow, self)
             self.queue_widget = AnalysisQueueWidget(
@@ -63,14 +64,11 @@ class PaperOrganizerWindow(QMainWindow):
                 self,
             )
             self.library_widget = LibraryWidget(library_workflow, self)
-            self.migration_widget = LegacyMigrationWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
-            self.migration_widget.library_changed.connect(self.library_widget.refresh)
             self.tabs.addTab(self.collection_widget, "수집 및 검토")
             self.tabs.addTab(self.queue_widget, "분석 큐")
             self.tabs.addTab(self.library_widget, "라이브러리")
-            self.tabs.addTab(self.migration_widget, "레거시 변환")
         self.summary_widget = ImmediateSummaryWidget(immediate_summary, self)
         self.tabs.addTab(self.summary_widget, "즉시 요약")
         if self.queue_widget is not None:
@@ -81,6 +79,14 @@ class PaperOrganizerWindow(QMainWindow):
         settings_action.triggered.connect(self.show_ai_settings)
         settings_menu = self.menuBar().addMenu("설정")
         settings_menu.addAction(settings_action)
+        if self._library_workflow is not None:
+            tools_menu = self.menuBar().addMenu("도구")
+            export_action = QAction("PDF 환원 (일괄 추출)...", self)
+            export_action.triggered.connect(self.show_pdf_export)
+            tools_menu.addAction(export_action)
+            migration_action = QAction("레거시 라이브러리 변환...", self)
+            migration_action.triggered.connect(self.show_legacy_migration)
+            tools_menu.addAction(migration_action)
         if self._lifecycle is not None:
             lifecycle_action = QAction("시작 및 종료 설정...", self)
             lifecycle_action.triggered.connect(self.show_lifecycle_settings)
@@ -90,6 +96,19 @@ class PaperOrganizerWindow(QMainWindow):
 
     def show_ai_settings(self) -> None:
         AiSettingsDialog(self._ai_settings, self).exec_()
+
+    def show_pdf_export(self) -> None:
+        if self._library_workflow is None:
+            return
+        PdfExportDialog(self._library_workflow, self).exec_()
+
+    def show_legacy_migration(self) -> None:
+        if self._library_workflow is None:
+            return
+        dialog = LegacyMigrationDialog(self._library_workflow, self)
+        if self.library_widget is not None:
+            dialog.library_changed.connect(self.library_widget.refresh)
+        dialog.exec_()
 
     def show_lifecycle_settings(self) -> None:
         if self._lifecycle is None:
@@ -160,10 +179,7 @@ class PaperOrganizerWindow(QMainWindow):
         collection_busy = bool(
             self.collection_widget and self.collection_widget.is_busy()
         )
-        migration_busy = bool(
-            self.migration_widget and self.migration_widget.is_busy()
-        )
-        if self.summary_widget.is_busy() or collection_busy or migration_busy:
+        if self.summary_widget.is_busy() or collection_busy:
             QMessageBox.information(
                 self,
                 "요약 진행 중",

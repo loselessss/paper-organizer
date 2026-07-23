@@ -8,6 +8,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -214,3 +215,39 @@ class LegacyMigrationWidget(QWidget):
         )
         self.library_changed.emit()
         self.refresh()
+
+
+class LegacyMigrationDialog(QDialog):
+    """도구 메뉴에서 여는 레거시 라이브러리 변환 다이얼로그."""
+
+    library_changed = pyqtSignal()
+
+    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("레거시 라이브러리 변환")
+        self.setMinimumSize(760, 480)
+        layout = QVBoxLayout(self)
+        self.widget = LegacyMigrationWidget(controller, self)
+        self.widget.library_changed.connect(self.library_changed)
+        layout.addWidget(self.widget)
+        close_row = QHBoxLayout()
+        close_button = QPushButton("닫기")
+        close_button.clicked.connect(self.reject)
+        close_row.addStretch(1)
+        close_row.addWidget(close_button)
+        layout.addLayout(close_row)
+        self.widget.refresh()
+
+    def reject(self) -> None:
+        if self.widget.is_busy():
+            QMessageBox.information(
+                self, "변환 진행 중", "레거시 변환이 끝난 뒤 창을 닫으세요."
+            )
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        if self.widget.is_busy():
+            event.ignore()
+            return
+        super().closeEvent(event)

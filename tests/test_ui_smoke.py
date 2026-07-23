@@ -81,8 +81,11 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
             self.assertEqual(window.tabs.tabText(1), "분석 큐")
             self.assertEqual(window.tabs.tabText(2), "라이브러리")
-            self.assertEqual(window.tabs.tabText(3), "레거시 변환")
-            self.assertEqual(window.tabs.tabText(4), "즉시 요약")
+            self.assertEqual(window.tabs.tabText(3), "즉시 요약")
+            menu_titles = [
+                action.text() for action in window.menuBar().actions()
+            ]
+            self.assertIn("도구", menu_titles)
             self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
             self.assertEqual(window.collection_widget.interval_spin.value(), 300)
             self.assertFalse(window.collection_widget.remove_source_check.isChecked())
