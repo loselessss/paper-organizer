@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from threading import Event
 
-from PyQt5.QtCore import QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFormLayout,
@@ -16,8 +17,10 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -658,10 +661,28 @@ class LibraryWidget(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
-        root.addWidget(self.table, 1)
+
+        detail_panel = QWidget()
+        detail_layout = QVBoxLayout(detail_panel)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
         self.form = MetadataForm("선택한 논문의 PaperPack 색인 편집")
         self.form.set_metadata(None)
-        root.addWidget(self.form)
+        detail_layout.addWidget(self.form)
+        analysis_group = QGroupBox("AI 분석 내용")
+        analysis_layout = QVBoxLayout(analysis_group)
+        self.analysis_view = QTextBrowser()
+        self.analysis_view.setOpenExternalLinks(False)
+        analysis_layout.addWidget(self.analysis_view)
+        detail_layout.addWidget(analysis_group, 1)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self.table)
+        splitter.addWidget(detail_panel)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setChildrenCollapsible(False)
+        root.addWidget(splitter, 1)
+        self._render_analysis(None)
         actions = QHBoxLayout()
         self.save_button = QPushButton("수정 저장 및 재색인")
         self.open_button = QPushButton("sPDF로 열기")
@@ -707,6 +728,7 @@ class LibraryWidget(QWidget):
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.form.set_metadata(None)
+        self._render_analysis(None)
         self.save_button.setEnabled(False)
         self.open_button.setEnabled(False)
         self.apply_pdf_button.setEnabled(False)
@@ -722,7 +744,57 @@ class LibraryWidget(QWidget):
         self.form.set_metadata(entry.metadata if entry else None)
         self.save_button.setEnabled(entry is not None)
         self.open_button.setEnabled(bool(entry and entry.pdf_path.is_file()))
+        self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entry)
+
+    def _render_analysis(self, entry: LibraryEntry | None) -> None:
+        """선택 논문의 description/analysis 내용을 읽기 전용으로 보여준다."""
+        if entry is None:
+            self.analysis_view.setHtml(
+                "<p style='color:#777'>왼쪽 목록에서 논문을 선택하면 "
+                "AI 분석 내용이 표시됩니다.</p>"
+            )
+            return
+        description = entry.record.get("description", {})
+        analysis = entry.record.get("analysis", {})
+        esc = lambda value: html.escape(str(value or ""))
+        bullets = lambda values: (
+            "<ul>" + "".join(f"<li>{esc(item)}</li>" for item in values) + "</ul>"
+            if values
+            else "<p style='color:#999'>없음</p>"
+        )
+        sections: list[str] = []
+        summary = description.get("summary_ko") or ""
+        if not summary and not analysis:
+            self.analysis_view.setHtml(
+                "<p style='color:#777'>아직 AI 분석 결과가 없습니다. "
+                "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>"
+            )
+            return
+        if summary:
+            sections.append(f"<h3>요약</h3><p>{esc(summary)}</p>")
+        question = description.get("research_question") or ""
+        if question:
+            sections.append(f"<h3>연구 질문</h3><p>{esc(question)}</p>")
+        for label, key in (
+            ("방법", "methods"),
+            ("핵심 기여", "contributions"),
+            ("한계", "limitations"),
+            ("키워드", "keywords"),
+        ):
+            values = [str(item) for item in description.get(key) or []]
+            if values:
+                sections.append(f"<h3>{label}</h3>{bullets(values)}")
+        provenance = analysis.get("provenance") or entry.record.get(
+            "provenance", {}
+        ).get("summary")
+        if isinstance(provenance, dict) and provenance.get("provider"):
+            sections.append(
+                "<p style='color:#777'>"
+                f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
+                f" · {esc(analysis.get('completed_at', ''))}</p>"
+            )
+        self.analysis_view.setHtml("".join(sections))
 
     def _refresh_pdf_edit_actions(self, entry: LibraryEntry | None) -> None:
         is_pack = bool(entry and entry.pdf_path.suffix.casefold() == ".paperpack")
