@@ -61,6 +61,7 @@ class LibraryWorkflowTests(unittest.TestCase):
             library,
             auto_enabled=False,
             remove_source_after_import=remove_source,
+            auto_organize_academic=False,
         )
         settings = load_settings(settings_path)
         settings.minimum_age_seconds = 0

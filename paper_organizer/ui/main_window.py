@@ -74,6 +74,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget = LibraryWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
+            self.collection_widget.papers_auto_organized.connect(
+                self._papers_auto_organized
+            )
             collect_split = QSplitter(Qt.Horizontal)
             collect_split.addWidget(self.collection_widget)
             collect_split.addWidget(self.queue_widget)
@@ -118,6 +121,19 @@ class PaperOrganizerWindow(QMainWindow):
     def _analysis_progress_changed(self, message: str, busy: bool) -> None:
         self._analysis_status_label.setText(message)
         self._analysis_progress_bar.setVisible(busy)
+
+    def _papers_auto_organized(self, titles: list) -> None:
+        if not titles:
+            return
+        preview = ", ".join(str(title) for title in titles[:3])
+        if len(titles) > 3:
+            preview += f" 외 {len(titles) - 3}건"
+        message = f"논문 {len(titles)}건을 자동 보관하고 분석 큐에 넣었습니다: {preview}"
+        self.statusBar().showMessage(message, 8000)
+        if self._tray is not None and self._tray.isVisible():
+            self._tray.showMessage(
+                "Paper Organizer", message, QSystemTrayIcon.Information, 5000
+            )
 
     def _create_ai_menu(self) -> None:
         menu = self.menuBar().addMenu("AI")

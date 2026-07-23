@@ -162,6 +162,7 @@ class MetadataForm(QGroupBox):
 class CollectionReviewWidget(QWidget):
     library_changed = pyqtSignal()
     queue_changed = pyqtSignal()
+    papers_auto_organized = pyqtSignal(list)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -260,12 +261,19 @@ class CollectionReviewWidget(QWidget):
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         problem_text = f" · 오류 {len(result.problems)}개" if result.problems else ""
+        auto_text = (
+            f" · 자동 보관 {len(result.auto_organized)}개" if result.auto_organized else ""
+        )
         self.status_label.setText(
-            f"검토 대상 {len(result.items)}개 · 안정성 확인 중 {result.pending_stability}개{problem_text}"
+            f"검토 대상 {len(result.items)}개 · 안정성 확인 중 "
+            f"{result.pending_stability}개{auto_text}{problem_text}"
         )
         if result.pending_stability and self._schedule_followup:
             self.status_label.setText(self.status_label.text() + " · 잠시 후 한 번 더 확인합니다.")
             QTimer.singleShot(1500, lambda: self.scan_now(False))
+        if result.auto_organized:
+            self.papers_auto_organized.emit(list(result.auto_organized))
+            self.library_changed.emit()
         self.queue_changed.emit()
 
     def _scan_failed(self, message: str) -> None:
@@ -285,7 +293,9 @@ class CollectionReviewWidget(QWidget):
 
     def _selection_changed(self) -> None:
         item = self._selected()
-        self.form.set_metadata(item.metadata if item else None)
+        self.form.set_metadata(
+            self._controller.suggest_metadata(item) if item else None
+        )
         enabled = item is not None
         self.open_button.setEnabled(enabled)
         self.organize_button.setEnabled(enabled)

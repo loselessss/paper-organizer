@@ -5,15 +5,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -22,6 +28,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
+from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 
 
 class FolderSettingsDialog(QDialog):
@@ -53,13 +60,34 @@ class FolderSettingsDialog(QDialog):
         self.remove_source_check.setToolTip(
             "기본값은 원본 유지입니다. 삭제 실패 시 새 paperpack을 롤백합니다."
         )
+        self.auto_organize_check = QCheckBox(
+            "학술 논문으로 판정되고 중복이 없으면 승인 없이 자동 보관"
+        )
+        self.auto_organize_check.setToolTip(
+            "중복 후보가 있거나 판정이 불확실한 PDF는 자동 보관하지 않고 "
+            "수집 화면에 남겨 사람이 검토합니다."
+        )
         form.addRow("입력 폴더", input_row)
         form.addRow("PaperPack 라이브러리", library_row)
         form.addRow("시스템 부하", self.profile_combo)
         form.addRow("스캔 주기", self.interval_spin)
         form.addRow("자동 감시", self.auto_check)
+        form.addRow("자동 보관", self.auto_organize_check)
         form.addRow("입력 PDF", self.remove_source_check)
         root.addLayout(form)
+
+        focus_group = QGroupBox("주력 분야 (선택한 분야로만 자동 분류)")
+        focus_layout = QVBoxLayout(focus_group)
+        focus_note = QLabel(
+            "아무것도 선택하지 않으면 전체 분류 체계를 사용합니다."
+        )
+        focus_note.setWordWrap(True)
+        focus_layout.addWidget(focus_note)
+        self.focus_list = QListWidget()
+        self.focus_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.focus_list.setMaximumHeight(180)
+        focus_layout.addWidget(self.focus_list)
+        root.addWidget(focus_group)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("저장")
@@ -90,6 +118,28 @@ class FolderSettingsDialog(QDialog):
         self.interval_spin.setValue(settings.scan_interval_seconds)
         self.auto_check.setChecked(settings.auto_enabled)
         self.remove_source_check.setChecked(settings.remove_source_after_import)
+        self.auto_organize_check.setChecked(settings.auto_organize_academic)
+        self._load_focus_categories(settings.focus_categories)
+
+    def _load_focus_categories(self, selected: list[str]) -> None:
+        try:
+            names = taxonomy_category_names()
+        except TaxonomyError:
+            names = []
+        chosen = {name.strip() for name in selected}
+        self.focus_list.clear()
+        for name in names:
+            entry = QListWidgetItem(name)
+            entry.setFlags(entry.flags() | Qt.ItemIsUserCheckable)
+            entry.setCheckState(Qt.Checked if name in chosen else Qt.Unchecked)
+            self.focus_list.addItem(entry)
+
+    def _checked_focus_categories(self) -> list[str]:
+        return [
+            self.focus_list.item(row).text()
+            for row in range(self.focus_list.count())
+            if self.focus_list.item(row).checkState() == Qt.Checked
+        ]
 
     def _browse_input(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -120,6 +170,8 @@ class FolderSettingsDialog(QDialog):
                 resource_profile=self.profile_combo.currentData(),
                 scan_interval_seconds=self.interval_spin.value(),
                 remove_source_after_import=self.remove_source_check.isChecked(),
+                auto_organize_academic=self.auto_organize_check.isChecked(),
+                focus_categories=self._checked_focus_categories(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))

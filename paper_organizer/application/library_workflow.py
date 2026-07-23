@@ -28,6 +28,11 @@ from paper_organizer.application.legacy_migration import (
     LegacyMigrationTrashEntry,
 )
 from paper_organizer.application.summary_service import SummaryExecution
+from paper_organizer.core.classifier import (
+    TaxonomyError,
+    classify_text,
+    extract_venue,
+)
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
     PdfIdentityError,
@@ -133,6 +138,7 @@ class ReviewScan:
     items: tuple[ReviewItem, ...]
     pending_stability: int
     problems: tuple[ScanProblem, ...]
+    auto_organized: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,6 +536,8 @@ class LibraryWorkflowController:
         resource_profile: str | None = None,
         scan_interval_seconds: int | None = None,
         remove_source_after_import: bool | None = None,
+        auto_organize_academic: bool | None = None,
+        focus_categories: list[str] | None = None,
     ) -> AppSettings:
         input_path = input_dir.expanduser().resolve()
         library_path = library_root.expanduser().resolve()
@@ -547,6 +555,12 @@ class LibraryWorkflowController:
             settings.scan_interval_seconds = scan_interval_seconds
         if remove_source_after_import is not None:
             settings.remove_source_after_import = bool(remove_source_after_import)
+        if auto_organize_academic is not None:
+            settings.auto_organize_academic = bool(auto_organize_academic)
+        if focus_categories is not None:
+            settings.focus_categories = [
+                name.strip() for name in focus_categories if name.strip()
+            ]
         save_settings(settings, self._settings_path)
         self._library_cache = None
         return settings
@@ -614,13 +628,81 @@ class LibraryWorkflowController:
         self._cache = {
             path: value for path, value in self._cache.items() if path.resolve() in candidate_set
         }
+        auto_organized: list[str] = []
+        if settings.auto_organize_academic:
+            items, auto_organized = self._auto_organize(items, problems)
         return ReviewScan(
             items=tuple(sorted(items, key=lambda item: item.path.name.casefold())),
             pending_stability=max(0, len(active_candidates) - len(stable)),
             problems=tuple(problems),
+            auto_organized=tuple(auto_organized),
         )
 
-    def organize(self, item: ReviewItem, metadata: EditablePaperMetadata) -> OrganizedPaper:
+    def _auto_organize(
+        self, items: list[ReviewItem], problems: list[ScanProblem]
+    ) -> tuple[list[ReviewItem], list[str]]:
+        """Store confidently academic, non-duplicate PDFs without asking.
+
+        중복 후보가 있거나 학술 논문으로 확신되지 않은 항목은 그대로 두어
+        사람이 수집 화면에서 검토한다. 개별 실패도 검토 대상으로 남긴다.
+        """
+
+        remaining: list[ReviewItem] = []
+        organized_titles: list[str] = []
+        for item in items:
+            if item.detection_status != "academic_likely" or item.duplicate is not None:
+                remaining.append(item)
+                continue
+            try:
+                metadata = self.suggest_metadata(item)
+                result = self.organize(item, metadata, field_source="auto:regex")
+            except Exception as exc:
+                problems.append(ScanProblem(item.path, f"자동 보관 실패: {exc}"))
+                remaining.append(item)
+                continue
+            organized_titles.append(metadata.title)
+            del result
+        return remaining, organized_titles
+
+    def suggest_metadata(self, item: ReviewItem) -> EditablePaperMetadata:
+        """Fill category, subcategory and venue with the regex first pass."""
+
+        metadata = EditablePaperMetadata(
+            title=item.metadata.title,
+            authors=list(item.metadata.authors),
+            year=item.metadata.year,
+            venue=item.metadata.venue,
+            category=item.metadata.category,
+            subcategory=item.metadata.subcategory,
+            tags=list(item.metadata.tags),
+            summary_ko=item.metadata.summary_ko,
+        )
+        page_texts = list(item.page_texts)
+        if not page_texts:
+            return metadata
+        settings = self.settings()
+        try:
+            result = classify_text(
+                metadata.title,
+                page_texts,
+                allowed_categories=settings.focus_categories or None,
+            )
+        except TaxonomyError:
+            result = None
+        if result is not None and result.classified:
+            metadata.category = result.category
+            metadata.subcategory = result.subcategory
+        if not metadata.venue:
+            metadata.venue = extract_venue(page_texts)
+        return metadata
+
+    def organize(
+        self,
+        item: ReviewItem,
+        metadata: EditablePaperMetadata,
+        *,
+        field_source: str = "user",
+    ) -> OrganizedPaper:
         _validate_metadata(metadata)
         _input_dir, library_root = self.configured_paths()
         settings = self.settings()
@@ -634,7 +716,9 @@ class LibraryWorkflowController:
         destination_dir = library_root / "papers" / category / subcategory
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = _unique_paperpack_destination(destination_dir, source.name)
-        record = _new_sidecar(item, metadata, source, destination, library_root)
+        record = _new_sidecar(
+            item, metadata, source, destination, library_root, field_source
+        )
         page_texts = list(item.page_texts)
         if not page_texts:
             try:
@@ -1396,6 +1480,7 @@ def _new_sidecar(
     source: Path,
     destination: Path,
     library_root: Path,
+    field_source: str = "user",
 ) -> dict[str, Any]:
     now = _now_iso()
     identity = item.identity.to_dict()
@@ -1447,19 +1532,22 @@ def _new_sidecar(
             "field_sources": {},
             "locked_fields": [],
             "last_edited_at": now,
-            "last_edited_by": "user",
+            "last_edited_by": field_source,
         },
         "provenance": {"extractor": "pymupdf", "ocr_used": False},
     }
     _apply_metadata(record, metadata)
     record["curation"]["field_sources"] = {
-        "bibliography.title": "user",
-        "bibliography.authors": "user",
-        "bibliography.year": "user",
-        "bibliography.venue": "user",
-        "classification.category": "user",
-        "classification.subcategory": "user",
-        "classification.tags": "user",
-        "description.summary_ko": "user",
+        name: field_source
+        for name in (
+            "bibliography.title",
+            "bibliography.authors",
+            "bibliography.year",
+            "bibliography.venue",
+            "classification.category",
+            "classification.subcategory",
+            "classification.tags",
+            "description.summary_ko",
+        )
     }
     return record
