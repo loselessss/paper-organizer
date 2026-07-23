@@ -21,6 +21,7 @@ build = [
   "opencv-python-headless>=4.11",
   "onnxruntime>=1.22",
   "rapidocr>=3",
+  "pillow>=10",
 ]
 
 [project.scripts]
