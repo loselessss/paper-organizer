@@ -50,9 +50,7 @@ def write_pdf(path: Path, pages: list[str]) -> None:
 
 
 class LibraryWorkflowTests(unittest.TestCase):
-    def _controller(
-        self, root: Path, *, sync: bool = False, remove_source: bool = False
-    ):
+    def _controller(self, root: Path, *, remove_source: bool = False):
         input_dir = root / "downloads"
         library = root / "library"
         input_dir.mkdir()
@@ -62,7 +60,6 @@ class LibraryWorkflowTests(unittest.TestCase):
             input_dir,
             library,
             auto_enabled=False,
-            metadata_sync_dir=(root / "OneDrive" / "Paper JSON") if sync else None,
             remove_source_after_import=remove_source,
         )
         settings = load_settings(settings_path)
@@ -78,10 +75,10 @@ class LibraryWorkflowTests(unittest.TestCase):
     def test_downloads_is_the_default_input_folder(self):
         self.assertEqual(default_input_dir(), Path.home() / "Downloads")
 
-    def test_organize_writes_paperpack_index_and_onedrive_json_mirror(self):
+    def test_organize_writes_paperpack_and_rebuilds_index(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            controller, input_dir, library = self._controller(root, sync=True)
+            controller, input_dir, library = self._controller(root)
             source = input_dir / "paper.pdf"
             write_pdf(source, academic_pages())
             result = self._scan_twice(controller)
@@ -111,31 +108,6 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(index["work_count"], 1)
             self.assertEqual(index["works"][0]["venue"], "Nature Methods")
             self.assertEqual(len(controller.list_library("nature methods")), 1)
-            mirrored = list(
-                (root / "OneDrive" / "Paper JSON" / "backup" / "paperpacks").rglob(
-                    "*.metadata.json"
-                )
-            )
-            self.assertEqual(len(mirrored), 1)
-            self.assertTrue(
-                (root / "OneDrive" / "Paper JSON" / "portable-library.json").is_file()
-            )
-            self.assertTrue(
-                (
-                    root
-                    / "OneDrive"
-                    / "Paper JSON"
-                    / "backup"
-                    / "state"
-                    / "analysis-queue.json"
-                ).is_file()
-            )
-            manifest = json.loads(
-                (root / "OneDrive" / "Paper JSON" / "sync-manifest.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            self.assertEqual(manifest["mode"], "original-backup-plus-portable-sync")
 
     def test_library_metadata_is_editable_with_history_and_reindex(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -21,11 +21,6 @@ from paper_organizer.application.analysis_queue import (
     AnalysisQueueItem,
     AnalysisQueueStore,
 )
-from paper_organizer.application.cloud_metadata_sync import (
-    CloudMetadataSyncError,
-    CloudMetadataSynchronizer,
-    MetadataConflict,
-)
 from paper_organizer.application.legacy_migration import (
     LegacyMigrationPreview,
     LegacyMigrationResult,
@@ -139,7 +134,7 @@ class ReviewScan:
 class OrganizedPaper:
     pdf_path: Path
     sidecar_path: Path
-    sync_warning: str = ""
+    warning: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +161,6 @@ class LibraryEntry:
     work_id: str
     source_variant: str
     record: dict[str, Any] = field(repr=False, compare=False)
-    sync_warning: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,23 +182,13 @@ class PaperPackPdfUpdate:
     previous_pdf_sha256: str
     pdf_sha256: str
     revision: int
-    sync_warning: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class MetadataSyncResult:
-    destination: Path | None
-    copied_files: int
-    problems: tuple[str, ...] = ()
-    conflict_count: int = 0
-    portable_path: Path | None = None
+    warning: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class StartupSnapshot:
     library_entries: int
     local_json_files: int
-    synced_json_files: int
     problems: tuple[str, ...] = ()
 
 
@@ -232,25 +216,6 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_name, path)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except OSError:
-            pass
-        raise
-
-
-def _atomic_file_copy(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(
-        prefix=f".{destination.stem}-", suffix=".tmp", dir=str(destination.parent)
-    )
-    try:
-        with source.open("rb") as input_stream, os.fdopen(handle, "wb") as output_stream:
-            shutil.copyfileobj(input_stream, output_stream)
-            output_stream.flush()
-            os.fsync(output_stream.fileno())
-        os.replace(temp_name, destination)
     except Exception:
         try:
             os.unlink(temp_name)
@@ -557,7 +522,6 @@ class LibraryWorkflowController:
         library_root: Path,
         *,
         auto_enabled: bool,
-        metadata_sync_dir: Path | None = None,
         resource_profile: str | None = None,
         scan_interval_seconds: int | None = None,
         remove_source_after_import: bool | None = None,
@@ -571,9 +535,6 @@ class LibraryWorkflowController:
         settings = self.settings()
         settings.input_dir = str(input_path)
         settings.library_root = str(library_path)
-        settings.metadata_sync_dir = (
-            str(metadata_sync_dir.expanduser().resolve()) if metadata_sync_dir else ""
-        )
         settings.auto_enabled = bool(auto_enabled)
         if resource_profile is not None:
             settings.resource_profile = resource_profile
@@ -613,7 +574,6 @@ class LibraryWorkflowController:
         references = tuple(_library_references(library_root)) if library_root.is_dir() else ()
         items: list[ReviewItem] = []
         problems: list[ScanProblem] = []
-        queue_updated = False
         for found in stable:
             cached = self._cache.get(found.path)
             key = (found.observation.size, found.observation.modified_ns)
@@ -639,18 +599,11 @@ class LibraryWorkflowController:
                         file_sha256=item.identity.file_sha256,
                         title=item.metadata.title,
                     )
-                    queue_updated = True
                 except (OSError, AnalysisQueueError) as exc:
                     problems.append(ScanProblem(found.path, str(exc)))
                 items.append(item)
             except Exception as exc:
                 problems.append(ScanProblem(found.path, str(exc)))
-        if queue_updated:
-            sync = self.sync_metadata()
-            problems.extend(
-                ScanProblem(library_root, f"JSON 미러: {message}")
-                for message in sync.problems
-            )
         candidate_set = {path.resolve() for path in active_candidates}
         self._cache = {
             path: value for path, value in self._cache.items() if path.resolve() in candidate_set
@@ -720,10 +673,7 @@ class LibraryWorkflowController:
             )
         except (OSError, AnalysisQueueError) as exc:
             warnings.append(f"분석 큐: {exc}")
-        sync = self.sync_metadata()
-        warnings.extend(sync.problems)
-        warning = "; ".join(warnings)
-        return OrganizedPaper(destination, destination, warning)
+        return OrganizedPaper(destination, destination, "; ".join(warnings))
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
         if item.duplicate is None or not item.duplicate.confirmed:
@@ -765,7 +715,6 @@ class LibraryWorkflowController:
             self._queue().remove(f"sha256:{item.identity.file_sha256}")
         except AnalysisQueueError:
             pass
-        self.sync_metadata()
         return TrashOperation(operation_id, manifest, destination)
 
     def list_trash(self) -> list[TrashEntry]:
@@ -835,7 +784,6 @@ class LibraryWorkflowController:
             )
         except (OSError, AnalysisQueueError):
             pass
-        self.sync_metadata()
         return destination
 
     def analysis_queue(self) -> list[AnalysisQueueItem]:
@@ -848,19 +796,13 @@ class LibraryWorkflowController:
         return self._queue().claim_next()
 
     def complete_analysis(self, queue_id: str) -> AnalysisQueueItem:
-        item = self._queue().mark_completed(queue_id)
-        self.sync_metadata()
-        return item
+        return self._queue().mark_completed(queue_id)
 
     def fail_analysis(self, queue_id: str, message: str) -> AnalysisQueueItem:
-        item = self._queue().mark_failed(queue_id, message)
-        self.sync_metadata()
-        return item
+        return self._queue().mark_failed(queue_id, message)
 
     def retry_queue_item(self, queue_id: str, *, high: bool = False) -> AnalysisQueueItem:
-        item = self._queue().retry(queue_id, high=high)
-        self.sync_metadata()
-        return item
+        return self._queue().retry(queue_id, high=high)
 
     def set_background_analysis_enabled(self, enabled: bool) -> AppSettings:
         settings = self.settings()
@@ -1146,15 +1088,13 @@ class LibraryWorkflowController:
         except (OSError, AnalysisQueueError) as exc:
             warnings.append(f"파생 색인 갱신: {exc}")
         self._library_cache = None
-        sync = self.sync_metadata()
-        warnings.extend(sync.problems)
         return PaperPackPdfUpdate(
             paperpack_path=status.paperpack_path,
             working_pdf_path=status.pdf_path,
             previous_pdf_sha256=status.base_pdf_sha256,
             pdf_sha256=info.pdf_sha256,
             revision=info.revision,
-            sync_warning="; ".join(warnings),
+            warning="; ".join(warnings),
         )
 
     def discard_paperpack_working_copy(self, path: Path) -> bool:
@@ -1192,13 +1132,10 @@ class LibraryWorkflowController:
         return source, edit_root / "working.pdf", edit_root / "state.json"
 
     def set_queue_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
-        item = self._queue().set_priority(queue_id, high)
-        self.sync_metadata()
-        return item
+        return self._queue().set_priority(queue_id, high)
 
     def remove_from_queue(self, queue_id: str) -> None:
         self._queue().remove(queue_id)
-        self.sync_metadata()
 
     def _queue(self) -> AnalysisQueueStore:
         _input_dir, root = self.configured_paths()
@@ -1270,7 +1207,6 @@ class LibraryWorkflowController:
             move_legacy_to_trash=move_legacy_to_trash,
         )
         self._library_cache = None
-        self.sync_metadata()
         return result
 
     def legacy_migration_trash(self) -> tuple[LegacyMigrationTrashEntry, ...]:
@@ -1281,7 +1217,6 @@ class LibraryWorkflowController:
         _input_dir, root = self.configured_paths()
         restored = LegacyMigrationService(root).restore_trash(operation_id)
         self._library_cache = None
-        self.sync_metadata()
         return restored
 
     def warm_startup_cache(self) -> StartupSnapshot:
@@ -1296,133 +1231,11 @@ class LibraryWorkflowController:
                     local_json += 1
                 except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                     problems.append(f"{path.name}: {exc}")
-        settings = self.settings()
-        synced_json = 0
-        if settings.metadata_sync_dir:
-            sync_root = Path(settings.metadata_sync_dir)
-            if sync_root.is_dir():
-                synced_json = sum(1 for _path in sync_root.rglob("*.json"))
         return StartupSnapshot(
             library_entries=len(self.list_library()),
             local_json_files=local_json,
-            synced_json_files=synced_json,
             problems=tuple(problems),
         )
-
-    def sync_metadata(self) -> MetadataSyncResult:
-        """Export paperpack JSON and synchronize a separate portable edit file.
-
-        Local paperpacks remain authoritative. Cloud edits are applied only when one
-        side changed; concurrent changes are reported for explicit resolution.
-        """
-        settings = self.settings()
-        if not settings.metadata_sync_dir:
-            return MetadataSyncResult(None, 0)
-        root = Path(settings.library_root).expanduser().resolve()
-        destination = Path(settings.metadata_sync_dir).expanduser().resolve()
-        if root == destination or _inside(root, destination):
-            return MetadataSyncResult(
-                destination, 0, ("JSON 동기화 폴더는 라이브러리 밖에 지정하세요.",)
-            )
-        sources: list[tuple[Path, Path]] = []
-        paperpack_exports: list[tuple[Path, Path]] = []
-        for record_path in iter_record_paths(root):
-            relative = record_path.relative_to(root / "papers")
-            if record_path.suffix.casefold() == PAPERPACK_SUFFIX:
-                paperpack_exports.append(
-                    (
-                        record_path,
-                        Path("backup")
-                        / "paperpacks"
-                        / relative.parent
-                        / f"{record_path.name}.metadata.json",
-                    )
-                )
-            else:
-                sources.append(
-                    (record_path, Path("backup") / "sidecars" / relative)
-                )
-        for section in ("index", "history", "state"):
-            section_root = root / section
-            if section_root.is_dir():
-                for source in section_root.rglob("*.json"):
-                    sources.append(
-                        (
-                            source,
-                            Path("backup") / section / source.relative_to(section_root),
-                        )
-                    )
-        copied = 0
-        problems: list[str] = []
-        for paperpack, relative in paperpack_exports:
-            try:
-                _atomic_json_write(destination / relative, load_record(paperpack))
-                copied += 1
-            except (OSError, ValueError, PaperPackError) as exc:
-                problems.append(f"{relative.as_posix()}: {exc}")
-        for source, relative in sources:
-            try:
-                _atomic_file_copy(source, destination / relative)
-                copied += 1
-            except OSError as exc:
-                problems.append(f"{relative.as_posix()}: {exc}")
-        try:
-            outcome = CloudMetadataSynchronizer(root, destination).synchronize()
-            if outcome.imported_records:
-                self._library_cache = None
-        except (OSError, CloudMetadataSyncError) as exc:
-            outcome = None
-            problems.append(f"portable-library.json: {exc}")
-        try:
-            _atomic_json_write(
-                destination / "sync-manifest.json",
-                {
-                    "schema_version": 1,
-                    "mode": "original-backup-plus-portable-sync",
-                    "source_library": str(root),
-                    "updated_at": _now_iso(),
-                    "copied_files": copied,
-                    "portable_file": "portable-library.json",
-                    "conflict_count": len(outcome.conflicts) if outcome else 0,
-                    "problems": problems,
-                },
-            )
-        except OSError as exc:
-            problems.append(f"sync-manifest.json: {exc}")
-        return MetadataSyncResult(
-            destination,
-            copied,
-            tuple(problems),
-            conflict_count=len(outcome.conflicts) if outcome else 0,
-            portable_path=outcome.portable_path if outcome else None,
-        )
-
-    def metadata_conflicts(self) -> tuple[MetadataConflict, ...]:
-        synchronizer = self._cloud_synchronizer()
-        if synchronizer is None:
-            return ()
-        outcome = synchronizer.synchronize()
-        if outcome.imported_records:
-            self._library_cache = None
-            self.sync_metadata()
-            return synchronizer.synchronize().conflicts
-        return outcome.conflicts
-
-    def resolve_metadata_conflict(self, record_id: str, choice: str) -> tuple[MetadataConflict, ...]:
-        synchronizer = self._cloud_synchronizer()
-        if synchronizer is None:
-            raise LibraryWorkflowError("OneDrive JSON 미러 폴더가 설정되지 않았습니다.")
-        outcome = synchronizer.resolve(record_id, choice)
-        self._library_cache = None
-        self.sync_metadata()
-        return outcome.conflicts
-
-    def _cloud_synchronizer(self) -> CloudMetadataSynchronizer | None:
-        settings = self.settings()
-        if not settings.metadata_sync_dir:
-            return None
-        _input_dir, root = self.configured_paths()
-        return CloudMetadataSynchronizer(root, Path(settings.metadata_sync_dir))
 
     def update_library_metadata(
         self, entry: LibraryEntry, metadata: EditablePaperMetadata
@@ -1485,11 +1298,6 @@ class LibraryWorkflowController:
             except Exception:
                 pass
             raise LibraryWorkflowError(f"색인 수정을 저장하지 못했습니다: {exc}") from None
-        sync = self.sync_metadata()
-        if sync.problems:
-            current.setdefault("workflow", {})["metadata_sync_warning"] = "; ".join(
-                sync.problems
-            )
         self._library_cache = None
         return LibraryEntry(
             pdf_path=entry.pdf_path,
@@ -1498,7 +1306,6 @@ class LibraryWorkflowController:
             work_id=entry.work_id,
             source_variant=entry.source_variant,
             record=current,
-            sync_warning="; ".join(sync.problems),
         )
 
 

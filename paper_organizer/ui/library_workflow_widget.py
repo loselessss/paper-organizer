@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from threading import Event
 
@@ -40,7 +39,6 @@ from paper_organizer.application.background_analysis import (
     AnalysisRunEvent,
     BackgroundAnalysisService,
 )
-from paper_organizer.application.cloud_metadata_sync import MetadataConflict
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
@@ -175,7 +173,6 @@ class CollectionReviewWidget(QWidget):
         path_form = QFormLayout(paths)
         input_row, self.input_edit = self._path_row(self._browse_input)
         library_row, self.library_edit = self._path_row(self._browse_library)
-        sync_row, self.sync_edit = self._path_row(self._browse_sync, allow_clear=True)
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("저사양/절전", "eco")
         self.profile_combo.addItem("균형", "balanced")
@@ -197,7 +194,6 @@ class CollectionReviewWidget(QWidget):
         save_paths.clicked.connect(self._save_paths)
         path_form.addRow("입력 폴더", input_row)
         path_form.addRow("PaperPack 라이브러리", library_row)
-        path_form.addRow("OneDrive JSON 미러", sync_row)
         path_form.addRow("시스템 부하", self.profile_combo)
         path_form.addRow("스캔 주기", self.interval_spin)
         path_form.addRow("자동 감시", self.auto_check)
@@ -267,7 +263,6 @@ class CollectionReviewWidget(QWidget):
         settings = self._controller.settings()
         self.input_edit.setText(str(input_dir))
         self.library_edit.setText(str(library_root))
-        self.sync_edit.setText(settings.metadata_sync_dir)
         profile_index = self.profile_combo.findData(settings.resource_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         self.interval_spin.setValue(settings.scan_interval_seconds)
@@ -287,21 +282,12 @@ class CollectionReviewWidget(QWidget):
         if path:
             self.library_edit.setText(path)
 
-    def _browse_sync(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "OneDrive 안의 JSON 미러 폴더 선택", self.sync_edit.text()
-        )
-        if path:
-            self.sync_edit.setText(path)
-
     def _save_paths(self) -> None:
         try:
-            sync_text = self.sync_edit.text().strip()
             self._controller.save_paths(
                 Path(self.input_edit.text().strip()),
                 Path(self.library_edit.text().strip()),
                 auto_enabled=self.auto_check.isChecked(),
-                metadata_sync_dir=Path(sync_text) if sync_text else None,
                 resource_profile=self.profile_combo.currentData(),
                 scan_interval_seconds=self.interval_spin.value(),
                 remove_source_after_import=self.remove_source_check.isChecked(),
@@ -423,8 +409,8 @@ class CollectionReviewWidget(QWidget):
             QMessageBox.warning(self, "논문 이동 실패", str(exc))
             return
         message = f"PaperPack 보관 완료: {result.pdf_path}"
-        if result.sync_warning:
-            message += f"\nJSON 미러 경고: {result.sync_warning}"
+        if result.warning:
+            message += f"\n경고: {result.warning}"
         QMessageBox.information(self, "논문 정리 완료", message)
         self.library_changed.emit()
         self.queue_changed.emit()
@@ -850,8 +836,6 @@ class LibraryWidget(QWidget):
             return
         self._entries[self.table.currentRow()] = updated
         status = "PaperPack 메타데이터 저장 및 통합 인덱스 재생성을 완료했습니다."
-        if updated.sync_warning:
-            status += f" OneDrive JSON 미러 경고: {updated.sync_warning}"
         self.refresh()
         self.status_label.setText(status)
         self.metadata_changed.emit()
@@ -883,8 +867,8 @@ class LibraryWidget(QWidget):
             QMessageBox.warning(self, "편집본 적용 실패", str(exc))
             return
         message = f"편집된 PDF를 PaperPack 리비전 {result.revision}로 저장했습니다."
-        if result.sync_warning:
-            message += f" 경고: {result.sync_warning}"
+        if result.warning:
+            message += f" 경고: {result.warning}"
         self.refresh(True)
         self.status_label.setText(message)
         self.metadata_changed.emit()
@@ -908,124 +892,3 @@ class LibraryWidget(QWidget):
         self.status_label.setText(
             "sPDF 편집본을 폐기했습니다." if removed else "폐기할 편집본이 없습니다."
         )
-
-
-class CloudSyncWidget(QWidget):
-    metadata_changed = pyqtSignal()
-
-    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
-        super().__init__(parent)
-        self._controller = controller
-        self._conflicts: list[MetadataConflict] = []
-        root = QVBoxLayout(self)
-        note = QLabel(
-            "로컬 paperpack은 원본으로 보존하고, OneDrive의 portable-library.json은 "
-            "클라우드 편집용으로 사용합니다. 양쪽이 모두 바뀐 경우에만 여기에서 선택합니다."
-        )
-        note.setWordWrap(True)
-        root.addWidget(note)
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["논문", "충돌 유형", "설명"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.itemSelectionChanged.connect(self._selection_changed)
-        root.addWidget(self.table, 1)
-        comparison = QHBoxLayout()
-        local_group = QGroupBox("로컬 원본")
-        local_layout = QVBoxLayout(local_group)
-        self.local_json = QTextEdit()
-        self.local_json.setReadOnly(True)
-        local_layout.addWidget(self.local_json)
-        cloud_group = QGroupBox("클라우드 편집본")
-        cloud_layout = QVBoxLayout(cloud_group)
-        self.cloud_json = QTextEdit()
-        self.cloud_json.setReadOnly(True)
-        cloud_layout.addWidget(self.cloud_json)
-        comparison.addWidget(local_group, 1)
-        comparison.addWidget(cloud_group, 1)
-        root.addLayout(comparison, 1)
-        actions = QHBoxLayout()
-        refresh_button = QPushButton("동기화 및 충돌 확인")
-        self.local_button = QPushButton("로컬 원본 사용")
-        self.cloud_button = QPushButton("클라우드 편집본 적용")
-        refresh_button.clicked.connect(self.refresh)
-        self.local_button.clicked.connect(lambda: self._resolve("local"))
-        self.cloud_button.clicked.connect(lambda: self._resolve("cloud"))
-        actions.addWidget(refresh_button)
-        actions.addWidget(self.local_button)
-        actions.addWidget(self.cloud_button)
-        actions.addStretch(1)
-        root.addLayout(actions)
-        self.status_label = QLabel()
-        self.status_label.setWordWrap(True)
-        root.addWidget(self.status_label)
-        self._selection_changed()
-
-    def refresh(self) -> None:
-        try:
-            self._conflicts = list(self._controller.metadata_conflicts())
-            self.metadata_changed.emit()
-        except Exception as exc:
-            self._conflicts = []
-            self.status_label.setText(f"동기화 확인 실패: {exc}")
-        self.table.setRowCount(len(self._conflicts))
-        for row, conflict in enumerate(self._conflicts):
-            values = [conflict.title, conflict.kind, conflict.message]
-            for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
-        if self._conflicts:
-            self.status_label.setText(
-                f"자동 병합하지 않은 충돌 {len(self._conflicts)}개 · 항목을 선택해 사용할 값을 결정하세요."
-            )
-        else:
-            settings = self._controller.settings()
-            self.status_label.setText(
-                "충돌이 없습니다."
-                if settings.metadata_sync_dir
-                else "수집 및 검토 화면에서 OneDrive JSON 미러 폴더를 먼저 지정하세요."
-            )
-        self._selection_changed()
-
-    def _selected(self) -> MetadataConflict | None:
-        row = self.table.currentRow()
-        return self._conflicts[row] if 0 <= row < len(self._conflicts) else None
-
-    def _selection_changed(self) -> None:
-        conflict = self._selected()
-        self.local_button.setEnabled(conflict is not None)
-        self.cloud_button.setEnabled(bool(conflict and conflict.can_use_cloud))
-        if conflict is None:
-            self.local_json.clear()
-            self.cloud_json.clear()
-            return
-        dump = lambda value: json.dumps(
-            value, ensure_ascii=False, indent=2, sort_keys=True
-        ) if value is not None else "(없음)"
-        self.local_json.setPlainText(dump(conflict.local_record))
-        self.cloud_json.setPlainText(dump(conflict.cloud_record))
-        self.local_button.setText(
-            "클라우드 고아 항목 제거"
-            if conflict.local_record is None
-            else "로컬 원본 사용"
-        )
-
-    def _resolve(self, choice: str) -> None:
-        conflict = self._selected()
-        if conflict is None:
-            return
-        label = "로컬 원본" if choice == "local" else "클라우드 편집본"
-        if QMessageBox.question(
-            self,
-            "동기화 충돌 해결",
-            f"'{conflict.title}'에 {label}을(를) 사용해 충돌을 해결할까요? "
-            "클라우드 값을 적용하면 현재 로컬 JSON은 이력에 보관됩니다.",
-        ) != QMessageBox.Yes:
-            return
-        try:
-            self._controller.resolve_metadata_conflict(conflict.record_id, choice)
-        except Exception as exc:
-            QMessageBox.warning(self, "충돌 해결 실패", str(exc))
-            return
-        self.refresh()

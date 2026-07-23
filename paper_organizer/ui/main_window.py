@@ -23,7 +23,6 @@ from .ai_settings_dialog import AiSettingsDialog
 from .immediate_summary_widget import ImmediateSummaryWidget
 from .library_workflow_widget import (
     AnalysisQueueWidget,
-    CloudSyncWidget,
     CollectionReviewWidget,
     LibraryWidget,
 )
@@ -55,7 +54,6 @@ class PaperOrganizerWindow(QMainWindow):
         self.collection_widget = None
         self.queue_widget = None
         self.library_widget = None
-        self.cloud_sync_widget = None
         self.migration_widget = None
         if library_workflow is not None:
             self.collection_widget = CollectionReviewWidget(library_workflow, self)
@@ -65,19 +63,13 @@ class PaperOrganizerWindow(QMainWindow):
                 self,
             )
             self.library_widget = LibraryWidget(library_workflow, self)
-            self.cloud_sync_widget = CloudSyncWidget(library_workflow, self)
             self.migration_widget = LegacyMigrationWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
-            self.collection_widget.library_changed.connect(self.cloud_sync_widget.refresh)
-            self.library_widget.metadata_changed.connect(self.cloud_sync_widget.refresh)
-            self.cloud_sync_widget.metadata_changed.connect(self.library_widget.refresh)
             self.migration_widget.library_changed.connect(self.library_widget.refresh)
-            self.migration_widget.library_changed.connect(self.cloud_sync_widget.refresh)
             self.tabs.addTab(self.collection_widget, "수집 및 검토")
             self.tabs.addTab(self.queue_widget, "분석 큐")
             self.tabs.addTab(self.library_widget, "라이브러리")
-            self.tabs.addTab(self.cloud_sync_widget, "클라우드 동기화")
             self.tabs.addTab(self.migration_widget, "레거시 변환")
         self.summary_widget = ImmediateSummaryWidget(immediate_summary, self)
         self.tabs.addTab(self.summary_widget, "즉시 요약")
