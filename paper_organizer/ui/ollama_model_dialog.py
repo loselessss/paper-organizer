@@ -19,7 +19,40 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.infra.ollama_installer import (
+    OLLAMA_DOWNLOAD_URL,
+    ensure_runtime,
+    inspect_runtime,
+)
 from paper_organizer.infra.ollama_models import OllamaOperationCancelled
+
+
+class _RuntimeSetupWorker(QThread):
+    """Install or start Ollama off the UI thread; install needs consent."""
+
+    completed = pyqtSignal(object)
+
+    def __init__(self, allow_install: bool, parent=None) -> None:
+        super().__init__(parent)
+        self._allow_install = allow_install
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(ensure_runtime(allow_install=self._allow_install))
+        except Exception as exc:  # 설치 도구 실패가 앱을 멈추지 않게 한다
+            from paper_organizer.infra.ollama_installer import (
+                OllamaRuntimeState,
+                OllamaSetupResult,
+            )
+
+            self.completed.emit(
+                OllamaSetupResult(
+                    False,
+                    OllamaRuntimeState(False, False, "", message=str(exc)),
+                    f"Ollama 준비에 실패했습니다: {exc}",
+                    needs_manual_download=True,
+                )
+            )
 
 
 class _ModelOperationWorker(QThread):
@@ -79,6 +112,7 @@ class OllamaModelDialog(QDialog):
         self._operation_model = ""
         self._snapshot = None
         self._refresh_after_operation = False
+        self._runtime_worker: _RuntimeSetupWorker | None = None
         self.setWindowTitle("Ollama 모델 관리")
         self.resize(680, 520)
 
@@ -95,6 +129,17 @@ class OllamaModelDialog(QDialog):
         self.runtime_status = QLabel("아직 Ollama 상태를 확인하지 않았습니다.")
         self.runtime_status.setWordWrap(True)
         root.addWidget(self.runtime_status)
+
+        runtime_row = QHBoxLayout()
+        self.setup_runtime_button = QPushButton("Ollama 설치 및 실행")
+        self.setup_runtime_button.setToolTip(
+            "Ollama가 없으면 winget으로 설치하고, 설치되어 있으면 실행만 합니다."
+        )
+        self.setup_runtime_button.clicked.connect(self._setup_runtime)
+        self.setup_runtime_button.setVisible(False)
+        runtime_row.addWidget(self.setup_runtime_button)
+        runtime_row.addStretch(1)
+        root.addLayout(runtime_row)
 
         selection_row = QHBoxLayout()
         self.model_combo = QComboBox()
@@ -219,6 +264,55 @@ class OllamaModelDialog(QDialog):
             self._refresh_after_operation = False
             QTimer.singleShot(0, self.refresh)
 
+    def _setup_runtime(self) -> None:
+        """Ask before installing, then install or start Ollama in a worker."""
+
+        state = inspect_runtime()
+        allow_install = False
+        if not state.installed:
+            if not state.can_install_with_winget:
+                QMessageBox.information(
+                    self,
+                    "Ollama 설치 필요",
+                    "이 PC에서는 winget을 쓸 수 없어 자동 설치할 수 없습니다.\n"
+                    f"{OLLAMA_DOWNLOAD_URL} 에서 설치 프로그램을 내려받아 설치한 뒤 "
+                    "새로고침하세요.",
+                )
+                return
+            if QMessageBox.question(
+                self,
+                "Ollama 설치",
+                "로컬 AI를 쓰려면 Ollama 런타임이 필요합니다.\n"
+                "winget으로 Ollama를 설치할까요? 모델은 이 단계에서 받지 않습니다.",
+            ) != QMessageBox.Yes:
+                return
+            allow_install = True
+        self.setup_runtime_button.setEnabled(False)
+        self.runtime_status.setText(
+            "Ollama를 설치하고 실행하는 중…" if allow_install else "Ollama를 실행하는 중…"
+        )
+        worker = _RuntimeSetupWorker(allow_install, self)
+        worker.completed.connect(self._runtime_setup_finished)
+        worker.finished.connect(worker.deleteLater)
+        self._runtime_worker = worker
+        worker.start()
+
+    def _runtime_setup_finished(self, result) -> None:
+        self._runtime_worker = None
+        self.setup_runtime_button.setEnabled(True)
+        self.runtime_status.setText(result.message)
+        if result.ok:
+            QTimer.singleShot(0, self.refresh)
+            return
+        if result.needs_manual_download:
+            QMessageBox.information(
+                self,
+                "Ollama 직접 설치",
+                f"{result.message}\n\n설치 페이지: {OLLAMA_DOWNLOAD_URL}",
+            )
+        else:
+            QMessageBox.warning(self, "Ollama 준비 실패", result.message)
+
     def _apply_snapshot(self, snapshot) -> None:
         self._snapshot = snapshot
         if snapshot.reachable:
@@ -229,8 +323,10 @@ class OllamaModelDialog(QDialog):
         else:
             detail = f" ({snapshot.error})" if snapshot.error else ""
             self.runtime_status.setText(
-                "Ollama에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요." + detail
+                "Ollama에 연결할 수 없습니다. 아래 버튼으로 설치·실행할 수 있습니다."
+                + detail
             )
+        self.setup_runtime_button.setVisible(not snapshot.reachable)
         selected = self.model_combo.currentData()
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
