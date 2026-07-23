@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "description": "학과(전공) 수준 category와 세부 전공 subcategory로 구성한 논문 분류 체계. 설정에서 주력 분야만 선택해 좁혀 쓸 수 있다.",
+  "categories": [
+    {
+      "name": "생물공학",
+      "keywords": ["bioengineering", "biotechnology", "bioprocess", "fermentation", "bioreactor", "metabolic engineering", "synthetic biology", "recombinant", "protein engineering", "enzyme", "biocatalysis", "cell culture", "downstream processing", "biomanufacturing"],
+      "subcategories": [
+        {"name": "단백질공학", "keywords": ["protein engineering", "directed evolution", "protein design", "mutagenesis", "antibody engineering", "protein stability", "rational design", "scaffold"]},
+        {"name": "대사공학", "keywords": ["metabolic engineering", "metabolic flux", "pathway engineering", "chassis strain", "titer", "yield improvement"]},
+        {"name": "합성생물학", "keywords": ["synthetic biology", "genetic circuit", "biobrick", "crispr", "gene circuit", "orthogonal"]},
+        {"name": "바이오공정", "keywords": ["bioreactor", "fermentation", "downstream processing", "scale-up", "perfusion", "chromatography purification"]},
+        {"name": "효소공학", "keywords": ["enzyme engineering", "biocatalysis", "immobilization", "catalytic efficiency", "kcat"]}
+      ]
+    },
+    {
+      "name": "생명과학",
+      "keywords": ["molecular biology", "cell biology", "gene expression", "transcription", "genome", "protein", "signaling pathway", "apoptosis", "in vivo", "in vitro", "mouse model", "western blot", "rna-seq", "mitochondria", "receptor"],
+      "subcategories": [
+        {"name": "분자생물학", "keywords": ["transcription", "translation", "dna replication", "promoter", "mrna", "epigenetic", "chromatin"]},
+        {"name": "세포생물학", "keywords": ["cell cycle", "organelle", "cytoskeleton", "autophagy", "apoptosis", "membrane trafficking"]},
+        {"name": "유전학", "keywords": ["genetics", "mutation", "allele", "genotype", "phenotype", "gwas", "heritability", "linkage"]},
+        {"name": "미생물학", "keywords": ["microbiology", "bacteria", "bacterial", "microbiome", "biofilm", "antibiotic resistance", "escherichia coli", "strain"]},
+        {"name": "면역학", "keywords": ["immunology", "immune response", "t cell", "b cell", "antibody", "cytokine", "inflammation", "macrophage"]},
+        {"name": "신경과학", "keywords": ["neuroscience", "neuron", "synaptic", "brain", "cortex", "neural circuit", "electrophysiology", "hippocampus"]},
+        {"name": "생화학", "keywords": ["biochemistry", "enzyme kinetics", "substrate", "binding affinity", "crystal structure", "cofactor"]},
+        {"name": "구조생물학", "keywords": ["cryo-em", "crystallography", "structural biology", "angstrom resolution", "protein structure", "nmr structure"]}
+      ]
+    },
+    {
+      "name": "의학",
+      "keywords": ["clinical", "patient", "patients", "diagnosis", "therapy", "treatment", "randomized", "cohort", "disease", "tumor", "cancer", "medical", "trial", "prognosis", "mortality", "symptom"],
+      "subcategories": [
+        {"name": "종양학", "keywords": ["oncology", "tumor", "carcinoma", "metastasis", "chemotherapy", "immunotherapy", "melanoma", "leukemia"]},
+        {"name": "내과학", "keywords": ["internal medicine", "diabetes", "hypertension", "cardiovascular", "renal", "hepatic", "gastro"]},
+        {"name": "임상시험", "keywords": ["randomized controlled trial", "placebo", "double-blind", "phase iii", "endpoint", "enrollment", "adverse event"]},
+        {"name": "역학", "keywords": ["epidemiology", "incidence", "prevalence", "risk factor", "odds ratio", "population-based", "surveillance"]},
+        {"name": "약리학", "keywords": ["pharmacology", "pharmacokinetics", "dose", "drug delivery", "toxicity", "bioavailability", "ic50"]},
+        {"name": "영상의학", "keywords": ["radiology", "mri", "ct scan", "ultrasound", "pet imaging", "radiography"]}
+      ]
+    },
+    {
+      "name": "약학",
+      "keywords": ["pharmaceutical", "drug discovery", "formulation", "excipient", "drug delivery", "pharmacokinetic", "prodrug", "medicinal chemistry", "adme"],
+      "subcategories": [
+        {"name": "약물전달", "keywords": ["drug delivery", "nanoparticle carrier", "liposome", "sustained release", "targeted delivery"]},
+        {"name": "의약화학", "keywords": ["medicinal chemistry", "lead compound", "structure-activity relationship", "scaffold hopping", "inhibitor design"]},
+        {"name": "제제학", "keywords": ["formulation", "tablet", "excipient", "dissolution", "solubility enhancement"]}
+      ]
+    },
+    {
+      "name": "화학",
+      "keywords": ["chemistry", "synthesis", "catalyst", "reaction", "molecule", "spectroscopy", "nmr", "solvent", "ligand", "oxidation", "chemical", "compound", "yield"],
+      "subcategories": [
+        {"name": "유기화학", "keywords": ["organic synthesis", "total synthesis", "stereoselective", "asymmetric", "enantioselective", "cyclization"]},
+        {"name": "무기화학", "keywords": ["inorganic", "coordination complex", "transition metal", "organometallic", "metal-organic framework"]},
+        {"name": "물리화학", "keywords": ["physical chemistry", "thermodynamics", "kinetics", "dft calculation", "spectroscopic", "quantum chemical"]},
+        {"name": "분석화학", "keywords": ["analytical chemistry", "chromatography", "mass spectrometry", "detection limit", "calibration curve", "hplc"]},
+        {"name": "고분자화학", "keywords": ["polymer", "polymerization", "copolymer", "molecular weight distribution", "monomer"]},
+        {"name": "촉매화학", "keywords": ["catalysis", "catalyst", "heterogeneous catalysis", "turnover frequency", "active site"]}
+      ]
+    },
+    {
+      "name": "물리학",
+      "keywords": ["physics", "quantum", "photon", "electron", "spin", "lattice", "magnetic field", "particle", "wavefunction", "hamiltonian", "scattering", "laser", "superconduct"],
+      "subcategories": [
+        {"name": "응집물질물리", "keywords": ["condensed matter", "superconductivity", "topological insulator", "phonon", "band structure", "magnetism"]},
+        {"name": "광학·광자학", "keywords": ["optics", "photonics", "laser", "waveguide", "optical cavity", "nonlinear optics", "plasmonic"]},
+        {"name": "입자물리", "keywords": ["particle physics", "high energy", "collider", "quark", "boson", "lhc", "neutrino"]},
+        {"name": "천체물리", "keywords": ["astrophysics", "galaxy", "cosmology", "stellar", "black hole", "telescope", "redshift"]},
+        {"name": "양자정보", "keywords": ["quantum computing", "qubit", "quantum information", "entanglement", "quantum error correction", "quantum algorithm"]}
+      ]
+    },
+    {
+      "name": "수학·통계학",
+      "keywords": ["theorem", "lemma", "proof", "manifold", "topology", "algebraic", "probability", "stochastic", "estimator", "asymptotic", "convergence", "bayesian", "statistical inference"],
+      "subcategories": [
+        {"name": "순수수학", "keywords": ["theorem", "lemma", "conjecture", "algebraic geometry", "topology", "number theory", "functional analysis"]},
+        {"name": "응용수학", "keywords": ["numerical method", "finite element", "partial differential equation", "optimization problem", "dynamical system"]},
+        {"name": "통계학", "keywords": ["statistical", "estimator", "confidence interval", "hypothesis testing", "regression model", "bayesian inference", "posterior"]},
+        {"name": "확률론", "keywords": ["probability", "stochastic process", "markov chain", "martingale", "brownian motion"]}
+      ]
+    },
+    {
+      "name": "컴퓨터공학",
+      "keywords": ["algorithm", "neural network", "machine learning", "deep learning", "dataset", "training", "software", "computation", "benchmark", "model performance", "transformer", "inference", "gpu", "accuracy"],
+      "subcategories": [
+        {"name": "인공지능·기계학습", "keywords": ["machine learning", "deep learning", "neural network", "transformer", "reinforcement learning", "fine-tuning", "large language model"]},
+        {"name": "컴퓨터비전", "keywords": ["computer vision", "image classification", "object detection", "segmentation", "convolutional", "imagenet"]},
+        {"name": "자연어처리", "keywords": ["natural language processing", "language model", "tokenization", "text classification", "question answering", "embedding"]},
+        {"name": "시스템·네트워크", "keywords": ["operating system", "distributed system", "network protocol", "throughput latency", "scheduler", "cache coherence"]},
+        {"name": "데이터베이스", "keywords": ["database", "query optimization", "transaction", "index structure", "sql", "data management"]},
+        {"name": "보안", "keywords": ["security", "cryptography", "vulnerability", "attack", "encryption", "adversarial", "authentication", "malware"]},
+        {"name": "소프트웨어공학", "keywords": ["software engineering", "code review", "refactoring", "static analysis", "test coverage", "developer"]},
+        {"name": "HCI", "keywords": ["human-computer interaction", "user study", "usability", "participants interface", "interaction design"]}
+      ]
+    },
+    {
+      "name": "전기전자공학",
+      "keywords": ["circuit", "semiconductor", "transistor", "voltage", "signal processing", "antenna", "amplifier", "cmos", "wireless", "power electronics", "sensor node", "frequency response"],
+      "subcategories": [
+        {"name": "반도체소자", "keywords": ["semiconductor device", "transistor", "cmos", "mosfet", "wafer", "doping", "gate oxide"]},
+        {"name": "회로설계", "keywords": ["circuit design", "amplifier", "analog circuit", "asic", "integrated circuit", "power consumption circuit"]},
+        {"name": "통신", "keywords": ["wireless communication", "antenna", "mimo", "modulation", "5g", "channel estimation", "spectrum"]},
+        {"name": "신호처리", "keywords": ["signal processing", "filter design", "fourier transform", "sampling rate", "noise reduction"]},
+        {"name": "전력시스템", "keywords": ["power system", "grid", "inverter", "converter", "voltage regulation", "power electronics"]}
+      ]
+    },
+    {
+      "name": "기계공학",
+      "keywords": ["mechanical", "stress", "strain", "fluid flow", "turbulence", "heat transfer", "vibration", "actuator", "finite element analysis", "thermal", "combustion", "aerodynamic"],
+      "subcategories": [
+        {"name": "고체역학", "keywords": ["solid mechanics", "stress strain", "fracture", "fatigue", "elastic modulus", "deformation"]},
+        {"name": "유체역학", "keywords": ["fluid mechanics", "turbulence", "reynolds number", "computational fluid dynamics", "boundary layer", "flow field"]},
+        {"name": "열전달", "keywords": ["heat transfer", "thermal conductivity", "convection", "cooling performance", "thermal management"]},
+        {"name": "로봇공학", "keywords": ["robot", "robotic", "manipulator", "kinematics", "actuator control", "trajectory planning", "grasping"]},
+        {"name": "제조·생산", "keywords": ["manufacturing", "machining", "additive manufacturing", "3d printing", "tool wear", "surface roughness"]}
+      ]
+    },
+    {
+      "name": "재료공학",
+      "keywords": ["material", "materials", "alloy", "microstructure", "crystalline", "grain boundary", "thin film", "nanomaterial", "composite", "mechanical properties", "sintering", "xrd"],
+      "subcategories": [
+        {"name": "금속재료", "keywords": ["alloy", "steel", "titanium", "grain boundary", "precipitation hardening", "welding"]},
+        {"name": "세라믹", "keywords": ["ceramic", "sintering", "oxide ceramic", "perovskite", "dielectric"]},
+        {"name": "나노소재", "keywords": ["nanomaterial", "nanoparticle", "nanotube", "graphene", "quantum dot", "2d material"]},
+        {"name": "에너지소재", "keywords": ["battery", "lithium-ion", "electrode material", "solar cell", "photovoltaic", "fuel cell", "electrolyte"]},
+        {"name": "바이오소재", "keywords": ["biomaterial", "scaffold", "biocompatibility", "hydrogel", "tissue engineering", "implant"]}
+      ]
+    },
+    {
+      "name": "화학공학",
+      "keywords": ["chemical engineering", "process design", "distillation", "separation process", "reactor design", "mass transfer", "process simulation", "membrane separation", "scale-up"],
+      "subcategories": [
+        {"name": "반응공학", "keywords": ["reactor design", "reaction engineering", "residence time", "conversion selectivity", "packed bed"]},
+        {"name": "분리공정", "keywords": ["separation process", "distillation", "membrane separation", "adsorption", "extraction"]},
+        {"name": "공정시스템", "keywords": ["process control", "process simulation", "aspen", "plant-wide", "optimization process"]}
+      ]
+    },
+    {
+      "name": "토목·환경공학",
+      "keywords": ["environmental", "wastewater", "groundwater", "structural engineering", "concrete", "soil", "hydrology", "emission", "pollutant", "sustainability", "life cycle assessment", "watershed"],
+      "subcategories": [
+        {"name": "환경공학", "keywords": ["wastewater", "water treatment", "pollutant removal", "air quality", "contaminant", "remediation"]},
+        {"name": "구조공학", "keywords": ["structural engineering", "concrete", "seismic", "bridge", "reinforced", "load bearing"]},
+        {"name": "지반공학", "keywords": ["geotechnical", "soil mechanics", "slope stability", "foundation", "excavation"]},
+        {"name": "수자원", "keywords": ["hydrology", "watershed", "groundwater", "rainfall runoff", "river basin"]}
+      ]
+    },
+    {
+      "name": "지구과학",
+      "keywords": ["geology", "seismic", "climate", "atmospheric", "ocean", "sediment", "tectonic", "mineral", "paleo", "remote sensing", "precipitation", "glacier"],
+      "subcategories": [
+        {"name": "지질학", "keywords": ["geology", "tectonic", "sediment", "stratigraphy", "mineralogy", "isotope dating"]},
+        {"name": "대기·기후", "keywords": ["climate", "atmospheric", "greenhouse gas", "warming", "precipitation pattern", "circulation model"]},
+        {"name": "해양학", "keywords": ["oceanography", "sea surface", "marine sediment", "ocean circulation", "salinity"]}
+      ]
+    },
+    {
+      "name": "농생명과학",
+      "keywords": ["crop", "agriculture", "soil fertility", "cultivar", "yield harvest", "livestock", "plant growth", "fertilizer", "pest", "horticulture", "food science"],
+      "subcategories": [
+        {"name": "작물·원예", "keywords": ["crop", "cultivar", "horticulture", "plant growth", "harvest yield", "germination"]},
+        {"name": "식품과학", "keywords": ["food science", "food quality", "sensory evaluation", "shelf life", "food processing"]},
+        {"name": "축산·수의", "keywords": ["livestock", "veterinary", "poultry", "cattle", "animal health", "feed"]}
+      ]
+    },
+    {
+      "name": "심리학",
+      "keywords": ["psychology", "participants", "cognitive", "behavioral", "perception", "memory task", "questionnaire", "self-report", "emotion", "attention", "psychological"],
+      "subcategories": [
+        {"name": "인지심리", "keywords": ["cognitive", "working memory", "attention", "perception task", "reaction time"]},
+        {"name": "임상심리", "keywords": ["clinical psychology", "depression", "anxiety", "psychotherapy", "mental health", "psychiatric"]},
+        {"name": "사회심리", "keywords": ["social psychology", "attitude", "prejudice", "group behavior", "social influence"]}
+      ]
+    },
+    {
+      "name": "경제·경영학",
+      "keywords": ["economic", "market", "firm", "consumer", "investment", "revenue", "policy impact", "productivity", "elasticity", "regression estimates", "management", "supply chain", "financial"],
+      "subcategories": [
+        {"name": "경제학", "keywords": ["economics", "gdp", "labor market", "monetary policy", "elasticity", "welfare effect", "econometric"]},
+        {"name": "경영·전략", "keywords": ["management", "firm performance", "strategy", "organizational", "corporate governance"]},
+        {"name": "재무·회계", "keywords": ["finance", "stock return", "portfolio", "accounting", "asset pricing", "volatility"]},
+        {"name": "마케팅", "keywords": ["marketing", "consumer behavior", "brand", "advertising", "purchase intention"]},
+        {"name": "운영·물류", "keywords": ["supply chain", "logistics", "inventory", "operations management", "scheduling problem"]}
+      ]
+    },
+    {
+      "name": "사회과학",
+      "keywords": ["social", "society", "policy", "survey respondents", "qualitative interviews", "sociological", "political", "governance", "inequality", "demographic", "public opinion"],
+      "subcategories": [
+        {"name": "사회학", "keywords": ["sociology", "inequality", "social capital", "stratification", "community"]},
+        {"name": "정치학", "keywords": ["political science", "election", "voter", "democracy", "public policy", "legislation"]},
+        {"name": "교육학", "keywords": ["education", "student learning", "curriculum", "teacher", "classroom", "academic achievement"]},
+        {"name": "커뮤니케이션", "keywords": ["communication", "media", "journalism", "social media discourse", "framing"]}
+      ]
+    },
+    {
+      "name": "인문학",
+      "keywords": ["literature", "philosophical", "historical", "narrative", "discourse", "hermeneutic", "linguistic", "cultural", "textual", "archive", "aesthetic"],
+      "subcategories": [
+        {"name": "문학", "keywords": ["literature", "novel", "poetry", "literary criticism", "narrative analysis"]},
+        {"name": "역사학", "keywords": ["history", "historical archive", "century", "manuscript", "historiography"]},
+        {"name": "철학", "keywords": ["philosophy", "philosophical", "epistemology", "ontology", "ethics argument", "metaphysics"]},
+        {"name": "언어학", "keywords": ["linguistics", "syntax", "phonology", "morphology", "corpus linguistics", "semantics"]}
+      ]
+    },
+    {
+      "name": "법학",
+      "keywords": ["legal", "law", "court", "statute", "regulation", "jurisdiction", "liability", "constitutional", "judicial", "compliance", "litigation"],
+      "subcategories": [
+        {"name": "공법", "keywords": ["constitutional", "administrative law", "public law", "judicial review"]},
+        {"name": "사법", "keywords": ["contract law", "tort", "civil law", "liability", "property right"]},
+        {"name": "국제법", "keywords": ["international law", "treaty", "human rights law", "arbitration"]}
+      ]
+    }
+  ]
+}

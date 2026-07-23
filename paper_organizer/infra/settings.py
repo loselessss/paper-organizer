@@ -28,6 +28,8 @@ class AppSettings:
     library_root: str = ""
     remove_source_after_import: bool = False
     auto_enabled: bool = False
+    auto_organize_academic: bool = True
+    focus_categories: list[str] = field(default_factory=list)
     resource_profile: str = "eco"
     background_analysis_enabled: bool = True
     model_profile: str = "auto"
@@ -62,6 +64,13 @@ class AppSettings:
             raise ValueError("resource_profile must be eco, balanced or performance")
         if not isinstance(self.background_analysis_enabled, bool):
             raise ValueError("background_analysis_enabled must be a boolean")
+        if not isinstance(self.auto_organize_academic, bool):
+            raise ValueError("auto_organize_academic must be a boolean")
+        if not isinstance(self.focus_categories, list) or any(
+            not isinstance(name, str) or not name.strip()
+            for name in self.focus_categories
+        ):
+            raise ValueError("focus_categories must contain non-empty names")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
         if not isinstance(self.hardware_profile, dict):
