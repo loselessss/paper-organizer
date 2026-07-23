@@ -27,6 +27,12 @@ SUMMARY = {
     "contributions": ["기여"],
     "limitations": ["한계"],
     "keywords": ["키워드"],
+    "title": "Directed evolution of a thermostable enzyme",
+    "authors": ["A. Researcher"],
+    "year": "2019",
+    "venue": "Journal of Molecular Biology",
+    "category": "생물공학",
+    "subcategory": "단백질공학",
 }
 
 

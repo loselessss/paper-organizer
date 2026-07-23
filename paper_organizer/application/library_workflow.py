@@ -65,6 +65,7 @@ from paper_organizer.core.search_index import (
     SearchHit,
     SearchIndexError,
     rebuild_search_index,
+    remove_search_entry,
     search as search_full_text,
     update_search_entry,
 )
@@ -970,6 +971,7 @@ class LibraryWorkflowController:
                 continue
             description[name] = value
             sources[field] = f"ai:{result.provider}"
+        self._apply_ai_bibliography(record, data, f"ai:{result.provider}")
         curation["revision"] = int(curation.get("revision", 0)) + 1
         curation["last_edited_at"] = now
         curation["last_edited_by"] = f"ai:{result.provider}"
@@ -988,8 +990,110 @@ class LibraryWorkflowController:
             rebuild_library_index(root)
         except (OSError, PaperPackError) as exc:
             raise LibraryWorkflowError(f"AI 분석 결과를 저장하지 못했습니다: {exc}") from None
-        self._index_search_entry(source)
+        moved = self._relocate_for_classification(source, record)
+        self._index_search_entry(moved)
         self._library_cache = None
+
+    @staticmethod
+    def _apply_ai_bibliography(
+        record: dict[str, Any], data: Any, source_label: str
+    ) -> None:
+        """Overwrite only fields the user has not curated or locked.
+
+        field_sources가 "user"인 필드는 사람이 고친 값이므로 건드리지 않고,
+        정규식 1차 분류(auto:regex)나 빈 값만 AI 결과로 채운다.
+        """
+
+        curation = record.setdefault("curation", {})
+        locked = set(curation.get("locked_fields", []))
+        sources = curation.setdefault("field_sources", {})
+        bibliography = record.setdefault("bibliography", {})
+        classification = record.setdefault("classification", {})
+
+        def replaceable(field: str, current: Any) -> bool:
+            if field in locked or sources.get(field) == "user":
+                return False
+            return not current or sources.get(field) in {"auto:regex", source_label}
+
+        year: int | None = None
+        if data.year.strip().isdigit() and len(data.year.strip()) == 4:
+            year = int(data.year.strip())
+        candidates = [
+            (bibliography, "bibliography.title", "title", data.title.strip()),
+            (
+                bibliography,
+                "bibliography.authors",
+                "authors",
+                [value.strip() for value in data.authors if value.strip()],
+            ),
+            (bibliography, "bibliography.year", "year", year),
+            (bibliography, "bibliography.venue", "venue", data.venue.strip()),
+            (
+                classification,
+                "classification.category",
+                "category",
+                data.category.strip(),
+            ),
+            (
+                classification,
+                "classification.subcategory",
+                "subcategory",
+                data.subcategory.strip(),
+            ),
+        ]
+        for target, field, key, value in candidates:
+            if not value:
+                continue
+            if not replaceable(field, target.get(key)):
+                continue
+            target[key] = value
+            sources[field] = source_label
+
+    def _relocate_for_classification(
+        self, paperpack: Path, record: dict[str, Any]
+    ) -> Path:
+        """Move a paperpack when AI changed its category, or leave it in place.
+
+        이동에 실패하면 기존 위치를 그대로 유지한다. 분류는 메타데이터가
+        기준이고 폴더는 그 사본이므로, 실패해도 데이터를 잃지 않는다.
+        """
+
+        _input_dir, root = self.configured_paths()
+        classification = record.get("classification", {})
+        raw_category = str(classification.get("category") or "").strip()
+        if not raw_category:
+            return paperpack
+        category = _safe_component(raw_category, "Uncategorized")
+        subcategory = _safe_component(
+            str(classification.get("subcategory") or ""), "General"
+        )
+        destination_dir = root / "papers" / category / subcategory
+        if paperpack.parent.resolve() == destination_dir.resolve():
+            return paperpack
+        try:
+            destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = _unique_paperpack_destination(destination_dir, paperpack.name)
+            shutil.move(str(paperpack), str(destination))
+        except OSError:
+            return paperpack
+        try:
+            record["file"]["relative_path"] = destination.relative_to(root).as_posix()
+            record["file"]["current_name"] = destination.name
+            update_paperpack(destination, record, changed_by="relocate")
+            self._queue().relocate(
+                str(record.get("file", {}).get("sha256") or ""),
+                destination,
+                status="completed",
+                title=str(record.get("bibliography", {}).get("title") or destination.stem),
+            )
+            rebuild_library_index(root)
+        except (OSError, KeyError, AnalysisQueueError, PaperPackError):
+            pass
+        try:
+            remove_search_entry(root, str(record.get("id") or ""))
+        except (OSError, SearchIndexError):
+            pass
+        return destination
 
     def backfill_content(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
         """Fill empty content/content.json entries by re-extracting PDF text.

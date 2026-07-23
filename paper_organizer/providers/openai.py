@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from .base import (
     ApiKeySource,
     SUMMARY_SCHEMA,
-    SYSTEM_INSTRUCTIONS,
+    system_instructions,
     JsonHttpClient,
     ProviderError,
     SummaryRequest,
@@ -46,7 +46,7 @@ class OpenAIProvider:
         api_key = require_api_key(self._api_key_source, "OpenAI")
         payload: dict[str, Any] = {
             "model": self.model,
-            "instructions": SYSTEM_INSTRUCTIONS,
+            "instructions": system_instructions(request),
             "input": request.document_text,
             "max_output_tokens": request.max_output_tokens,
             "store": False,

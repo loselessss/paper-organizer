@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from .base import (
     SUMMARY_SCHEMA,
-    SYSTEM_INSTRUCTIONS,
+    system_instructions,
     JsonHttpClient,
     ProviderError,
     SummaryRequest,
@@ -40,7 +40,7 @@ class OllamaProvider:
             "model": self.model,
             "stream": False,
             "messages": [
-                {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                {"role": "system", "content": system_instructions(request)},
                 {"role": "user", "content": request.document_text},
             ],
             "format": SUMMARY_SCHEMA,

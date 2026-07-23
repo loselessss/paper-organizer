@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from .base import (
     ApiKeySource,
     SUMMARY_SCHEMA,
-    SYSTEM_INSTRUCTIONS,
+    system_instructions,
     JsonHttpClient,
     ProviderError,
     SummaryRequest,
@@ -47,7 +47,7 @@ class AnthropicProvider:
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": request.max_output_tokens,
-            "system": SYSTEM_INSTRUCTIONS,
+            "system": system_instructions(request),
             "messages": [{"role": "user", "content": request.document_text}],
             "output_config": {
                 "format": {"type": "json_schema", "schema": SUMMARY_SCHEMA}

@@ -23,6 +23,12 @@ SUMMARY = {
     "contributions": ["시험 기여"],
     "limitations": ["시험 한계"],
     "keywords": ["시험"],
+    "title": "시험 제목",
+    "authors": ["시험 저자"],
+    "year": "2026",
+    "venue": "시험 저널",
+    "category": "생물공학",
+    "subcategory": "단백질공학",
 }
 
 

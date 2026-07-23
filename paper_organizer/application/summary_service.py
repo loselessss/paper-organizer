@@ -10,6 +10,7 @@ from pathlib import Path
 
 import fitz
 
+from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 from paper_organizer.infra.settings import default_settings_path, load_settings
@@ -175,10 +176,25 @@ def run_prepared_summary(
         SummaryRequest(
             document_text=prepared.document_text,
             cloud_consent=consent,
-            prompt_version="paper-summary-v1",
+            prompt_version="paper-summary-v2",
+            allowed_categories=_allowed_categories(settings),
         )
     )
     return SummaryExecution(preview=prepared.preview, result=result)
+
+
+def _allowed_categories(settings: AppSettings) -> tuple[str, ...]:
+    """Limit AI classification to the bundled taxonomy, narrowed by preference."""
+
+    try:
+        names = taxonomy_category_names()
+    except TaxonomyError:
+        return ()
+    focus = [name.strip() for name in settings.focus_categories if name.strip()]
+    if focus:
+        chosen = {name for name in focus if name in names}
+        return tuple(name for name in names if name in chosen)
+    return tuple(names)
 
 
 def _selected_page_indexes(page_count: int, mode: SummaryMode) -> tuple[int, ...]:

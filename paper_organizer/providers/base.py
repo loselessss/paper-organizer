@@ -18,6 +18,12 @@ SUMMARY_SCHEMA: dict[str, Any] = {
         "contributions": {"type": "array", "items": {"type": "string"}},
         "limitations": {"type": "array", "items": {"type": "string"}},
         "keywords": {"type": "array", "items": {"type": "string"}},
+        "title": {"type": "string"},
+        "authors": {"type": "array", "items": {"type": "string"}},
+        "year": {"type": "string"},
+        "venue": {"type": "string"},
+        "category": {"type": "string"},
+        "subcategory": {"type": "string"},
     },
     "required": [
         "summary_ko",
@@ -26,6 +32,12 @@ SUMMARY_SCHEMA: dict[str, Any] = {
         "contributions",
         "limitations",
         "keywords",
+        "title",
+        "authors",
+        "year",
+        "venue",
+        "category",
+        "subcategory",
     ],
     "additionalProperties": False,
 }
@@ -33,7 +45,12 @@ SUMMARY_SCHEMA: dict[str, Any] = {
 SYSTEM_INSTRUCTIONS = (
     "You analyze academic papers. Use only the supplied document text. "
     "Return Korean prose for summary_ko and preserve technical names accurately. "
-    "If evidence is missing, use an empty string or empty list instead of guessing."
+    "If evidence is missing, use an empty string or empty list instead of guessing. "
+    "Also correct the bibliography from the document: title is the paper's own "
+    "title, authors are the listed authors, year is the four-digit publication "
+    "year as a string, and venue is the journal or conference name. "
+    "Classify the paper into one university department-level category and a "
+    "narrower subcategory, both written in Korean."
 )
 
 ApiKeySource = str | None | Callable[[], str | None]
@@ -62,13 +79,27 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v1"
+    prompt_version: str = "paper-summary-v2"
+    allowed_categories: tuple[str, ...] = ()
 
     def validate(self) -> None:
         if not self.document_text.strip():
             raise ValueError("document_text cannot be empty")
         if not 128 <= self.max_output_tokens <= 32_000:
             raise ValueError("max_output_tokens must be between 128 and 32000")
+
+
+def system_instructions(request: SummaryRequest) -> str:
+    """Append the caller's category list so the model picks from it."""
+
+    allowed = [name.strip() for name in request.allowed_categories if name.strip()]
+    if not allowed:
+        return SYSTEM_INSTRUCTIONS
+    return (
+        f"{SYSTEM_INSTRUCTIONS} Choose category from exactly this list: "
+        f"{', '.join(allowed)}. If none of them fits, return an empty string "
+        "for category."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +110,12 @@ class SummaryData:
     contributions: tuple[str, ...]
     limitations: tuple[str, ...]
     keywords: tuple[str, ...]
+    title: str = ""
+    authors: tuple[str, ...] = ()
+    year: str = ""
+    venue: str = ""
+    category: str = ""
+    subcategory: str = ""
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "SummaryData":
@@ -87,22 +124,28 @@ class SummaryData:
             missing = sorted(expected - set(raw))
             extra = sorted(set(raw) - expected)
             raise ProviderError(f"Invalid summary fields; missing={missing}, extra={extra}")
-        for name in ("summary_ko", "research_question"):
+        strings: dict[str, str] = {}
+        for name in (
+            "summary_ko",
+            "research_question",
+            "title",
+            "year",
+            "venue",
+            "category",
+            "subcategory",
+        ):
             if not isinstance(raw[name], str):
                 raise ProviderError(f"Summary field '{name}' must be a string")
+            strings[name] = raw[name]
         arrays: dict[str, tuple[str, ...]] = {}
-        for name in ("methods", "contributions", "limitations", "keywords"):
+        for name in ("methods", "contributions", "limitations", "keywords", "authors"):
             value = raw[name]
             if not isinstance(value, list) or any(
                 not isinstance(item, str) for item in value
             ):
                 raise ProviderError(f"Summary field '{name}' must be a string array")
             arrays[name] = tuple(value)
-        return cls(
-            summary_ko=raw["summary_ko"],
-            research_question=raw["research_question"],
-            **arrays,
-        )
+        return cls(**strings, **arrays)
 
 
 @dataclass(frozen=True, slots=True)
