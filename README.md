@@ -56,7 +56,8 @@ paperpack은 그대로 유지됩니다.
 .\.venv\Scripts\paper-organizer-gui.exe
 ```
 
-`vendor/spdf`는 sPDF `main`을 추적하는 submodule입니다. GUI 브리지는 지연
+`vendor/spdf`는 sPDF `main`의 검증된 1.5.3 커밋을 추적하는 submodule입니다.
+손 도구·선택 도구와 즐겨찾기 툴바 동작을 포함하며, GUI 브리지는 지연
 로딩하므로 PyQt5가 없는 코어 테스트 환경에서도 패키지를 가져올 수 있습니다.
 요약 AI는 로컬 Ollama(기본값), OpenAI API, Anthropic Claude API 중에서
 선택할 수 있습니다. Ollama 모델은 설치본에 포함하지 않고 설치 후 선택
@@ -102,7 +103,7 @@ sPDF에서 저장한 뒤 `편집본을 PaperPack에 적용`을 눌러야만 내�
 중단하며, `편집본 폐기`는 작업 복사본만 지웁니다. 적용 뒤 파일 정체성과 분석 큐를
 갱신하고 기존 본문 색인과 AI 결과는 재분석 대상으로 표시합니다.
 
-시작할 때 `Paper Organizer 0.8.0`과 `Created by SANGKYU SHIN, Ph.D.`가 표시되는
+시작할 때 `Paper Organizer 0.8.1`과 `Created by SANGKYU SHIN, Ph.D.`가 표시되는
 스플래시를 띄우고, 별도 작업 스레드에서 로컬 paperpack·JSON과 동기화 폴더 상태를
 읽은 뒤 메인 창을 엽니다.
 

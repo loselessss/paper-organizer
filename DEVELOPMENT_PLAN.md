@@ -893,7 +893,7 @@ Qt 비의존 코어와 GUI를 분리한다. 파일 처리와 검색은 단위 �
 
 ### 8.1 sPDF 저장소 추적과 자동 업데이트
 
-sPDF는 별도 저장소 `https://github.com/loselessss/sPDF.git`의 `main` 브랜치를 유지한다. 작성 시점 기준 앱 버전은 `1.4.2`이며, Paper Organizer는 `vendor/spdf` Git submodule로 이를 포함한다.
+sPDF는 별도 저장소 `https://github.com/loselessss/sPDF.git`의 `main` 브랜치를 유지한다. 작성 시점 기준 앱 버전은 `1.5.3`이며, Paper Organizer는 `vendor/spdf` Git submodule로 이를 포함한다.
 
 ```ini
 [submodule "vendor/spdf"]
@@ -1259,6 +1259,16 @@ Organizer 전용 수정은 submodule 내부에 직접 넣지 않는다. sPDF 공
   다시 확인한다. 앱 제거 프로그램은 여전히 어떤 Ollama 모델도 자동 삭제하지 않는다.
 - 모델 변경 API는 `127.0.0.1` 계열 로컬 HTTP에만 제한하며 원격 주소나 insecure pull을
   허용하지 않는다.
+
+## 14.6 0.8.1 구현 현황
+
+- `vendor/spdf` 고정 커밋을 sPDF 1.4.2에서 1.5.3으로 갱신했다.
+- 손 도구·텍스트/영역 선택 도구, 즐겨찾기 툴바 동작, OCR 엔진 표시 개선과 Windows
+  빌드 안정화 변경을 포함한다.
+- sPDF의 공개 버전 상수와 설치 프로그램 버전이 모두 1.5.3인지 확인하고 Organizer
+  브리지·전체 회귀 테스트 및 sPDF 상호작용 도구 테스트를 실행한다.
+- Organizer 전용 패치를 submodule 내부에 추가하지 않고 sPDF 원본 `main`의 정확한
+  커밋 `b0a5b99`를 그대로 고정한다.
 
 다음 단계는 설치·검증된 로컬 모델 또는 선택한 클라우드 제공자를 실제 분석 대기열에
 연결하는 백그라운드 실행기다. 절전 모드 동시성 1, 안전 지점 취소, 재시작 복구와 즉시
