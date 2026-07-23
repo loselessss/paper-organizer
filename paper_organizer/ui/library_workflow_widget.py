@@ -377,6 +377,17 @@ class CollectionReviewWidget(QWidget):
         return self._worker is not None and self._worker.isRunning()
 
 
+class _SortableQueueItem(QTableWidgetItem):
+    """정렬 키(UserRole+1)가 있으면 그 값으로, 없으면 표시 텍스트로 정렬한다."""
+
+    def __lt__(self, other) -> bool:
+        left = self.data(Qt.UserRole + 1)
+        right = other.data(Qt.UserRole + 1)
+        if left is not None and right is not None:
+            return left < right
+        return super().__lt__(other)
+
+
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
 
@@ -404,6 +415,7 @@ class AnalysisQueueWidget(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         root.addWidget(self.table, 1)
         actions = QHBoxLayout()
@@ -443,7 +455,6 @@ class AnalysisQueueWidget(QWidget):
         except Exception as exc:
             self._items = []
             self.status_label.setText(f"분석 큐 읽기 실패: {exc}")
-        self.table.setRowCount(len(self._items))
         status_labels = {
             "pending_review": "검토 대기",
             "organized_pending_analysis": "정리됨 · 분석 대기",
@@ -451,6 +462,9 @@ class AnalysisQueueWidget(QWidget):
             "completed": "완료",
             "failed": "실패",
         }
+        selected_id = self._selected_queue_id()
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(self._items))
         for row, item in enumerate(self._items):
             values = [
                 "높음" if item.priority else "보통",
@@ -458,15 +472,39 @@ class AnalysisQueueWidget(QWidget):
                 item.title,
                 item.path,
             ]
+            sort_keys = [1 - int(bool(item.priority)), None, None, None]
             for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
+                cell = _SortableQueueItem(value)
+                cell.setData(Qt.UserRole, item.queue_id)
+                if sort_keys[column] is not None:
+                    cell.setData(Qt.UserRole + 1, sort_keys[column])
+                self.table.setItem(row, column, cell)
+        self.table.setSortingEnabled(True)
+        if selected_id:
+            self._reselect(selected_id)
         self.status_label.setText(f"분석 큐 {len(self._items)}개")
         self._update_background_button()
         self._selection_changed()
 
-    def _selected(self) -> AnalysisQueueItem | None:
+    def _selected_queue_id(self) -> str | None:
         row = self.table.currentRow()
-        return self._items[row] if 0 <= row < len(self._items) else None
+        cell = self.table.item(row, 0) if row >= 0 else None
+        return cell.data(Qt.UserRole) if cell is not None else None
+
+    def _reselect(self, queue_id: str) -> None:
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            if cell is not None and cell.data(Qt.UserRole) == queue_id:
+                self.table.selectRow(row)
+                return
+
+    def _selected(self) -> AnalysisQueueItem | None:
+        queue_id = self._selected_queue_id()
+        if queue_id is None:
+            return None
+        return next(
+            (item for item in self._items if item.queue_id == queue_id), None
+        )
 
     def _selection_changed(self) -> None:
         item = self._selected()

@@ -126,6 +126,52 @@ class UiSmokeTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_analysis_queue_sorting_keeps_selection_mapping(self):
+        from PyQt5.QtCore import Qt
+
+        from paper_organizer.application.analysis_queue import AnalysisQueueItem
+        from paper_organizer.ui.library_workflow_widget import AnalysisQueueWidget
+
+        def queue_item(key, title, priority, status):
+            return AnalysisQueueItem(
+                queue_id=f"sha256:{key}",
+                path=f"C:/library/{key}.paperpack",
+                file_sha256=key,
+                title=title,
+                status=status,
+                priority=priority,
+                added_at="2026-07-23T00:00:00+00:00",
+                updated_at="2026-07-23T00:00:00+00:00",
+            )
+
+        class FakeController:
+            def __init__(self, items):
+                self._items = items
+
+            def analysis_queue(self):
+                return self._items
+
+        items = [
+            queue_item("a", "Alpha", 0, "completed"),
+            queue_item("b", "Beta", 1, "organized_pending_analysis"),
+            queue_item("c", "Gamma", 0, "failed"),
+        ]
+        widget = AnalysisQueueWidget(FakeController(items))
+
+        widget.table.sortItems(2, Qt.DescendingOrder)
+        widget.table.selectRow(0)
+        self.assertEqual(widget.table.item(0, 2).text(), "Gamma")
+        self.assertEqual(widget._selected().queue_id, "sha256:c")
+
+        widget.table.sortItems(0, Qt.AscendingOrder)
+        self.assertEqual(widget.table.item(0, 0).text(), "높음")
+        widget.table.selectRow(0)
+        self.assertEqual(widget._selected().queue_id, "sha256:b")
+
+        widget.refresh()
+        self.assertEqual(widget._selected().queue_id, "sha256:b")
+        widget.close()
+
     def test_first_run_requires_an_explicit_close_choice(self):
         from PyQt5.QtWidgets import QDialog
 
