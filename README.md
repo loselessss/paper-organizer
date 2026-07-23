@@ -4,6 +4,8 @@ Windows에서 다운로드한 학술 PDF를 로컬에서 판별·정리하고 `.
 보관·색인하는 개인용 애플리케이션입니다. 설계와 단계별 범위는
 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)를 참고하세요.
 `.paperpack` 공개 규격은 [PAPERPACK_FORMAT.md](PAPERPACK_FORMAT.md)에 정리되어 있습니다.
+개발을 이어받는다면 [docs/HANDOFF.md](docs/HANDOFF.md)부터 읽으세요. 환경 준비와
+코드 지도, 지켜야 할 원칙, 다음 할 일이 한곳에 있습니다.
 
 현재 구현된 첫 번째 코어:
 
