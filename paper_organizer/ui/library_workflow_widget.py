@@ -729,7 +729,9 @@ class LibraryWidget(QWidget):
         root = QVBoxLayout(self)
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("제목, 저자, 연도, 분야, 태그, 설명 검색")
+        self.search_edit.setPlaceholderText(
+            "제목·저자·분야·태그와 논문 본문 전체에서 검색"
+        )
         refresh_button = QPushButton("새로고침")
         refresh_button.clicked.connect(lambda: self.refresh(True))
         self.search_edit.returnPressed.connect(self.refresh)
@@ -794,8 +796,13 @@ class LibraryWidget(QWidget):
     def refresh(self, force: bool = False) -> None:
         if force:
             self._controller.invalidate_library_cache()
+        query = self.search_edit.text().strip()
         try:
-            self._entries = self._controller.list_library(self.search_edit.text())
+            self._entries = (
+                self._controller.search_library(query)
+                if query
+                else self._controller.list_library()
+            )
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return

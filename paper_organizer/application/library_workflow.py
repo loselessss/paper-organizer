@@ -61,6 +61,13 @@ from paper_organizer.core.paperpack import (
     replace_paperpack_pdf,
     update_paperpack,
 )
+from paper_organizer.core.search_index import (
+    SearchHit,
+    SearchIndexError,
+    rebuild_search_index,
+    search as search_full_text,
+    update_search_entry,
+)
 from paper_organizer.infra.settings import (
     AppSettings,
     default_settings_path,
@@ -771,6 +778,9 @@ class LibraryWorkflowController:
             )
         except (OSError, AnalysisQueueError) as exc:
             warnings.append(f"분석 큐: {exc}")
+        index_warning = self._index_search_entry(destination)
+        if index_warning:
+            warnings.append(index_warning)
         return OrganizedPaper(destination, destination, "; ".join(warnings))
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
@@ -978,6 +988,7 @@ class LibraryWorkflowController:
             rebuild_library_index(root)
         except (OSError, PaperPackError) as exc:
             raise LibraryWorkflowError(f"AI 분석 결과를 저장하지 못했습니다: {exc}") from None
+        self._index_search_entry(source)
         self._library_cache = None
 
     def backfill_content(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
@@ -1007,6 +1018,7 @@ class LibraryWorkflowController:
                     content=payload,
                     changed_by="content-backfill",
                 )
+                self._index_search_entry(paperpack)
                 filled += 1
             except (
                 OSError,
@@ -1226,6 +1238,9 @@ class LibraryWorkflowController:
             rebuild_library_index(self.configured_paths()[1])
         except (OSError, AnalysisQueueError) as exc:
             warnings.append(f"파생 색인 갱신: {exc}")
+        index_warning = self._index_search_entry(status.paperpack_path)
+        if index_warning:
+            warnings.append(index_warning)
         self._library_cache = None
         return PaperPackPdfUpdate(
             paperpack_path=status.paperpack_path,
@@ -1329,6 +1344,52 @@ class LibraryWorkflowController:
 
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
+
+    def rebuild_search_index(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
+        """Rebuild the disposable full-text cache from every paperpack."""
+
+        _input_dir, root = self.configured_paths()
+        try:
+            return rebuild_search_index(root, progress=progress)
+        except SearchIndexError as exc:
+            raise LibraryWorkflowError(f"검색 색인을 만들 수 없습니다: {exc}") from None
+
+    def search_library(self, query: str, *, limit: int = 50) -> list[LibraryEntry]:
+        """Return library entries whose stored full text matches the query."""
+
+        normalized = " ".join(query.split())
+        if not normalized:
+            return self.list_library()
+        _input_dir, root = self.configured_paths()
+        try:
+            hits: list[SearchHit] = search_full_text(root, normalized, limit=limit)
+        except SearchIndexError:
+            return self.list_library(normalized)
+        if not hits:
+            return self.list_library(normalized)
+        by_path = {
+            entry.pdf_path.resolve(): entry for entry in self.list_library()
+        }
+        entries: list[LibraryEntry] = []
+        for hit in hits:
+            try:
+                path = _resolved_library_path(root, hit.relative_path)
+            except LibraryWorkflowError:
+                continue
+            entry = by_path.get(path)
+            if entry is not None:
+                entries.append(entry)
+        return entries or self.list_library(normalized)
+
+    def _index_search_entry(self, paperpack: Path) -> str:
+        """Update one search entry; failures are reported, never fatal."""
+
+        _input_dir, root = self.configured_paths()
+        try:
+            update_search_entry(root, paperpack)
+        except (OSError, SearchIndexError) as exc:
+            return f"검색 색인: {exc}"
+        return ""
 
     def legacy_migration_preview(self) -> LegacyMigrationPreview:
         _input_dir, root = self.configured_paths()
@@ -1437,6 +1498,8 @@ class LibraryWorkflowController:
             except Exception:
                 pass
             raise LibraryWorkflowError(f"색인 수정을 저장하지 못했습니다: {exc}") from None
+        if is_paperpack:
+            self._index_search_entry(sidecar)
         self._library_cache = None
         return LibraryEntry(
             pdf_path=entry.pdf_path,

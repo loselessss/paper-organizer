@@ -98,6 +98,10 @@ class PaperOrganizerWindow(QMainWindow):
             migration_action = QAction("레거시 라이브러리 변환...", self)
             migration_action.triggered.connect(self.show_legacy_migration)
             tools_menu.addAction(migration_action)
+            tools_menu.addSeparator()
+            reindex_action = QAction("검색 색인 재구축", self)
+            reindex_action.triggered.connect(self.rebuild_search_index)
+            tools_menu.addAction(reindex_action)
         self._create_ai_menu()
         if self._lifecycle is not None:
             lifecycle_action = QAction("시작 및 종료 설정...", self)
@@ -210,6 +214,29 @@ class PaperOrganizerWindow(QMainWindow):
         if self.library_widget is not None:
             dialog.library_changed.connect(self.library_widget.refresh)
         dialog.exec_()
+
+    def rebuild_search_index(self) -> None:
+        """본문이 비어 있던 paperpack을 채운 뒤 전문 검색 색인을 다시 만든다."""
+        if self._library_workflow is None:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            filled, backfill_problems = self._library_workflow.backfill_content()
+            indexed, index_problems = self._library_workflow.rebuild_search_index()
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "검색 색인 재구축 실패", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+        problems = (*backfill_problems, *index_problems)
+        message = f"논문 {indexed}건을 검색 색인에 넣었습니다."
+        if filled:
+            message += f" 본문이 없던 {filled}건은 PDF에서 다시 추출했습니다."
+        if problems:
+            message += f"\n\n확인 필요 {len(problems)}건:\n" + "\n".join(problems[:5])
+        QMessageBox.information(self, "검색 색인 재구축", message)
+        if self.library_widget is not None:
+            self.library_widget.refresh(True)
 
     def show_lifecycle_settings(self) -> None:
         if self._lifecycle is None:
