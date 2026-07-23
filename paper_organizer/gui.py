@@ -9,6 +9,7 @@ def main() -> int:
     from PyQt5.QtWidgets import QApplication, QDialog
 
     from paper_organizer.application.ai_settings import AiSettingsController
+    from paper_organizer.application.background_analysis import BackgroundAnalysisService
     from paper_organizer.application.lifecycle import LifecycleSettingsController
     from paper_organizer.application.library_workflow import LibraryWorkflowController
     from paper_organizer.application.summary_service import ImmediateSummaryController
@@ -29,6 +30,11 @@ def main() -> int:
     ai_settings = AiSettingsController(secret_store)
     summary = ImmediateSummaryController(secret_store)
     workflow = LibraryWorkflowController()
+    background_analysis = BackgroundAnalysisService(
+        workflow,
+        summary,
+        secret_store,
+    )
     splash = create_splash()
     splash.show()
     app.processEvents()
@@ -42,6 +48,7 @@ def main() -> int:
             summary,
             workflow,
             lifecycle=lifecycle,
+            background_analysis=background_analysis,
         )
         if snapshot is not None:
             window.statusBar().showMessage(

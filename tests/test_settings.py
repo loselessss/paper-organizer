@@ -79,6 +79,9 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(managed_ollama_models=["qwen3:4b", "QWEN3:4B"]).validate()
 
+    def test_background_analysis_is_enabled_by_default(self):
+        self.assertTrue(AppSettings().background_analysis_enabled)
+
 
 if __name__ == "__main__":
     unittest.main()

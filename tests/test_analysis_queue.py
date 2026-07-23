@@ -40,6 +40,34 @@ class AnalysisQueueTests(unittest.TestCase):
                 store.load()
             self.assertEqual(store.path.read_text(encoding="utf-8"), "not json")
 
+    def test_claim_completion_retry_and_restart_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = AnalysisQueueStore(root)
+            queued = store.enqueue(
+                path=root / "paper.paperpack",
+                file_sha256="c" * 64,
+                title="Queued",
+                status="organized_pending_analysis",
+            )
+            claimed = store.claim_next()
+            self.assertEqual(claimed.status, "analyzing")
+            self.assertEqual(claimed.attempt_count, 1)
+
+            recovered = AnalysisQueueStore(root).recover_interrupted()
+            self.assertEqual(recovered, 1)
+            self.assertEqual(store.load()[0].status, "organized_pending_analysis")
+
+            claimed = store.claim_next()
+            failed = store.mark_failed(claimed.queue_id, "network unavailable")
+            self.assertEqual(failed.status, "failed")
+            retried = store.retry(queued.queue_id, high=True)
+            self.assertEqual(retried.status, "organized_pending_analysis")
+            self.assertEqual(retried.priority, 1)
+            completed = store.mark_completed(store.claim_next().queue_id)
+            self.assertEqual(completed.status, "completed")
+            self.assertTrue(completed.completed_at)
+
 
 if __name__ == "__main__":
     unittest.main()

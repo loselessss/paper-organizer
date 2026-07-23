@@ -35,6 +35,9 @@ class AnalysisQueueItem:
     added_at: str
     updated_at: str
     last_error: str = ""
+    attempt_count: int = 0
+    started_at: str = ""
+    completed_at: str = ""
 
 
 def _now_iso() -> str:
@@ -61,7 +64,11 @@ class AnalysisQueueStore:
                 if not isinstance(raw, dict):
                     raise ValueError("analysis queue item must be an object")
                 item = AnalysisQueueItem(**raw)
-                if item.status not in VALID_STATUSES or item.priority not in (0, 1):
+                if (
+                    item.status not in VALID_STATUSES
+                    or item.priority not in (0, 1)
+                    or item.attempt_count < 0
+                ):
                     raise ValueError("invalid analysis queue item")
                 items.append(item)
             return self._sorted(items)
@@ -91,6 +98,9 @@ class AnalysisQueueStore:
             added_at=existing.added_at if existing else now,
             updated_at=now,
             last_error=existing.last_error if existing else "",
+            attempt_count=existing.attempt_count if existing else 0,
+            started_at=existing.started_at if existing else "",
+            completed_at=existing.completed_at if existing else "",
         )
         items = [value for value in items if value.queue_id != queue_id]
         items.append(item)
@@ -121,6 +131,9 @@ class AnalysisQueueStore:
             added_at=existing.added_at,
             updated_at=_now_iso(),
             last_error="",
+            attempt_count=existing.attempt_count,
+            started_at="",
+            completed_at="",
         )
         self._replace(items, updated)
         return updated
@@ -154,6 +167,9 @@ class AnalysisQueueStore:
             added_at=basis.added_at if basis else now,
             updated_at=now,
             last_error="",
+            attempt_count=basis.attempt_count if basis else 0,
+            started_at="",
+            completed_at="",
         )
         remaining = [
             item for item in items if item.queue_id not in {old_id, new_id}
@@ -175,6 +191,93 @@ class AnalysisQueueStore:
         self._replace(items, updated)
         return updated
 
+    def claim_next(self) -> AnalysisQueueItem | None:
+        """Atomically mark the highest-priority organized paper as analyzing."""
+
+        items = self.load()
+        candidate = next(
+            (item for item in items if item.status == "organized_pending_analysis"),
+            None,
+        )
+        if candidate is None:
+            return None
+        now = _now_iso()
+        claimed = AnalysisQueueItem(
+            **{
+                **asdict(candidate),
+                "status": "analyzing",
+                "attempt_count": candidate.attempt_count + 1,
+                "started_at": now,
+                "completed_at": "",
+                "updated_at": now,
+                "last_error": "",
+            }
+        )
+        self._replace(items, claimed)
+        return claimed
+
+    def mark_completed(self, queue_id: str) -> AnalysisQueueItem:
+        return self._transition(
+            queue_id,
+            "completed",
+            last_error="",
+            completed_at=_now_iso(),
+        )
+
+    def mark_failed(self, queue_id: str, message: str) -> AnalysisQueueItem:
+        safe_message = " ".join(message.split())[:500]
+        return self._transition(
+            queue_id,
+            "failed",
+            last_error=safe_message or "알 수 없는 분석 오류",
+            completed_at="",
+        )
+
+    def retry(self, queue_id: str, *, high: bool = False) -> AnalysisQueueItem:
+        items = self.load()
+        existing = self._find(items, queue_id)
+        if existing.status == "pending_review":
+            raise AnalysisQueueError("검토가 끝난 논문만 분석할 수 있습니다.")
+        updated = AnalysisQueueItem(
+            **{
+                **asdict(existing),
+                "status": "organized_pending_analysis",
+                "priority": 1 if high else existing.priority,
+                "updated_at": _now_iso(),
+                "started_at": "",
+                "completed_at": "",
+                "last_error": "",
+            }
+        )
+        self._replace(items, updated)
+        return updated
+
+    def recover_interrupted(self) -> int:
+        """Return stale analyzing items to the queue after an app/process restart."""
+
+        items = self.load()
+        recovered = 0
+        values: list[AnalysisQueueItem] = []
+        for item in items:
+            if item.status != "analyzing":
+                values.append(item)
+                continue
+            recovered += 1
+            values.append(
+                AnalysisQueueItem(
+                    **{
+                        **asdict(item),
+                        "status": "organized_pending_analysis",
+                        "updated_at": _now_iso(),
+                        "started_at": "",
+                        "last_error": "이전 실행이 중단되어 대기열로 복구됨",
+                    }
+                )
+            )
+        if recovered:
+            self._save(values)
+        return recovered
+
     def remove(self, queue_id: str) -> None:
         items = self.load()
         remaining = [item for item in items if item.queue_id != queue_id]
@@ -188,6 +291,29 @@ class AnalysisQueueStore:
         self._save(
             [updated if item.queue_id == updated.queue_id else item for item in items]
         )
+
+    def _transition(
+        self,
+        queue_id: str,
+        status: str,
+        *,
+        last_error: str,
+        completed_at: str,
+    ) -> AnalysisQueueItem:
+        self._validate_status(status)
+        items = self.load()
+        existing = self._find(items, queue_id)
+        updated = AnalysisQueueItem(
+            **{
+                **asdict(existing),
+                "status": status,
+                "last_error": last_error,
+                "completed_at": completed_at,
+                "updated_at": _now_iso(),
+            }
+        )
+        self._replace(items, updated)
+        return updated
 
     @staticmethod
     def _find(items: list[AnalysisQueueItem], queue_id: str) -> AnalysisQueueItem:

@@ -43,12 +43,22 @@ from .summary_service import (
     prepare_summary,
     run_prepared_summary,
 )
+from .background_analysis import (
+    AnalysisReadiness,
+    AnalysisRunEvent,
+    BackgroundAnalysisService,
+    poll_interval_seconds,
+)
 
 __all__ = [
     "AiSettingsController",
     "AiSettingsView",
     "AnalysisQueueItem",
     "AnalysisQueueStore",
+    "AnalysisReadiness",
+    "AnalysisRunEvent",
+    "BackgroundAnalysisService",
+    "poll_interval_seconds",
     "CloudMetadataSynchronizer",
     "CloudSyncOutcome",
     "MetadataConflict",

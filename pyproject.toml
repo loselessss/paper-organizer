@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-organizer"
-version = "0.8.1"
+version = "0.9.0"
 description = "Local-first academic PDF organizer with portable paperpack archives"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,13 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["PyQt5>=5.15", "keyring>=25"]
 cloud = ["keyring>=25"]
+build = [
+  "pyinstaller>=6.15",
+  "numpy>=2",
+  "opencv-python-headless>=4.11",
+  "onnxruntime>=1.22",
+  "rapidocr>=3",
+]
 
 [project.scripts]
 paper-organizer = "paper_organizer.cli:main"

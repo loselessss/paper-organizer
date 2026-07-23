@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.application.background_analysis import BackgroundAnalysisService
 from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import ImmediateSummaryController
@@ -38,6 +39,7 @@ class PaperOrganizerWindow(QMainWindow):
         immediate_summary: ImmediateSummaryController,
         library_workflow: LibraryWorkflowController | None = None,
         lifecycle: LifecycleSettingsController | None = None,
+        background_analysis: BackgroundAnalysisService | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -57,7 +59,11 @@ class PaperOrganizerWindow(QMainWindow):
         self.migration_widget = None
         if library_workflow is not None:
             self.collection_widget = CollectionReviewWidget(library_workflow, self)
-            self.queue_widget = AnalysisQueueWidget(library_workflow, self)
+            self.queue_widget = AnalysisQueueWidget(
+                library_workflow,
+                background_analysis,
+                self,
+            )
             self.library_widget = LibraryWidget(library_workflow, self)
             self.cloud_sync_widget = CloudSyncWidget(library_workflow, self)
             self.migration_widget = LegacyMigrationWidget(library_workflow, self)
@@ -196,6 +202,17 @@ class PaperOrganizerWindow(QMainWindow):
                 "시스템 트레이를 사용할 수 없음",
                 "현재 환경에서는 백그라운드로 숨길 수 없어 프로그램을 종료합니다.",
             )
+        if self.queue_widget is not None and self.queue_widget.is_analysis_busy():
+            QMessageBox.information(
+                self,
+                "백그라운드 분석 진행 중",
+                "현재 논문 분석이 안전하게 끝난 뒤 프로그램을 종료하세요. "
+                "창을 닫아 트레이로 보내는 것은 가능합니다.",
+            )
+            event.ignore()
+            return
+        if self.queue_widget is not None:
+            self.queue_widget.shutdown_background_analysis()
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)

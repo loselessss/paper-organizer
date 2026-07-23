@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event
 
 from PyQt5.QtCore import QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -35,6 +36,10 @@ from paper_organizer.application.library_workflow import (
     ReviewScan,
 )
 from paper_organizer.application.analysis_queue import AnalysisQueueItem
+from paper_organizer.application.background_analysis import (
+    AnalysisRunEvent,
+    BackgroundAnalysisService,
+)
 from paper_organizer.application.cloud_metadata_sync import MetadataConflict
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
@@ -52,6 +57,49 @@ class _ScanWorker(QThread):
             self.completed.emit(self._controller.scan())
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class _BackgroundAnalysisWorker(QThread):
+    event = pyqtSignal(object)
+    queue_changed = pyqtSignal()
+
+    def __init__(self, service: BackgroundAnalysisService, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._stop = Event()
+        self._wake = Event()
+        self._processing = False
+
+    def request_stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+
+    def request_wake(self) -> None:
+        self._wake.set()
+
+    def is_processing(self) -> bool:
+        return self._processing
+
+    def run(self) -> None:
+        try:
+            recovered = self._service.recover_interrupted()
+            if recovered:
+                self.queue_changed.emit()
+        except Exception as exc:
+            self.event.emit(AnalysisRunEvent("failed", str(exc)))
+            return
+        while not self._stop.is_set():
+            self._processing = True
+            result = self._service.run_next()
+            self._processing = False
+            self.event.emit(result)
+            if result.state in {"completed", "failed"}:
+                self.queue_changed.emit()
+            if result.state == "disabled":
+                break
+            self._wake.wait(self._service.poll_interval())
+            self._wake.clear()
+        self._processing = False
 
 
 class MetadataForm(QGroupBox):
@@ -431,9 +479,16 @@ class CollectionReviewWidget(QWidget):
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
 
-    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+    def __init__(
+        self,
+        controller: LibraryWorkflowController,
+        background_analysis: BackgroundAnalysisService | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._controller = controller
+        self._background_analysis = background_analysis
+        self._analysis_worker: _BackgroundAnalysisWorker | None = None
         self._items: list[AnalysisQueueItem] = []
         root = QVBoxLayout(self)
         note = QLabel(
@@ -455,20 +510,31 @@ class AnalysisQueueWidget(QWidget):
         self.priority_button = QPushButton("최우선으로 표시")
         self.summary_button = QPushButton("즉시 요약으로 보내기")
         self.remove_button = QPushButton("큐에서만 제거")
+        self.run_now_button = QPushButton("선택 항목 지금 분석")
+        self.background_button = QPushButton("백그라운드 분석 시작")
         refresh_button.clicked.connect(self.refresh)
         self.priority_button.clicked.connect(self._toggle_priority)
         self.summary_button.clicked.connect(self._send_to_summary)
         self.remove_button.clicked.connect(self._remove_selected)
+        self.run_now_button.clicked.connect(self._run_selected_now)
+        self.background_button.clicked.connect(self._toggle_background)
         actions.addWidget(refresh_button)
         actions.addWidget(self.priority_button)
         actions.addWidget(self.summary_button)
         actions.addWidget(self.remove_button)
+        actions.addWidget(self.run_now_button)
+        actions.addWidget(self.background_button)
         actions.addStretch(1)
         root.addLayout(actions)
         self.status_label = QLabel()
         root.addWidget(self.status_label)
         self._selection_changed()
         self.refresh()
+        if (
+            self._background_analysis is not None
+            and self._controller.settings().background_analysis_enabled
+        ):
+            QTimer.singleShot(0, self.start_background_analysis)
 
     def refresh(self) -> None:
         try:
@@ -494,6 +560,7 @@ class AnalysisQueueWidget(QWidget):
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.status_label.setText(f"분석 큐 {len(self._items)}개")
+        self._update_background_button()
         self._selection_changed()
 
     def _selected(self) -> AnalysisQueueItem | None:
@@ -503,9 +570,19 @@ class AnalysisQueueWidget(QWidget):
     def _selection_changed(self) -> None:
         item = self._selected()
         enabled = item is not None
-        self.priority_button.setEnabled(enabled)
+        mutable = bool(item and item.status != "analyzing")
+        self.priority_button.setEnabled(mutable)
         self.summary_button.setEnabled(bool(item and Path(item.path).is_file()))
-        self.remove_button.setEnabled(enabled)
+        self.remove_button.setEnabled(mutable)
+        self.run_now_button.setEnabled(
+            bool(
+                item
+                and item.status
+                in {"organized_pending_analysis", "failed", "completed"}
+                and Path(item.path).is_file()
+                and self._background_analysis is not None
+            )
+        )
         if item:
             self.priority_button.setText(
                 "보통 우선순위로 변경" if item.priority else "최우선으로 표시"
@@ -552,6 +629,108 @@ class AnalysisQueueWidget(QWidget):
             QMessageBox.warning(self, "큐 제거 실패", str(exc))
             return
         self.refresh()
+
+    def _run_selected_now(self) -> None:
+        item = self._selected()
+        if item is None or self._background_analysis is None:
+            return
+        try:
+            if item.status in {"failed", "completed"}:
+                self._controller.retry_queue_item(item.queue_id, high=True)
+            elif item.status == "organized_pending_analysis":
+                self._controller.set_queue_priority(item.queue_id, True)
+            else:
+                return
+            self._controller.set_background_analysis_enabled(True)
+        except Exception as exc:
+            QMessageBox.warning(self, "수동 분석 요청 실패", str(exc))
+            return
+        self.start_background_analysis()
+        if self._analysis_worker is not None:
+            self._analysis_worker.request_wake()
+        self.status_label.setText(f"최우선 분석 요청: {item.title}")
+        self.refresh()
+
+    def _toggle_background(self) -> None:
+        if self._analysis_worker is not None and self._analysis_worker.isRunning():
+            self.stop_background_analysis(persist=True)
+        else:
+            try:
+                self._controller.set_background_analysis_enabled(True)
+            except Exception as exc:
+                QMessageBox.warning(self, "백그라운드 설정 실패", str(exc))
+                return
+            self.start_background_analysis()
+
+    def start_background_analysis(self) -> None:
+        if self._background_analysis is None:
+            self.status_label.setText("백그라운드 분석 서비스가 연결되지 않았습니다.")
+            return
+        if self._analysis_worker is not None and self._analysis_worker.isRunning():
+            self._analysis_worker.request_wake()
+            return
+        worker = _BackgroundAnalysisWorker(self._background_analysis, self)
+        worker.event.connect(self._analysis_event)
+        worker.queue_changed.connect(self.refresh)
+        worker.finished.connect(self._analysis_worker_finished)
+        self._analysis_worker = worker
+        self.status_label.setText("백그라운드 분석을 시작합니다…")
+        worker.start()
+        self._update_background_button()
+
+    def stop_background_analysis(self, *, persist: bool) -> None:
+        if persist:
+            try:
+                self._controller.set_background_analysis_enabled(False)
+            except Exception as exc:
+                QMessageBox.warning(self, "백그라운드 설정 실패", str(exc))
+                return
+        if self._analysis_worker is not None:
+            self._analysis_worker.request_stop()
+            self.status_label.setText(
+                "백그라운드 중지 요청됨 · 진행 중인 논문이 끝난 뒤 멈춥니다."
+            )
+        self._update_background_button()
+
+    def _analysis_event(self, event: AnalysisRunEvent) -> None:
+        labels = {
+            "idle": "대기",
+            "waiting": "AI 준비 대기",
+            "completed": "완료",
+            "failed": "실패",
+            "disabled": "중지",
+        }
+        self.status_label.setText(f"{labels.get(event.state, event.state)} · {event.message}")
+
+    def _analysis_worker_finished(self) -> None:
+        worker = self._analysis_worker
+        self._analysis_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._update_background_button()
+
+    def _update_background_button(self) -> None:
+        running = bool(
+            self._analysis_worker is not None and self._analysis_worker.isRunning()
+        )
+        self.background_button.setText(
+            "백그라운드 분석 중지" if running else "백그라운드 분석 시작"
+        )
+        self.background_button.setEnabled(self._background_analysis is not None)
+
+    def is_analysis_busy(self) -> bool:
+        return bool(
+            self._analysis_worker is not None
+            and self._analysis_worker.isRunning()
+            and self._analysis_worker.is_processing()
+        )
+
+    def shutdown_background_analysis(self) -> None:
+        worker = self._analysis_worker
+        if worker is None:
+            return
+        worker.request_stop()
+        worker.wait(2000)
 
 
 class LibraryWidget(QWidget):

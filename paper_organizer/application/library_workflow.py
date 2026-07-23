@@ -32,6 +32,7 @@ from paper_organizer.application.legacy_migration import (
     LegacyMigrationService,
     LegacyMigrationTrashEntry,
 )
+from paper_organizer.application.summary_service import SummaryExecution
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
     PdfIdentityError,
@@ -839,6 +840,105 @@ class LibraryWorkflowController:
 
     def analysis_queue(self) -> list[AnalysisQueueItem]:
         return self._queue().load()
+
+    def recover_interrupted_analysis(self) -> int:
+        return self._queue().recover_interrupted()
+
+    def claim_next_analysis(self) -> AnalysisQueueItem | None:
+        return self._queue().claim_next()
+
+    def complete_analysis(self, queue_id: str) -> AnalysisQueueItem:
+        item = self._queue().mark_completed(queue_id)
+        self.sync_metadata()
+        return item
+
+    def fail_analysis(self, queue_id: str, message: str) -> AnalysisQueueItem:
+        item = self._queue().mark_failed(queue_id, message)
+        self.sync_metadata()
+        return item
+
+    def retry_queue_item(self, queue_id: str, *, high: bool = False) -> AnalysisQueueItem:
+        item = self._queue().retry(queue_id, high=high)
+        self.sync_metadata()
+        return item
+
+    def set_background_analysis_enabled(self, enabled: bool) -> AppSettings:
+        settings = self.settings()
+        settings.background_analysis_enabled = bool(enabled)
+        save_settings(settings, self._settings_path)
+        return settings
+
+    def apply_analysis_result(
+        self,
+        source_path: Path,
+        execution: SummaryExecution,
+    ) -> None:
+        """Persist a verified summary without overwriting non-empty curated fields."""
+
+        _input_dir, root = self.configured_paths()
+        source = source_path.expanduser().resolve()
+        papers_root = (root / "papers").resolve()
+        if (
+            source.suffix.casefold() != PAPERPACK_SUFFIX
+            or not source.is_file()
+            or not _inside(papers_root, source)
+        ):
+            raise LibraryWorkflowError(
+                "백그라운드 분석 결과는 라이브러리의 paperpack에만 저장할 수 있습니다."
+            )
+        record = load_paperpack_metadata(source)
+        now = _now_iso()
+        result = execution.result
+        data = result.data
+        record["analysis"] = {
+            "status": "completed",
+            "analysis_level": execution.preview.mode.value,
+            "summary_ko": data.summary_ko,
+            "research_question": data.research_question,
+            "methods": list(data.methods),
+            "contributions": list(data.contributions),
+            "limitations": list(data.limitations),
+            "keywords": list(data.keywords),
+            "completed_at": now,
+            "provenance": execution.provenance,
+        }
+        description = record.setdefault("description", {})
+        curation = record.setdefault("curation", {})
+        locked = set(curation.get("locked_fields", []))
+        sources = curation.setdefault("field_sources", {})
+        values = {
+            "summary_ko": data.summary_ko,
+            "research_question": data.research_question,
+            "methods": list(data.methods),
+            "contributions": list(data.contributions),
+            "limitations": list(data.limitations),
+            "keywords": list(data.keywords),
+        }
+        for name, value in values.items():
+            field = f"description.{name}"
+            if field in locked or description.get(name):
+                continue
+            description[name] = value
+            sources[field] = f"ai:{result.provider}"
+        curation["revision"] = int(curation.get("revision", 0)) + 1
+        curation["last_edited_at"] = now
+        curation["last_edited_by"] = f"ai:{result.provider}"
+        workflow = record.setdefault("workflow", {})
+        workflow.update(
+            {
+                "analysis_status": "completed",
+                "needs_reanalysis": False,
+                "updated_at": now,
+            }
+        )
+        provenance = record.setdefault("provenance", {})
+        provenance["summary"] = execution.provenance
+        try:
+            update_paperpack(source, record, changed_by=f"ai:{result.provider}")
+            rebuild_library_index(root)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(f"AI 분석 결과를 저장하지 못했습니다: {exc}") from None
+        self._library_cache = None
 
     def materialize_pdf(self, path: Path) -> Path:
         """Return a real PDF path, extracting a verified paperpack lazily."""

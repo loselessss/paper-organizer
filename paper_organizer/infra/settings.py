@@ -30,6 +30,7 @@ class AppSettings:
     remove_source_after_import: bool = False
     auto_enabled: bool = False
     resource_profile: str = "eco"
+    background_analysis_enabled: bool = True
     model_profile: str = "auto"
     selected_model: str = ""
     recommended_model: str = ""
@@ -60,6 +61,8 @@ class AppSettings:
             raise ValueError("close_behavior must be background or quit")
         if self.resource_profile not in {"eco", "balanced", "performance"}:
             raise ValueError("resource_profile must be eco, balanced or performance")
+        if not isinstance(self.background_analysis_enabled, bool):
+            raise ValueError("background_analysis_enabled must be a boolean")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
         if not isinstance(self.hardware_profile, dict):
