@@ -26,6 +26,7 @@ from .lifecycle import (
     LifecycleSettingsError,
     WindowsLoginStartup,
 )
+from .local_ai import LocalAiAssessment, LocalAiAssessmentService
 from .summary_service import (
     PreparedSummary,
     ImmediateSummaryController,
@@ -57,6 +58,8 @@ __all__ = [
     "LifecycleSettingsController",
     "LifecycleSettingsError",
     "WindowsLoginStartup",
+    "LocalAiAssessment",
+    "LocalAiAssessmentService",
     "PreparedSummary",
     "ImmediateSummaryController",
     "SummaryExecution",

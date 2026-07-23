@@ -33,6 +33,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 cloud_request_profile="high_throughput",
                 cloud_max_parallel_requests=6,
                 cloud_monthly_budget_usd=0,
+                model_profile="quality",
             )
             saved = json.loads(path.read_text(encoding="utf-8"))
 
@@ -40,6 +41,7 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertEqual(view.model, "gpt-test")
         self.assertEqual(view.effective_parallel_requests, 6)
         self.assertIsNone(view.cloud_monthly_budget_usd)
+        self.assertEqual(view.model_profile, "quality")
         self.assertNotIn("api_key", saved)
 
     def test_key_status_is_masked_and_key_can_be_deleted(self):

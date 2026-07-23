@@ -65,6 +65,12 @@ class UiSmokeTests(unittest.TestCase):
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
+            self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
+            self.assertEqual(
+                dialog.use_recommendation_button.text(),
+                "추천 모델 선택 (다운로드 안 함)",
+            )
+            self.assertFalse(dialog.use_recommendation_button.isEnabled())
             self.assertFalse(window.summary_widget.run_button.isEnabled())
             self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
             self.assertEqual(window.tabs.tabText(1), "분석 큐")
@@ -87,7 +93,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.6.0", splash_labels)
+            self.assertIn("Version 0.7.0", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             dialog.close()

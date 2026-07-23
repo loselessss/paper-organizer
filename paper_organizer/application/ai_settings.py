@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from paper_organizer.application.local_ai import (
+    LocalAiAssessment,
+    LocalAiAssessmentService,
+)
 from paper_organizer.infra.secrets import (
     SecretStatus,
     SecretStore,
@@ -47,6 +51,10 @@ class AiSettingsView:
     cloud_request_profile: str
     effective_parallel_requests: int
     cloud_monthly_budget_usd: float | None
+    model_profile: str
+    recommended_model: str
+    recommendation_profile: str
+    last_hardware_scan_at: str
 
 
 class AiSettingsController:
@@ -54,9 +62,11 @@ class AiSettingsController:
         self,
         secret_store: SecretStore,
         settings_path: Path | None = None,
+        local_ai: LocalAiAssessmentService | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
+        self._local_ai = local_ai or LocalAiAssessmentService(self._settings_path)
 
     def view(self) -> AiSettingsView:
         settings = self.settings()
@@ -81,6 +91,12 @@ class AiSettingsController:
             cloud_request_profile=settings.cloud_request_profile,
             effective_parallel_requests=policy.max_parallel_requests,
             cloud_monthly_budget_usd=policy.monthly_budget_usd,
+            model_profile=settings.model_profile,
+            recommended_model=settings.recommended_model,
+            recommendation_profile=str(
+                settings.hardware_profile.get("recommendation_profile") or ""
+            ),
+            last_hardware_scan_at=settings.last_hardware_scan_at,
         )
 
     def settings(self) -> AppSettings:
@@ -106,6 +122,7 @@ class AiSettingsController:
         cloud_request_profile: str,
         cloud_max_parallel_requests: int,
         cloud_monthly_budget_usd: float,
+        model_profile: str | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
         if normalized_provider not in PROVIDER_LABELS:
@@ -119,6 +136,8 @@ class AiSettingsController:
         settings.cloud_request_profile = cloud_request_profile
         settings.cloud_max_parallel_requests = cloud_max_parallel_requests
         settings.cloud_monthly_budget_usd = cloud_monthly_budget_usd
+        if model_profile is not None:
+            settings.model_profile = model_profile
         if normalized_provider == "ollama":
             settings.selected_model = normalized_model
         elif normalized_provider == "openai":
@@ -127,6 +146,9 @@ class AiSettingsController:
             settings.anthropic_model = normalized_model
         save_settings(settings, self._settings_path)
         return self.view()
+
+    def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
+        return self._local_ai.scan(profile=profile)
 
     def save_api_key(self, provider: str, api_key: str) -> AiSettingsView:
         normalized = provider.strip().lower()

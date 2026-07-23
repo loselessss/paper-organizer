@@ -6,7 +6,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,10 @@ class AppSettings:
     resource_profile: str = "eco"
     model_profile: str = "auto"
     selected_model: str = ""
+    recommended_model: str = ""
+    model_catalog_version: str = ""
+    last_hardware_scan_at: str = ""
+    hardware_profile: dict[str, Any] = field(default_factory=dict)
     summary_provider: str = "ollama"
     openai_model: str = "gpt-5.6"
     anthropic_model: str = "claude-sonnet-4-6"
@@ -57,6 +61,8 @@ class AppSettings:
             raise ValueError("resource_profile must be eco, balanced or performance")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
+        if not isinstance(self.hardware_profile, dict):
+            raise ValueError("hardware_profile must be a JSON object")
         if self.summary_provider not in {"ollama", "openai", "anthropic"}:
             raise ValueError("summary_provider must be ollama, openai or anthropic")
         if not isinstance(self.cloud_processing_consent, bool):

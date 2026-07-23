@@ -70,6 +70,10 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(close_behavior="ask").validate()
 
+    def test_hardware_snapshot_must_be_a_json_object(self):
+        with self.assertRaises(ValueError):
+            AppSettings(hardware_profile=[]).validate()
+
 
 if __name__ == "__main__":
     unittest.main()
