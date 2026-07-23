@@ -34,6 +34,10 @@ def splash_asset_path() -> Path:
     return Path(__file__).resolve().parents[1] / "assets" / "paper-organizer-splash.png"
 
 
+def app_icon_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "assets" / "paper-organizer.ico"
+
+
 def create_splash() -> QSplashScreen:
     source = QPixmap(str(splash_asset_path()))
     if source.isNull():

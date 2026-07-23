@@ -31,7 +31,7 @@ from .lifecycle_dialog import LifecyclePreferencesDialog
 from .migration_widget import LegacyMigrationDialog
 from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
-from .startup_splash import splash_asset_path
+from .startup_splash import app_icon_path
 
 
 class PaperOrganizerWindow(QMainWindow):
@@ -52,6 +52,7 @@ class PaperOrganizerWindow(QMainWindow):
         self._tray_message_shown = False
         self._tray: QSystemTrayIcon | None = None
         self.setWindowTitle("Paper Organizer")
+        self.setWindowIcon(QIcon(str(app_icon_path())))
         self.resize(980, 720)
 
         self._library_workflow = library_workflow
@@ -184,8 +185,7 @@ class PaperOrganizerWindow(QMainWindow):
                 self._tray.show()
 
     def _create_system_tray(self) -> None:
-        icon = QIcon(str(splash_asset_path()))
-        self.setWindowIcon(icon)
+        icon = QIcon(str(app_icon_path()))
         tray = QSystemTrayIcon(icon, self)
         tray.setToolTip("Paper Organizer")
         menu = QMenu(self)

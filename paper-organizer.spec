@@ -97,7 +97,7 @@ exe_gui = EXE(
     exclude_binaries=True,
     name="PaperOrganizer",
     console=False,
-    icon="vendor/spdf/assets/spdf.ico",
+    icon="paper_organizer/assets/paper-organizer.ico",
 )
 coll_gui = COLLECT(
     exe_gui,

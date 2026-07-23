@@ -15,6 +15,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
 OutputBaseFilename=PaperOrganizer_Setup_{#MyAppVersion}
+SetupIconFile=paper_organizer\assets\paper-organizer.ico
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
