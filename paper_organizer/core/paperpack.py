@@ -29,6 +29,7 @@ HISTORY_PREFIX = "history/"
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 MAX_CONTENT_BYTES = 64 * 1024 * 1024
+CONTENT_SCHEMA_VERSION = 1
 _WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -289,6 +290,54 @@ def _copy_entry(
         new_info, "w"
     ) as output_stream:
         shutil.copyfileobj(input_stream, output_stream, 1024 * 1024)
+
+
+def build_content_payload(
+    page_texts: Iterable[str], *, extractor: str = "pymupdf", ocr_used: bool = False
+) -> dict[str, Any]:
+    """Build the page-level full text stored in content/content.json.
+
+    검색 DB(FTS)는 이 텍스트를 원천으로 재생성되므로 요약이나 AI 결과와 달리
+    사람이 지우지 않는 한 항상 보존한다.
+    """
+
+    pages: list[dict[str, Any]] = []
+    total_characters = 0
+    for number, text in enumerate(page_texts, start=1):
+        value = str(text or "")
+        total_characters += len(value)
+        pages.append({"page": number, "text": value})
+    return {
+        "schema_version": CONTENT_SCHEMA_VERSION,
+        "extractor": extractor,
+        "ocr_used": bool(ocr_used),
+        "extracted_at": _now_iso(),
+        "page_count": len(pages),
+        "character_count": total_characters,
+        "pages": pages,
+    }
+
+
+def content_pages(content: dict[str, Any] | None) -> list[tuple[int, str]]:
+    """Return (page number, text) pairs from a stored content payload."""
+
+    if not isinstance(content, dict):
+        return []
+    raw_pages = content.get("pages")
+    if not isinstance(raw_pages, list):
+        return []
+    pages: list[tuple[int, str]] = []
+    for index, entry in enumerate(raw_pages, start=1):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            number = int(entry.get("page", index))
+        except (TypeError, ValueError):
+            number = index
+        text = entry.get("text")
+        if isinstance(text, str) and text.strip():
+            pages.append((number, text))
+    return pages
 
 
 def create_paperpack(

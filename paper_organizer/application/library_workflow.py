@@ -45,9 +45,13 @@ from paper_organizer.core.indexer import (
 from paper_organizer.core.paperpack import (
     PAPERPACK_SUFFIX,
     PaperPackError,
+    build_content_payload,
+    content_pages,
     extract_paperpack_pdf,
     import_pdf_to_paperpack,
     inspect_paperpack,
+    iter_paperpacks,
+    load_paperpack_content,
     load_paperpack_metadata,
     replace_paperpack_pdf,
     update_paperpack,
@@ -115,6 +119,7 @@ class ReviewItem:
     detection_status: str
     detection_reason: str
     duplicate: DuplicateReference | None = None
+    page_texts: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,6 +596,7 @@ class LibraryWorkflowController:
                     detection_status=status,
                     detection_reason=reason,
                     duplicate=_best_duplicate(identity, references),
+                    page_texts=tuple(page_texts),
                 )
                 self._cache[found.path] = (*key, item)
                 try:
@@ -629,11 +635,19 @@ class LibraryWorkflowController:
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = _unique_paperpack_destination(destination_dir, source.name)
         record = _new_sidecar(item, metadata, source, destination, library_root)
+        page_texts = list(item.page_texts)
+        if not page_texts:
+            try:
+                page_texts = extract_page_texts(source)
+            except PdfIdentityError:
+                page_texts = []
+        content = build_content_payload(page_texts)
         try:
             import_result = import_pdf_to_paperpack(
                 destination,
                 source,
                 record,
+                content=content,
                 remove_source=settings.remove_source_after_import,
             )
             rebuild_library_index(library_root)
@@ -882,6 +896,46 @@ class LibraryWorkflowController:
             raise LibraryWorkflowError(f"AI 분석 결과를 저장하지 못했습니다: {exc}") from None
         self._library_cache = None
 
+    def backfill_content(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
+        """Fill empty content/content.json entries by re-extracting PDF text.
+
+        검색 색인은 이 본문에서 재생성되므로, content가 비어 있던 기존
+        paperpack도 재추출해 검색 대상으로 만든다.
+        """
+
+        _input_dir, root = self.configured_paths()
+        problems: list[str] = []
+        filled = 0
+        packs = sorted(iter_paperpacks(root))
+        for index, paperpack in enumerate(packs, start=1):
+            if progress is not None:
+                progress(index, len(packs), paperpack.name)
+            try:
+                if content_pages(load_paperpack_content(paperpack)):
+                    continue
+                pdf_path = self.materialize_pdf(paperpack)
+                payload = build_content_payload(extract_page_texts(pdf_path))
+                if not payload["pages"]:
+                    continue
+                update_paperpack(
+                    paperpack,
+                    load_paperpack_metadata(paperpack),
+                    content=payload,
+                    changed_by="content-backfill",
+                )
+                filled += 1
+            except (
+                OSError,
+                ValueError,
+                PdfIdentityError,
+                PaperPackError,
+                LibraryWorkflowError,
+            ) as exc:
+                problems.append(f"{paperpack.name}: {exc}")
+        if filled:
+            self._library_cache = None
+        return filled, tuple(problems)
+
     def materialize_pdf(self, path: Path) -> Path:
         """Return a real PDF path, extracting a verified paperpack lazily."""
 
@@ -1018,7 +1072,7 @@ class LibraryWorkflowController:
                 {
                     "status": "organized",
                     "needs_reanalysis": True,
-                    "content_stale": True,
+                    "content_stale": False,
                     "pdf_edited_at": now,
                     "updated_at": now,
                 }
@@ -1036,6 +1090,7 @@ class LibraryWorkflowController:
                 status.paperpack_path,
                 status.pdf_path,
                 record,
+                content=build_content_payload(page_texts),
                 expected_pdf_sha256=status.base_pdf_sha256,
                 expected_revision=status.base_revision,
                 changed_by="user:spdf",

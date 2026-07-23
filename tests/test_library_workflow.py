@@ -196,7 +196,15 @@ class LibraryWorkflowTests(unittest.TestCase):
             saved = load_paperpack_metadata(organized.pdf_path)
             self.assertEqual(saved["file"]["sha256"], result.pdf_sha256)
             self.assertTrue(saved["workflow"]["needs_reanalysis"])
-            self.assertTrue(saved["workflow"]["content_stale"])
+            self.assertFalse(saved["workflow"]["content_stale"])
+            from paper_organizer.core.paperpack import (
+                content_pages,
+                load_paperpack_content,
+            )
+
+            self.assertTrue(
+                content_pages(load_paperpack_content(organized.pdf_path))
+            )
             extracted = extract_paperpack_pdf(
                 organized.pdf_path, root / "after-edit.pdf"
             )
