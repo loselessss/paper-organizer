@@ -27,6 +27,13 @@ from .lifecycle import (
     WindowsLoginStartup,
 )
 from .local_ai import LocalAiAssessment, LocalAiAssessmentService
+from .ollama_model_manager import (
+    OllamaInstallPlan,
+    OllamaInstallResult,
+    OllamaModelEntry,
+    OllamaModelManagerService,
+    OllamaModelSnapshot,
+)
 from .summary_service import (
     PreparedSummary,
     ImmediateSummaryController,
@@ -60,6 +67,11 @@ __all__ = [
     "WindowsLoginStartup",
     "LocalAiAssessment",
     "LocalAiAssessmentService",
+    "OllamaInstallPlan",
+    "OllamaInstallResult",
+    "OllamaModelEntry",
+    "OllamaModelManagerService",
+    "OllamaModelSnapshot",
     "PreparedSummary",
     "ImmediateSummaryController",
     "SummaryExecution",

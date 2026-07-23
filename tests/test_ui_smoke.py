@@ -50,6 +50,7 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.application.library_workflow import LibraryWorkflowController
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
+        from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
         from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
         with tempfile.TemporaryDirectory() as temp:
@@ -59,6 +60,7 @@ class UiSmokeTests(unittest.TestCase):
             summary_controller = ImmediateSummaryController(store, path)
             workflow_controller = LibraryWorkflowController(path)
             dialog = AiSettingsDialog(ai_controller)
+            model_dialog = OllamaModelDialog(ai_controller)
             window = PaperOrganizerWindow(
                 ai_controller, summary_controller, workflow_controller
             )
@@ -71,6 +73,10 @@ class UiSmokeTests(unittest.TestCase):
                 "추천 모델 선택 (다운로드 안 함)",
             )
             self.assertFalse(dialog.use_recommendation_button.isEnabled())
+            self.assertEqual(dialog.manage_models_button.text(), "Ollama 모델 관리…")
+            self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
+            self.assertFalse(model_dialog.install_button.isEnabled())
+            self.assertFalse(model_dialog.delete_button.isEnabled())
             self.assertFalse(window.summary_widget.run_button.isEnabled())
             self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
             self.assertEqual(window.tabs.tabText(1), "분석 큐")
@@ -93,9 +99,10 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.7.0", splash_labels)
+            self.assertIn("Version 0.8.0", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
+            model_dialog.close()
             dialog.close()
             window.close()
 

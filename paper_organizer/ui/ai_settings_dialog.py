@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
 
 class _HardwareScanWorker(QThread):
@@ -110,11 +111,13 @@ class AiSettingsDialog(QDialog):
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
         self.use_recommendation_button = QPushButton("추천 모델 선택 (다운로드 안 함)")
+        self.manage_models_button = QPushButton("Ollama 모델 관리…")
         self.use_recommendation_button.setEnabled(False)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
         local_form.addRow("선택", self.use_recommendation_button)
+        local_form.addRow("설치/삭제", self.manage_models_button)
         local_layout.addLayout(local_form)
         self.model_candidates = QPlainTextEdit()
         self.model_candidates.setReadOnly(True)
@@ -125,7 +128,7 @@ class AiSettingsDialog(QDialog):
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
             "추천 선택은 모델명만 저장하며 다운로드를 시작하지 않습니다. "
-            "모델 다운로드·삭제는 별도 관리 화면에서 사용자 확인 후 지원할 예정입니다."
+            "모델 다운로드·삭제는 관리 화면에서 용량을 확인하고 명시적으로 실행합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
@@ -154,6 +157,7 @@ class AiSettingsDialog(QDialog):
         self.key_delete_button.clicked.connect(self._delete_key)
         self.hardware_scan_button.clicked.connect(self._scan_hardware)
         self.use_recommendation_button.clicked.connect(self._use_recommendation)
+        self.manage_models_button.clicked.connect(self._open_model_manager)
         self._load()
 
     def _load(self) -> None:
@@ -336,6 +340,23 @@ class AiSettingsDialog(QDialog):
         if ollama_index >= 0:
             self.provider_combo.setCurrentIndex(ollama_index)
         self.model_edit.setText(self._recommended_model)
+
+    def _open_model_manager(self) -> None:
+        dialog = OllamaModelDialog(self._controller, self)
+        dialog.model_verified.connect(self._model_install_verified)
+        dialog.model_deleted.connect(self._model_deleted)
+        dialog.refresh()
+        dialog.exec_()
+
+    def _model_install_verified(self, model: str) -> None:
+        ollama_index = self.provider_combo.findData("ollama")
+        if ollama_index >= 0:
+            self.provider_combo.setCurrentIndex(ollama_index)
+        self.model_edit.setText(model)
+
+    def _model_deleted(self, model: str, selection_cleared: bool) -> None:
+        if selection_cleared or self.model_edit.text().strip().casefold() == model.casefold():
+            self.model_edit.clear()
 
     def _save_preferences(self) -> None:
         if self._scan_worker is not None and self._scan_worker.isRunning():

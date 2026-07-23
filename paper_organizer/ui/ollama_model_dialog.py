@@ -1,0 +1,401 @@
+"""Responsive Ollama model manager with explicit download and deletion actions."""
+
+from __future__ import annotations
+
+from threading import Event
+
+from PyQt5.QtCore import QThread, QTimer, pyqtSignal
+from PyQt5.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.infra.ollama_models import OllamaOperationCancelled
+
+
+class _ModelOperationWorker(QThread):
+    progress = pyqtSignal(object)
+    completed = pyqtSignal(object)
+    failed = pyqtSignal(str)
+    cancelled = pyqtSignal(str)
+
+    def __init__(
+        self,
+        controller: AiSettingsController,
+        operation: str,
+        model: str = "",
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._operation = operation
+        self._model = model
+        self._cancel = Event()
+
+    def request_cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        try:
+            if self._operation == "refresh":
+                result = self._controller.ollama_model_snapshot()
+            elif self._operation == "install":
+                result = self._controller.install_ollama_model(
+                    self._model,
+                    on_progress=self.progress.emit,
+                    cancel=self._cancel,
+                )
+            elif self._operation == "verify":
+                result = self._controller.verify_installed_ollama_model(self._model)
+            elif self._operation == "delete":
+                result = self._controller.delete_ollama_model(self._model)
+            else:
+                raise ValueError("알 수 없는 모델 관리 작업입니다.")
+            self.completed.emit(result)
+        except OllamaOperationCancelled as exc:
+            self.cancelled.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class OllamaModelDialog(QDialog):
+    model_verified = pyqtSignal(str)
+    model_deleted = pyqtSignal(str, bool)
+
+    def __init__(self, controller: AiSettingsController, parent=None) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._worker: _ModelOperationWorker | None = None
+        self._operation = ""
+        self._operation_model = ""
+        self._snapshot = None
+        self._refresh_after_operation = False
+        self.setWindowTitle("Ollama 모델 관리")
+        self.resize(680, 520)
+
+        root = QVBoxLayout(self)
+        warning = QLabel(
+            "Ollama 모델 저장소는 다른 앱과 공유될 수 있습니다. Paper Organizer를 "
+            "제거해도 모델은 자동 삭제하지 않으며, 아래 삭제 버튼을 누르고 확인한 "
+            "모델만 삭제합니다."
+        )
+        warning.setWordWrap(True)
+        warning.setStyleSheet("color: #8a4b00;")
+        root.addWidget(warning)
+
+        self.runtime_status = QLabel("아직 Ollama 상태를 확인하지 않았습니다.")
+        self.runtime_status.setWordWrap(True)
+        root.addWidget(self.runtime_status)
+
+        selection_row = QHBoxLayout()
+        self.model_combo = QComboBox()
+        self.refresh_button = QPushButton("새로고침")
+        selection_row.addWidget(self.model_combo, 1)
+        selection_row.addWidget(self.refresh_button)
+        root.addLayout(selection_row)
+
+        self.model_detail = QLabel("모델을 선택하세요.")
+        self.model_detail.setWordWrap(True)
+        root.addWidget(self.model_detail)
+
+        self.installed_models = QPlainTextEdit()
+        self.installed_models.setReadOnly(True)
+        self.installed_models.setPlaceholderText("설치된 모델이 여기에 표시됩니다.")
+        root.addWidget(self.installed_models, 1)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("대기 중")
+        root.addWidget(self.progress)
+
+        action_row = QHBoxLayout()
+        self.install_button = QPushButton("다운로드 후 선택")
+        self.cancel_button = QPushButton("다운로드 취소")
+        self.delete_button = QPushButton("선택 모델 삭제")
+        self.cancel_button.setEnabled(False)
+        action_row.addWidget(self.install_button)
+        action_row.addWidget(self.cancel_button)
+        action_row.addStretch(1)
+        action_row.addWidget(self.delete_button)
+        root.addLayout(action_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        self.refresh_button.clicked.connect(self.refresh)
+        self.model_combo.currentIndexChanged.connect(self._selection_changed)
+        self.install_button.clicked.connect(self._install)
+        self.cancel_button.clicked.connect(self._cancel_download)
+        self.delete_button.clicked.connect(self._delete)
+        self._update_actions()
+
+    def refresh(self) -> None:
+        if self._busy():
+            return
+        self.runtime_status.setText("Ollama와 모델 디스크를 확인하는 중…")
+        self._start_worker("refresh")
+
+    def _start_worker(self, operation: str, model: str = "") -> None:
+        self._operation = operation
+        self._operation_model = model
+        worker = _ModelOperationWorker(self._controller, operation, model, self)
+        worker.progress.connect(self._progress_changed)
+        worker.completed.connect(self._operation_completed)
+        worker.failed.connect(self._operation_failed)
+        worker.cancelled.connect(self._operation_cancelled)
+        worker.finished.connect(self._operation_finished)
+        self._worker = worker
+        self._update_actions()
+        worker.start()
+
+    def _operation_completed(self, result) -> None:
+        if self._operation == "refresh":
+            self._apply_snapshot(result)
+            return
+        if self._operation in {"install", "verify"}:
+            model = (
+                result.verification.model
+                if self._operation == "install"
+                else result.model
+            )
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+            self.progress.setFormat(
+                "설치 및 JSON 응답 검증 완료"
+                if self._operation == "install"
+                else "JSON 응답 검증 완료"
+            )
+            self.model_verified.emit(model.name)
+            installed_now = self._operation == "install"
+            QMessageBox.information(
+                self,
+                "모델 설치 완료" if installed_now else "모델 검증 완료",
+                f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
+                "AI 설정의 모델 칸에 반영했으며 설정 저장 전까지는 활성화되지 않습니다.",
+            )
+            self._refresh_after_operation = self._operation == "install"
+            return
+        if self._operation == "delete":
+            cleared = bool(result)
+            self.model_deleted.emit(self._operation_model, cleared)
+            suffix = " 활성 모델 선택도 비웠습니다." if cleared else ""
+            QMessageBox.information(
+                self,
+                "모델 삭제 완료",
+                "선택한 Ollama 모델을 삭제했습니다." + suffix,
+            )
+            self._refresh_after_operation = True
+
+    def _operation_failed(self, message: str) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("작업 실패")
+        QMessageBox.warning(self, "Ollama 모델 작업 실패", message)
+
+    def _operation_cancelled(self, message: str) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("다운로드 취소됨")
+        self.runtime_status.setText(message)
+        self._refresh_after_operation = True
+
+    def _operation_finished(self) -> None:
+        self._worker = None
+        self._operation = ""
+        self._operation_model = ""
+        self._update_actions()
+        if self._refresh_after_operation:
+            self._refresh_after_operation = False
+            QTimer.singleShot(0, self.refresh)
+
+    def _apply_snapshot(self, snapshot) -> None:
+        self._snapshot = snapshot
+        if snapshot.reachable:
+            self.runtime_status.setText(
+                f"Ollama {snapshot.version} · 모델 저장 위치 {snapshot.disk_path} · "
+                f"여유 공간 {snapshot.disk_free_gb:g}GB"
+            )
+        else:
+            detail = f" ({snapshot.error})" if snapshot.error else ""
+            self.runtime_status.setText(
+                "Ollama에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요." + detail
+            )
+        selected = self.model_combo.currentData()
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for entry in snapshot.entries:
+            state = "설치됨" if entry.installed else "미설치"
+            size = (
+                f"실제 {entry.installed_size_gb:g}GB"
+                if entry.installed
+                else f"예상 {entry.estimated_download_gb:g}GB"
+                if entry.estimated_download_gb is not None
+                else "크기 미상"
+            )
+            self.model_combo.addItem(
+                f"{entry.label} — {state}, {size}", entry.model_id
+            )
+        if selected:
+            index = self.model_combo.findData(selected)
+            if index >= 0:
+                self.model_combo.setCurrentIndex(index)
+        self.model_combo.blockSignals(False)
+        installed_lines = []
+        for entry in snapshot.entries:
+            if not entry.installed:
+                continue
+            owner = " · 앱에서 받은 모델" if entry.managed_by_app else " · 공유/기존 모델"
+            details = " ".join(
+                value for value in (entry.parameter_size, entry.quantization) if value
+            )
+            installed_lines.append(
+                f"{entry.model_id} — {entry.installed_size_gb:g}GB"
+                f"{f' · {details}' if details else ''}{owner}"
+            )
+        self.installed_models.setPlainText("\n".join(installed_lines))
+        self._selection_changed()
+
+    def _selection_changed(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            self.model_detail.setText("모델을 선택하세요.")
+        elif entry.installed:
+            owner = "앱에서 다운로드" if entry.managed_by_app else "기존/공유 모델"
+            self.model_detail.setText(
+                f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
+                f"{entry.parameter_size or '파라미터 미상'} · "
+                f"{entry.quantization or '양자화 미상'}"
+            )
+        else:
+            required = (entry.estimated_download_gb or 0) * 1.5 + 2.0
+            self.model_detail.setText(
+                f"예상 다운로드 {entry.estimated_download_gb:g}GB · "
+                f"안전 여유 필요 약 {required:.1f}GB"
+            )
+        self._update_actions()
+
+    def _install(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        if entry.installed:
+            if QMessageBox.question(
+                self,
+                "설치 모델 검증",
+                f"{entry.model_id}의 짧은 JSON 응답을 검증한 뒤 선택할까요?",
+            ) != QMessageBox.Yes:
+                return
+            self.progress.setRange(0, 0)
+            self.progress.setFormat("설치 모델을 검증하는 중…")
+            self._start_worker("verify", entry.model_id)
+            return
+        if entry.estimated_download_gb is None:
+            return
+        required = entry.estimated_download_gb * 1.5 + 2.0
+        if self._snapshot.disk_free_gb < required:
+            QMessageBox.warning(
+                self,
+                "디스크 공간 부족",
+                f"현재 {self._snapshot.disk_free_gb:g}GB, 안전 설치에는 "
+                f"약 {required:.1f}GB가 필요합니다.",
+            )
+            return
+        if QMessageBox.question(
+            self,
+            "Ollama 모델 다운로드",
+            f"{entry.model_id}을(를) 다운로드할까요?\n"
+            f"예상 다운로드 {entry.estimated_download_gb:g}GB\n"
+            "완료 후 설치 목록과 짧은 JSON 응답을 검증합니다.",
+        ) != QMessageBox.Yes:
+            return
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("다운로드 준비 중…")
+        self._start_worker("install", entry.model_id)
+
+    def _delete(self) -> None:
+        entry = self._selected_entry()
+        if entry is None or not entry.installed:
+            return
+        if QMessageBox.warning(
+            self,
+            "공유 Ollama 모델 삭제",
+            f"{entry.model_id} ({entry.installed_size_gb:g}GB)을(를) 삭제할까요?\n\n"
+            "이 모델은 다른 프로그램에서도 사용 중일 수 있습니다. "
+            "Paper Organizer 삭제 프로그램은 이 작업을 대신 수행하지 않습니다.",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        ) != QMessageBox.Yes:
+            return
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("삭제 및 설치 목록 확인 중…")
+        self._start_worker("delete", entry.model_id)
+
+    def _cancel_download(self) -> None:
+        if self._worker is not None and self._operation == "install":
+            self.cancel_button.setEnabled(False)
+            self.progress.setFormat("안전한 지점에서 취소하는 중…")
+            self._worker.request_cancel()
+
+    def _progress_changed(self, progress) -> None:
+        if progress.percent is None:
+            self.progress.setRange(0, 0)
+            self.progress.setFormat(progress.status)
+        else:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(progress.percent)
+            self.progress.setFormat(f"{progress.status} — {progress.percent}%")
+
+    def _selected_entry(self):
+        if self._snapshot is None:
+            return None
+        model = self.model_combo.currentData()
+        return next(
+            (entry for entry in self._snapshot.entries if entry.model_id == model),
+            None,
+        )
+
+    def _busy(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def _update_actions(self) -> None:
+        busy = self._busy()
+        entry = self._selected_entry()
+        reachable = bool(self._snapshot and self._snapshot.reachable)
+        self.refresh_button.setEnabled(not busy)
+        self.model_combo.setEnabled(not busy and self.model_combo.count() > 0)
+        self.install_button.setEnabled(
+            not busy
+            and reachable
+            and entry is not None
+            and (entry.installed or entry.estimated_download_gb is not None)
+        )
+        self.install_button.setText(
+            "검증 후 선택"
+            if entry is not None and entry.installed
+            else "다운로드 후 선택"
+        )
+        self.delete_button.setEnabled(
+            not busy and reachable and entry is not None and entry.installed
+        )
+        self.cancel_button.setEnabled(busy and self._operation == "install")
+
+    def reject(self) -> None:
+        if self._busy():
+            QMessageBox.information(
+                self,
+                "모델 작업 진행 중",
+                "다운로드를 취소하거나 현재 작업이 끝난 뒤 창을 닫으세요.",
+            )
+            return
+        super().reject()

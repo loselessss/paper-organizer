@@ -9,6 +9,9 @@ from paper_organizer.application.local_ai import (
     LocalAiAssessment,
     LocalAiAssessmentService,
 )
+from paper_organizer.application.ollama_model_manager import (
+    OllamaModelManagerService,
+)
 from paper_organizer.infra.secrets import (
     SecretStatus,
     SecretStore,
@@ -63,10 +66,14 @@ class AiSettingsController:
         secret_store: SecretStore,
         settings_path: Path | None = None,
         local_ai: LocalAiAssessmentService | None = None,
+        model_manager: OllamaModelManagerService | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._local_ai = local_ai or LocalAiAssessmentService(self._settings_path)
+        self._model_manager = model_manager or OllamaModelManagerService(
+            self._settings_path
+        )
 
     def view(self) -> AiSettingsView:
         settings = self.settings()
@@ -149,6 +156,25 @@ class AiSettingsController:
 
     def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
         return self._local_ai.scan(profile=profile)
+
+    def ollama_model_snapshot(self):
+        return self._model_manager.snapshot()
+
+    def plan_ollama_install(self, model: str):
+        return self._model_manager.plan_install(model)
+
+    def install_ollama_model(self, model: str, *, on_progress=None, cancel=None):
+        return self._model_manager.install(
+            model,
+            on_progress=on_progress,
+            cancel=cancel,
+        )
+
+    def verify_installed_ollama_model(self, model: str):
+        return self._model_manager.verify_installed(model)
+
+    def delete_ollama_model(self, model: str) -> bool:
+        return self._model_manager.delete(model)
 
     def save_api_key(self, provider: str, api_key: str) -> AiSettingsView:
         normalized = provider.strip().lower()

@@ -74,6 +74,11 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(hardware_profile=[]).validate()
 
+    def test_managed_ollama_models_must_be_unique_names(self):
+        AppSettings(managed_ollama_models=["qwen3:4b"]).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(managed_ollama_models=["qwen3:4b", "QWEN3:4B"]).validate()
+
 
 if __name__ == "__main__":
     unittest.main()

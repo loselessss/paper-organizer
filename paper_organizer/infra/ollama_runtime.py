@@ -56,34 +56,44 @@ class OllamaRuntimeInspector:
             raw_models = tags_data.get("models", [])
             if not isinstance(raw_models, list):
                 raise RuntimeError("Ollama model list is invalid")
-            models: list[InstalledOllamaModel] = []
-            for raw in raw_models:
-                if not isinstance(raw, Mapping):
-                    continue
-                details = raw.get("details")
-                details = details if isinstance(details, Mapping) else {}
-                name = str(raw.get("name") or raw.get("model") or "").strip()
-                if not name:
-                    continue
-                size = raw.get("size", 0)
-                size_gb = (
-                    round(float(size) / (1000**3), 2)
-                    if isinstance(size, (int, float)) and not isinstance(size, bool)
-                    else 0.0
-                )
-                models.append(
-                    InstalledOllamaModel(
-                        name=name,
-                        size_gb=size_gb,
-                        parameter_size=str(details.get("parameter_size") or ""),
-                        quantization=str(details.get("quantization_level") or ""),
-                        modified_at=str(raw.get("modified_at") or ""),
-                    )
-                )
+            models = parse_installed_models(tags_data)
             return OllamaRuntimeStatus(
                 reachable=True,
                 version=str(version_data.get("version") or "unknown"),
-                models=tuple(sorted(models, key=lambda item: item.name.casefold())),
+                models=models,
             )
         except (OSError, ValueError, RuntimeError, HTTPError, URLError) as exc:
             return OllamaRuntimeStatus(False, "", (), str(exc))
+
+
+def parse_installed_models(data: Mapping[str, Any]) -> tuple[InstalledOllamaModel, ...]:
+    """Parse `/api/tags` without performing I/O so mutating calls can re-check state."""
+
+    raw_models = data.get("models", [])
+    if not isinstance(raw_models, list):
+        raise RuntimeError("Ollama model list is invalid")
+    models: list[InstalledOllamaModel] = []
+    for raw in raw_models:
+        if not isinstance(raw, Mapping):
+            continue
+        details = raw.get("details")
+        details = details if isinstance(details, Mapping) else {}
+        name = str(raw.get("name") or raw.get("model") or "").strip()
+        if not name:
+            continue
+        size = raw.get("size", 0)
+        size_gb = (
+            round(float(size) / (1000**3), 2)
+            if isinstance(size, (int, float)) and not isinstance(size, bool)
+            else 0.0
+        )
+        models.append(
+            InstalledOllamaModel(
+                name=name,
+                size_gb=size_gb,
+                parameter_size=str(details.get("parameter_size") or ""),
+                quantization=str(details.get("quantization_level") or ""),
+                modified_at=str(raw.get("modified_at") or ""),
+            )
+        )
+    return tuple(sorted(models, key=lambda item: item.name.casefold()))

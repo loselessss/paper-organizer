@@ -36,6 +36,7 @@ class AppSettings:
     model_catalog_version: str = ""
     last_hardware_scan_at: str = ""
     hardware_profile: dict[str, Any] = field(default_factory=dict)
+    managed_ollama_models: list[str] = field(default_factory=list)
     summary_provider: str = "ollama"
     openai_model: str = "gpt-5.6"
     anthropic_model: str = "claude-sonnet-4-6"
@@ -63,6 +64,16 @@ class AppSettings:
             raise ValueError("Unsupported model_profile")
         if not isinstance(self.hardware_profile, dict):
             raise ValueError("hardware_profile must be a JSON object")
+        if (
+            not isinstance(self.managed_ollama_models, list)
+            or any(
+                not isinstance(model, str) or not model.strip()
+                for model in self.managed_ollama_models
+            )
+            or len({model.casefold() for model in self.managed_ollama_models})
+            != len(self.managed_ollama_models)
+        ):
+            raise ValueError("managed_ollama_models must contain unique model names")
         if self.summary_provider not in {"ollama", "openai", "anthropic"}:
             raise ValueError("summary_provider must be ollama, openai or anthropic")
         if not isinstance(self.cloud_processing_consent, bool):
