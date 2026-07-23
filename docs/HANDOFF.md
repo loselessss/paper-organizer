@@ -137,6 +137,11 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 `save_paths(..., auto_organize_academic=False)`를 넘기세요. 안 그러면 논문이
 자동으로 정리돼 검토 목록이 비어 버립니다.
 
+**외부 실행 파일을 `shutil.which`만으로 찾으면 놓칩니다.**
+앱이 상속한 PATH에 `WindowsApps`가 빠져 있으면 winget이 설치돼 있어도 못 찾습니다.
+`find_winget_executable()`, `find_ollama_executable()`처럼 기본 설치 경로까지
+확인하세요. 새 외부 도구를 붙일 때도 같은 패턴을 쓰면 됩니다.
+
 ---
 
 ## 6. 다음에 할 일

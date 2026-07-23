@@ -1,11 +1,15 @@
+import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from paper_organizer.infra.ollama_installer import (
     OLLAMA_DOWNLOAD_URL,
     WINGET_PACKAGE_ID,
     ensure_runtime,
+    find_winget_executable,
     inspect_runtime,
 )
 from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
@@ -55,6 +59,37 @@ class InspectRuntimeTests(unittest.TestCase):
         self.assertFalse(state.installed)
         self.assertFalse(state.running)
         self.assertIn("설치되어 있지 않습니다", state.message)
+
+
+class FindWingetTests(unittest.TestCase):
+    def test_path_lookup_wins_when_available(self):
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.shutil.which",
+            return_value="C:/Windows/winget.exe",
+        ):
+            self.assertEqual(find_winget_executable(), "C:/Windows/winget.exe")
+
+    def test_store_alias_folder_is_used_when_path_misses_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            local = Path(temp)
+            alias = local / "Microsoft" / "WindowsApps"
+            alias.mkdir(parents=True)
+            (alias / "winget.exe").write_bytes(b"")
+            with mock.patch(
+                "paper_organizer.infra.ollama_installer.shutil.which",
+                return_value=None,
+            ), mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                self.assertEqual(
+                    find_winget_executable(), str(alias / "winget.exe")
+                )
+
+    def test_missing_everywhere_returns_empty(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch(
+                "paper_organizer.infra.ollama_installer.shutil.which",
+                return_value=None,
+            ), mock.patch.dict(os.environ, {"LOCALAPPDATA": temp}):
+                self.assertEqual(find_winget_executable(), "")
 
 
 class EnsureRuntimeTests(unittest.TestCase):
@@ -126,8 +161,8 @@ class EnsureRuntimeTests(unittest.TestCase):
             "paper_organizer.infra.ollama_installer.find_ollama_executable",
             return_value="",
         ), mock.patch(
-            "paper_organizer.infra.ollama_installer.winget_available",
-            return_value=True,
+            "paper_organizer.infra.ollama_installer.find_winget_executable",
+            return_value="C:/winget.exe",
         ):
             result = ensure_runtime(
                 allow_install=True,
@@ -145,8 +180,8 @@ class EnsureRuntimeTests(unittest.TestCase):
             "paper_organizer.infra.ollama_installer.find_ollama_executable",
             return_value="",
         ), mock.patch(
-            "paper_organizer.infra.ollama_installer.winget_available",
-            return_value=True,
+            "paper_organizer.infra.ollama_installer.find_winget_executable",
+            return_value="C:/winget.exe",
         ):
             result = ensure_runtime(
                 allow_install=True,
@@ -164,8 +199,8 @@ class EnsureRuntimeTests(unittest.TestCase):
             "paper_organizer.infra.ollama_installer.find_ollama_executable",
             return_value="",
         ), mock.patch(
-            "paper_organizer.infra.ollama_installer.winget_available",
-            return_value=False,
+            "paper_organizer.infra.ollama_installer.find_winget_executable",
+            return_value="",
         ):
             result = ensure_runtime(
                 allow_install=True,

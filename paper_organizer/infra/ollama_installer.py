@@ -71,8 +71,30 @@ def find_ollama_executable() -> str:
     return ""
 
 
+def find_winget_executable() -> str:
+    """Return the winget path, including the Store alias folder.
+
+    winget이 설치되어 있어도 앱이 상속한 PATH에 `WindowsApps`가 빠져 있으면
+    `shutil.which`가 찾지 못한다. 기본 설치 경로까지 확인해 그때도 자동 설치를
+    쓸 수 있게 한다.
+    """
+
+    found = shutil.which("winget")
+    if found:
+        return found
+    candidate = (
+        Path(os.environ.get("LOCALAPPDATA", ""))
+        / "Microsoft"
+        / "WindowsApps"
+        / "winget.exe"
+    )
+    if candidate.parent.parent.name and candidate.is_file():
+        return str(candidate)
+    return ""
+
+
 def winget_available() -> bool:
-    return bool(shutil.which("winget"))
+    return bool(find_winget_executable())
 
 
 def inspect_runtime(
@@ -159,7 +181,8 @@ def ensure_runtime(
         return OllamaSetupResult(
             False, state, "Ollama가 설치되어 있지 않습니다.", needs_manual_download=True
         )
-    if not state.can_install_with_winget:
+    winget = find_winget_executable()
+    if not winget:
         return OllamaSetupResult(
             False,
             state,
@@ -170,7 +193,7 @@ def ensure_runtime(
     try:
         completed = run_command(
             [
-                "winget",
+                winget,
                 "install",
                 "--id",
                 WINGET_PACKAGE_ID,
