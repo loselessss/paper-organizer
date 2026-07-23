@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Event
 
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFormLayout,
@@ -87,7 +88,7 @@ class _BackgroundAnalysisWorker(QThread):
             return
         while not self._stop.is_set():
             self._processing = True
-            result = self._service.run_next()
+            result = self._service.run_next(on_start=self._notify_started)
             self._processing = False
             self.event.emit(result)
             if result.state in {"completed", "failed"}:
@@ -97,6 +98,10 @@ class _BackgroundAnalysisWorker(QThread):
             self._wake.wait(self._service.poll_interval())
             self._wake.clear()
         self._processing = False
+
+    def _notify_started(self, event: AnalysisRunEvent) -> None:
+        self.event.emit(event)
+        self.queue_changed.emit()
 
 
 class MetadataForm(QGroupBox):
@@ -390,6 +395,7 @@ class _SortableQueueItem(QTableWidgetItem):
 
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
+    analysis_progress = pyqtSignal(str, bool)
 
     def __init__(
         self,
@@ -402,6 +408,8 @@ class AnalysisQueueWidget(QWidget):
         self._background_analysis = background_analysis
         self._analysis_worker: _BackgroundAnalysisWorker | None = None
         self._items: list[AnalysisQueueItem] = []
+        self._analysis_running = False
+        self._current_analysis_title = ""
         root = QVBoxLayout(self)
         note = QLabel(
             "새로 발견된 PDF가 재시작 후에도 유지되는 분석 대기열입니다. "
@@ -473,11 +481,14 @@ class AnalysisQueueWidget(QWidget):
                 item.path,
             ]
             sort_keys = [1 - int(bool(item.priority)), None, None, None]
+            analyzing = item.status == "analyzing"
             for column, value in enumerate(values):
                 cell = _SortableQueueItem(value)
                 cell.setData(Qt.UserRole, item.queue_id)
                 if sort_keys[column] is not None:
                     cell.setData(Qt.UserRole + 1, sort_keys[column])
+                if analyzing:
+                    cell.setBackground(QColor(255, 243, 205))
                 self.table.setItem(row, column, cell)
         self.table.setSortingEnabled(True)
         if selected_id:
@@ -485,6 +496,24 @@ class AnalysisQueueWidget(QWidget):
         self.status_label.setText(f"분석 큐 {len(self._items)}개")
         self._update_background_button()
         self._selection_changed()
+        self._emit_progress()
+
+    def _emit_progress(self) -> None:
+        waiting = sum(
+            1 for item in self._items if item.status == "organized_pending_analysis"
+        )
+        analyzing = sum(1 for item in self._items if item.status == "analyzing")
+        done = sum(1 for item in self._items if item.status == "completed")
+        failed = sum(1 for item in self._items if item.status == "failed")
+        busy = self._analysis_running or analyzing > 0
+        counts = f"대기 {waiting} · 완료 {done} · 실패 {failed}"
+        if busy and self._current_analysis_title:
+            message = f"분석 중: {self._current_analysis_title} ({counts})"
+        elif busy:
+            message = f"분석 중 ({counts})"
+        else:
+            message = f"분석 큐 {counts}"
+        self.analysis_progress.emit(message, busy)
 
     def _selected_queue_id(self) -> str | None:
         row = self.table.currentRow()
@@ -633,13 +662,21 @@ class AnalysisQueueWidget(QWidget):
 
     def _analysis_event(self, event: AnalysisRunEvent) -> None:
         labels = {
+            "started": "분석 중",
             "idle": "대기",
             "waiting": "AI 준비 대기",
             "completed": "완료",
             "failed": "실패",
             "disabled": "중지",
         }
+        if event.state == "started":
+            self._analysis_running = True
+            self._current_analysis_title = event.title
+        else:
+            self._analysis_running = False
+            self._current_analysis_title = ""
         self.status_label.setText(f"{labels.get(event.state, event.state)} · {event.message}")
+        self._emit_progress()
 
     def _analysis_worker_finished(self) -> None:
         worker = self._analysis_worker

@@ -8,9 +8,11 @@ from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
     QApplication,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QSplitter,
     QSystemTrayIcon,
     QTabWidget,
@@ -101,7 +103,21 @@ class PaperOrganizerWindow(QMainWindow):
             self._create_system_tray()
         if not settings_menu.actions():
             settings_menu.menuAction().setVisible(False)
+        self._analysis_status_label = QLabel("")
+        self._analysis_progress_bar = QProgressBar()
+        self._analysis_progress_bar.setRange(0, 0)
+        self._analysis_progress_bar.setFixedWidth(120)
+        self._analysis_progress_bar.hide()
+        self.statusBar().addPermanentWidget(self._analysis_status_label)
+        self.statusBar().addPermanentWidget(self._analysis_progress_bar)
+        if self.queue_widget is not None:
+            self.queue_widget.analysis_progress.connect(self._analysis_progress_changed)
+            self.queue_widget.refresh()
         self.statusBar().showMessage("다운로드 폴더의 새 논문을 검색할 준비가 되었습니다.")
+
+    def _analysis_progress_changed(self, message: str, busy: bool) -> None:
+        self._analysis_status_label.setText(message)
+        self._analysis_progress_bar.setVisible(busy)
 
     def _create_ai_menu(self) -> None:
         menu = self.menuBar().addMenu("AI")

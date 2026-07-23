@@ -77,7 +77,7 @@ class BackgroundAnalysisService:
             return AnalysisReadiness(False, f"{provider} API 키가 등록되지 않았습니다.")
         return AnalysisReadiness(True, f"{provider} 백그라운드 분석 준비됨")
 
-    def run_next(self, *, force: bool = False) -> AnalysisRunEvent:
+    def run_next(self, *, force: bool = False, on_start=None) -> AnalysisRunEvent:
         settings = load_settings(self._settings_path)
         if not force and not settings.background_analysis_enabled:
             return AnalysisRunEvent("disabled", "백그라운드 분석이 중지되어 있습니다.")
@@ -94,6 +94,15 @@ class BackgroundAnalysisService:
         item = self._workflow.claim_next_analysis()
         if item is None:
             return AnalysisRunEvent("idle", "다른 작업이 대기열을 갱신했습니다.")
+        if on_start is not None:
+            on_start(
+                AnalysisRunEvent(
+                    "started",
+                    f"{item.title} 분석을 시작했습니다.",
+                    item.queue_id,
+                    item.title,
+                )
+            )
         try:
             pdf = self._workflow.materialize_pdf(Path(item.path))
             mode = (
