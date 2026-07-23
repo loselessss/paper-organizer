@@ -77,10 +77,9 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
-            self.assertEqual(window.tabs.count(), 3)
-            self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
-            self.assertEqual(window.tabs.tabText(1), "분석 큐")
-            self.assertEqual(window.tabs.tabText(2), "라이브러리")
+            self.assertEqual(window.tabs.count(), 2)
+            self.assertEqual(window.tabs.tabText(0), "수집 및 분석")
+            self.assertEqual(window.tabs.tabText(1), "라이브러리")
             menu_titles = [
                 action.text() for action in window.menuBar().actions()
             ]
@@ -92,9 +91,13 @@ class UiSmokeTests(unittest.TestCase):
                 if action.isChecked()
             ]
             self.assertEqual(checked, ["로컬 Ollama"])
-            self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
-            self.assertEqual(window.collection_widget.interval_spin.value(), 300)
-            self.assertFalse(window.collection_widget.remove_source_check.isChecked())
+            from paper_organizer.ui.folder_settings_dialog import FolderSettingsDialog
+
+            folder_dialog = FolderSettingsDialog(workflow_controller)
+            self.assertTrue(folder_dialog.input_edit.text().endswith("Downloads"))
+            self.assertEqual(folder_dialog.interval_spin.value(), 300)
+            self.assertFalse(folder_dialog.remove_source_check.isChecked())
+            folder_dialog.close()
             self.assertEqual(
                 window.library_widget.apply_pdf_button.text(),
                 "편집본을 PaperPack에 적용",

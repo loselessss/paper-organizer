@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QAction,
@@ -10,6 +11,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QSplitter,
     QSystemTrayIcon,
     QTabWidget,
 )
@@ -53,7 +55,7 @@ class PaperOrganizerWindow(QMainWindow):
         self._tray: QSystemTrayIcon | None = None
         self.setWindowTitle("Paper Organizer")
         self.setWindowIcon(QIcon(str(app_icon_path())))
-        self.resize(980, 720)
+        self.resize(1280, 760)
 
         self._library_workflow = library_workflow
         self.tabs = QTabWidget()
@@ -70,8 +72,13 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget = LibraryWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
-            self.tabs.addTab(self.collection_widget, "수집 및 검토")
-            self.tabs.addTab(self.queue_widget, "분석 큐")
+            collect_split = QSplitter(Qt.Horizontal)
+            collect_split.addWidget(self.collection_widget)
+            collect_split.addWidget(self.queue_widget)
+            collect_split.setStretchFactor(0, 3)
+            collect_split.setStretchFactor(1, 2)
+            collect_split.setChildrenCollapsible(False)
+            self.tabs.addTab(collect_split, "수집 및 분석")
             self.tabs.addTab(self.library_widget, "라이브러리")
         if self.queue_widget is not None:
             self.queue_widget.summary_requested.connect(self._open_queue_in_summary)

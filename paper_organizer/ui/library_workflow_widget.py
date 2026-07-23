@@ -8,9 +8,6 @@ from threading import Event
 from PyQt5.QtCore import QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
-    QComboBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,7 +16,6 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -169,44 +165,15 @@ class CollectionReviewWidget(QWidget):
         self._auto_timer.timeout.connect(lambda: self.scan_now(False))
 
         root = QVBoxLayout(self)
-        paths = QGroupBox("폴더 및 저전력 감시")
-        path_form = QFormLayout(paths)
-        input_row, self.input_edit = self._path_row(self._browse_input)
-        library_row, self.library_edit = self._path_row(self._browse_library)
-        self.profile_combo = QComboBox()
-        self.profile_combo.addItem("저사양/절전", "eco")
-        self.profile_combo.addItem("균형", "balanced")
-        self.profile_combo.addItem("고성능", "performance")
-        self.interval_spin = QSpinBox()
-        self.interval_spin.setRange(5, 3600)
-        self.interval_spin.setSuffix("초")
-        self.interval_spin.setToolTip("5초에서 1시간 사이로 설정할 수 있습니다.")
-        self.profile_combo.currentIndexChanged.connect(self._profile_changed)
-        self.interval_spin.valueChanged.connect(self._apply_timer_interval)
-        self.auto_check = QCheckBox("설정한 주기로 가볍게 검색 (안정된 새 PDF만 1회 분석)")
-        self.remove_source_check = QCheckBox(
-            "paperpack 검증 완료 후 입력 폴더의 원본 PDF 삭제"
-        )
-        self.remove_source_check.setToolTip(
-            "기본값은 원본 유지입니다. 삭제 실패 시 새 paperpack을 롤백합니다."
-        )
-        save_paths = QPushButton("폴더 설정 저장")
-        save_paths.clicked.connect(self._save_paths)
-        path_form.addRow("입력 폴더", input_row)
-        path_form.addRow("PaperPack 라이브러리", library_row)
-        path_form.addRow("시스템 부하", self.profile_combo)
-        path_form.addRow("스캔 주기", self.interval_spin)
-        path_form.addRow("자동 감시", self.auto_check)
-        path_form.addRow("입력 PDF", self.remove_source_check)
-        path_form.addRow("", save_paths)
-        root.addWidget(paths)
-
         action_row = QHBoxLayout()
         self.scan_button = QPushButton("새 PDF 검색")
         self.scan_button.clicked.connect(lambda: self.scan_now(True))
+        self.settings_button = QPushButton("폴더 및 감시 설정…")
+        self.settings_button.clicked.connect(self._show_folder_settings)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
         action_row.addWidget(self.scan_button)
+        action_row.addWidget(self.settings_button)
         action_row.addWidget(self.status_label, 1)
         root.addLayout(action_row)
 
@@ -241,79 +208,24 @@ class CollectionReviewWidget(QWidget):
         review_actions.addWidget(self.restore_button)
         review_actions.addStretch(1)
         root.addLayout(review_actions)
-        self._load_settings()
+        self._reload_watch_settings()
 
-    def _path_row(self, browse_slot, *, allow_clear: bool = False):
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        edit = QLineEdit()
-        browse = QPushButton("찾아보기…")
-        browse.clicked.connect(browse_slot)
-        layout.addWidget(edit, 1)
-        layout.addWidget(browse)
-        if allow_clear:
-            clear = QPushButton("사용 안 함")
-            clear.clicked.connect(edit.clear)
-            layout.addWidget(clear)
-        return container, edit
-
-    def _load_settings(self) -> None:
-        input_dir, library_root = self._controller.configured_paths()
+    def _reload_watch_settings(self) -> None:
+        """설정 파일 기준으로 자동 감시 타이머를 다시 맞춘다."""
         settings = self._controller.settings()
-        self.input_edit.setText(str(input_dir))
-        self.library_edit.setText(str(library_root))
-        profile_index = self.profile_combo.findData(settings.resource_profile)
-        self.profile_combo.setCurrentIndex(max(0, profile_index))
-        self.interval_spin.setValue(settings.scan_interval_seconds)
-        self.auto_check.setChecked(settings.auto_enabled)
-        self.remove_source_check.setChecked(settings.remove_source_after_import)
-        self._set_auto_enabled(settings.auto_enabled)
-
-    def _browse_input(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "입력 폴더 선택", self.input_edit.text())
-        if path:
-            self.input_edit.setText(path)
-
-    def _browse_library(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "PaperPack 라이브러리 선택", self.library_edit.text()
-        )
-        if path:
-            self.library_edit.setText(path)
-
-    def _save_paths(self) -> None:
-        try:
-            self._controller.save_paths(
-                Path(self.input_edit.text().strip()),
-                Path(self.library_edit.text().strip()),
-                auto_enabled=self.auto_check.isChecked(),
-                resource_profile=self.profile_combo.currentData(),
-                scan_interval_seconds=self.interval_spin.value(),
-                remove_source_after_import=self.remove_source_check.isChecked(),
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "폴더 설정 실패", str(exc))
-            return
-        self._set_auto_enabled(self.auto_check.isChecked())
-        self.status_label.setText("폴더 설정을 저장했습니다.")
-
-    def _set_auto_enabled(self, enabled: bool) -> None:
-        self._apply_timer_interval()
-        if enabled:
+        self._auto_timer.setInterval(max(5, settings.scan_interval_seconds) * 1000)
+        if settings.auto_enabled:
             self._auto_timer.start()
         else:
             self._auto_timer.stop()
 
-    def _apply_timer_interval(self) -> None:
-        if hasattr(self, "interval_spin"):
-            self._auto_timer.setInterval(self.interval_spin.value() * 1000)
+    def _show_folder_settings(self) -> None:
+        from .folder_settings_dialog import FolderSettingsDialog
 
-    def _profile_changed(self) -> None:
-        defaults = {"eco": 300, "balanced": 60, "performance": 15}
-        profile = self.profile_combo.currentData()
-        if profile in defaults:
-            self.interval_spin.setValue(defaults[profile])
+        dialog = FolderSettingsDialog(self._controller, self)
+        if dialog.exec_():
+            self._reload_watch_settings()
+            self.status_label.setText("폴더 설정을 저장했습니다.")
 
     def scan_now(self, schedule_followup: bool = True) -> None:
         if self.is_busy():
