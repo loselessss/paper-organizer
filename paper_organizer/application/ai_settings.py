@@ -120,6 +120,17 @@ class AiSettingsController:
             return settings.openai_model
         return settings.anthropic_model
 
+    def set_provider(self, provider: str) -> AiSettingsView:
+        """Switch only the summary provider, e.g. from the menu bar."""
+
+        normalized = provider.strip().lower()
+        if normalized not in PROVIDER_LABELS:
+            raise ValueError(f"Unsupported AI provider: {provider}")
+        settings = load_settings(self._settings_path)
+        settings.summary_provider = normalized
+        save_settings(settings, self._settings_path)
+        return self.view()
+
     def save_preferences(
         self,
         *,

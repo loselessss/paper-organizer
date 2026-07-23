@@ -9,6 +9,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -239,3 +240,32 @@ class ImmediateSummaryWidget(QWidget):
         if quick_index >= 0:
             self.mode_combo.setCurrentIndex(quick_index)
         self.setFocus()
+
+
+class ImmediateSummaryDialog(QDialog):
+    """분석 큐나 메뉴에서 여는 즉시 요약 다이얼로그(임시 분석 전용)."""
+
+    def __init__(self, controller: ImmediateSummaryController, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("즉시 요약")
+        self.setMinimumSize(680, 560)
+        layout = QVBoxLayout(self)
+        self.widget = ImmediateSummaryWidget(controller, self)
+        layout.addWidget(self.widget)
+
+    def select_pdf(self, path) -> None:
+        self.widget.select_pdf(path)
+
+    def reject(self) -> None:
+        if self.widget.is_busy():
+            QMessageBox.information(
+                self, "요약 진행 중", "현재 요청이 끝난 뒤 창을 닫으세요."
+            )
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        if self.widget.is_busy():
+            event.ignore()
+            return
+        super().closeEvent(event)

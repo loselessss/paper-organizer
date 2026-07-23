@@ -77,15 +77,21 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
-            self.assertFalse(window.summary_widget.run_button.isEnabled())
+            self.assertEqual(window.tabs.count(), 3)
             self.assertEqual(window.tabs.tabText(0), "수집 및 검토")
             self.assertEqual(window.tabs.tabText(1), "분석 큐")
             self.assertEqual(window.tabs.tabText(2), "라이브러리")
-            self.assertEqual(window.tabs.tabText(3), "즉시 요약")
             menu_titles = [
                 action.text() for action in window.menuBar().actions()
             ]
             self.assertIn("도구", menu_titles)
+            self.assertIn("AI", menu_titles)
+            checked = [
+                action.text()
+                for action in window._provider_group.actions()
+                if action.isChecked()
+            ]
+            self.assertEqual(checked, ["로컬 Ollama"])
             self.assertTrue(window.collection_widget.input_edit.text().endswith("Downloads"))
             self.assertEqual(window.collection_widget.interval_spin.value(), 300)
             self.assertFalse(window.collection_widget.remove_source_check.isChecked())

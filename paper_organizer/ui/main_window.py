@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QAction,
+    QActionGroup,
     QApplication,
     QMainWindow,
     QMenu,
@@ -20,7 +21,7 @@ from paper_organizer.application.library_workflow import LibraryWorkflowControll
 from paper_organizer.application.summary_service import ImmediateSummaryController
 
 from .ai_settings_dialog import AiSettingsDialog
-from .immediate_summary_widget import ImmediateSummaryWidget
+from .immediate_summary_widget import ImmediateSummaryDialog
 from .library_workflow_widget import (
     AnalysisQueueWidget,
     CollectionReviewWidget,
@@ -28,6 +29,7 @@ from .library_workflow_widget import (
 )
 from .lifecycle_dialog import LifecyclePreferencesDialog
 from .migration_widget import LegacyMigrationDialog
+from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
 from .startup_splash import splash_asset_path
 
@@ -44,6 +46,7 @@ class PaperOrganizerWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self._ai_settings = ai_settings
+        self._immediate_summary = immediate_summary
         self._lifecycle = lifecycle
         self._force_quit = False
         self._tray_message_shown = False
@@ -69,16 +72,11 @@ class PaperOrganizerWindow(QMainWindow):
             self.tabs.addTab(self.collection_widget, "수집 및 검토")
             self.tabs.addTab(self.queue_widget, "분석 큐")
             self.tabs.addTab(self.library_widget, "라이브러리")
-        self.summary_widget = ImmediateSummaryWidget(immediate_summary, self)
-        self.tabs.addTab(self.summary_widget, "즉시 요약")
         if self.queue_widget is not None:
             self.queue_widget.summary_requested.connect(self._open_queue_in_summary)
         self.setCentralWidget(self.tabs)
 
-        settings_action = QAction("요약 AI 설정...", self)
-        settings_action.triggered.connect(self.show_ai_settings)
         settings_menu = self.menuBar().addMenu("설정")
-        settings_menu.addAction(settings_action)
         if self._library_workflow is not None:
             tools_menu = self.menuBar().addMenu("도구")
             export_action = QAction("PDF 환원 (일괄 추출)...", self)
@@ -87,15 +85,78 @@ class PaperOrganizerWindow(QMainWindow):
             migration_action = QAction("레거시 라이브러리 변환...", self)
             migration_action.triggered.connect(self.show_legacy_migration)
             tools_menu.addAction(migration_action)
+        self._create_ai_menu()
         if self._lifecycle is not None:
             lifecycle_action = QAction("시작 및 종료 설정...", self)
             lifecycle_action.triggered.connect(self.show_lifecycle_settings)
             settings_menu.addAction(lifecycle_action)
             self._create_system_tray()
+        if not settings_menu.actions():
+            settings_menu.menuAction().setVisible(False)
         self.statusBar().showMessage("다운로드 폴더의 새 논문을 검색할 준비가 되었습니다.")
+
+    def _create_ai_menu(self) -> None:
+        menu = self.menuBar().addMenu("AI")
+        self._provider_group = QActionGroup(self)
+        self._provider_group.setExclusive(True)
+        self._provider_actions: dict[str, QAction] = {}
+        for choice in self._ai_settings.view().provider_choices:
+            action = QAction(choice.label, self, checkable=True)
+            action.setData(choice.provider)
+            action.triggered.connect(
+                lambda _checked, provider=choice.provider: self._switch_provider(
+                    provider
+                )
+            )
+            self._provider_group.addAction(action)
+            self._provider_actions[choice.provider] = action
+            menu.addAction(action)
+        menu.addSeparator()
+        summary_action = QAction("즉시 요약...", self)
+        summary_action.triggered.connect(self.show_immediate_summary)
+        menu.addAction(summary_action)
+        menu.addSeparator()
+        ai_settings_action = QAction("요약 AI 설정...", self)
+        ai_settings_action.triggered.connect(self.show_ai_settings)
+        menu.addAction(ai_settings_action)
+        models_action = QAction("Ollama 모델 관리...", self)
+        models_action.triggered.connect(self.show_ollama_models)
+        menu.addAction(models_action)
+        menu.aboutToShow.connect(self._sync_provider_actions)
+        self._sync_provider_actions()
+
+    def _sync_provider_actions(self) -> None:
+        current = self._ai_settings.settings().summary_provider
+        action = self._provider_actions.get(current)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+
+    def _switch_provider(self, provider: str) -> None:
+        try:
+            view = self._ai_settings.set_provider(provider)
+        except Exception as exc:
+            QMessageBox.warning(self, "AI 제공자 변경 실패", str(exc))
+            self._sync_provider_actions()
+            return
+        message = f"요약 AI 제공자를 {view.provider_label}(으)로 변경했습니다."
+        if view.key_required and not view.key_configured:
+            message += " API 키를 '요약 AI 설정'에서 등록하세요."
+        if view.provider == "ollama" and not view.model:
+            message += " Ollama 모델을 먼저 선택하세요."
+        self.statusBar().showMessage(message)
 
     def show_ai_settings(self) -> None:
         AiSettingsDialog(self._ai_settings, self).exec_()
+        self._sync_provider_actions()
+
+    def show_ollama_models(self) -> None:
+        OllamaModelDialog(self._ai_settings, self).exec_()
+
+    def show_immediate_summary(self, path: str = "") -> None:
+        dialog = ImmediateSummaryDialog(self._immediate_summary, self)
+        if path:
+            dialog.select_pdf(path)
+        dialog.exec_()
 
     def show_pdf_export(self) -> None:
         if self._library_workflow is None:
@@ -169,21 +230,17 @@ class PaperOrganizerWindow(QMainWindow):
         return True
 
     def _open_queue_in_summary(self, path: str) -> None:
-        self.summary_widget.select_pdf(path)
-        self.tabs.setCurrentWidget(self.summary_widget)
         self.statusBar().showMessage(
             "분석 큐의 PDF를 빠른 요약에 넣었습니다. 미리보기 전에는 전송되지 않습니다."
         )
+        self.show_immediate_summary(path)
 
     def closeEvent(self, event) -> None:
-        collection_busy = bool(
-            self.collection_widget and self.collection_widget.is_busy()
-        )
-        if self.summary_widget.is_busy() or collection_busy:
+        if self.collection_widget and self.collection_widget.is_busy():
             QMessageBox.information(
                 self,
-                "요약 진행 중",
-                "현재 요청이 끝난 뒤 프로그램을 닫으세요.",
+                "검색 진행 중",
+                "현재 PDF 검색이 끝난 뒤 프로그램을 닫으세요.",
             )
             event.ignore()
             return
