@@ -21,6 +21,11 @@ from .legacy_migration import (
     LegacyMigrationService,
     LegacyMigrationTrashEntry,
 )
+from .lifecycle import (
+    LifecycleSettingsController,
+    LifecycleSettingsError,
+    WindowsLoginStartup,
+)
 from .summary_service import (
     PreparedSummary,
     ImmediateSummaryController,
@@ -49,6 +54,9 @@ __all__ = [
     "LegacyMigrationResult",
     "LegacyMigrationService",
     "LegacyMigrationTrashEntry",
+    "LifecycleSettingsController",
+    "LifecycleSettingsError",
+    "WindowsLoginStartup",
     "PreparedSummary",
     "ImmediateSummaryController",
     "SummaryExecution",

@@ -21,6 +21,9 @@ def default_settings_path() -> Path:
 @dataclass(slots=True)
 class AppSettings:
     schema_version: int = 1
+    first_run_completed: bool = False
+    start_with_windows: bool = False
+    close_behavior: str = "quit"
     input_dir: str = ""
     library_root: str = ""
     metadata_sync_dir: str = ""
@@ -44,6 +47,12 @@ class AppSettings:
             raise ValueError(f"Unsupported settings schema: {self.schema_version}")
         if not isinstance(self.remove_source_after_import, bool):
             raise ValueError("remove_source_after_import must be a boolean")
+        if not isinstance(self.first_run_completed, bool):
+            raise ValueError("first_run_completed must be a boolean")
+        if not isinstance(self.start_with_windows, bool):
+            raise ValueError("start_with_windows must be a boolean")
+        if self.close_behavior not in {"background", "quit"}:
+            raise ValueError("close_behavior must be background or quit")
         if self.resource_profile not in {"eco", "balanced", "performance"}:
             raise ValueError("resource_profile must be eco, balanced or performance")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:

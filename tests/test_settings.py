@@ -61,6 +61,15 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(scan_interval_seconds=3601).validate()
 
+    def test_lifecycle_preferences_are_validated(self):
+        AppSettings(
+            first_run_completed=True,
+            start_with_windows=True,
+            close_behavior="background",
+        ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(close_behavior="ask").validate()
+
 
 if __name__ == "__main__":
     unittest.main()

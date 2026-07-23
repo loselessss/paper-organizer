@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 HAS_PYQT5 = importlib.util.find_spec("PyQt5") is not None
@@ -20,6 +21,14 @@ class MemorySecretStore:
 
     def delete(self, provider):
         self.values.pop(provider, None)
+
+
+class MemoryLoginStartup:
+    def __init__(self):
+        self.enabled = False
+
+    def set_enabled(self, enabled):
+        self.enabled = enabled
 
 
 @unittest.skipUnless(HAS_PYQT5, "PyQt5 optional dependency is not installed")
@@ -78,11 +87,80 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 0.5.0", splash_labels)
+            self.assertIn("Version 0.6.0", splash_labels)
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             dialog.close()
             window.close()
+
+    def test_first_run_requires_an_explicit_close_choice(self):
+        from PyQt5.QtWidgets import QDialog
+
+        from paper_organizer.application.lifecycle import LifecycleSettingsController
+        from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            startup = MemoryLoginStartup()
+            controller = LifecycleSettingsController(path, startup)
+            dialog = LifecyclePreferencesDialog(
+                controller,
+                first_run=True,
+            )
+
+            self.assertFalse(dialog.start_with_windows_check.isChecked())
+            self.assertFalse(dialog.background_radio.isChecked())
+            self.assertFalse(dialog.quit_radio.isChecked())
+            self.assertFalse(dialog.save_button.isEnabled())
+            dialog.background_radio.setChecked(True)
+            self.assertTrue(dialog.save_button.isEnabled())
+            dialog.start_with_windows_check.setChecked(True)
+            dialog._save()
+
+            self.assertEqual(dialog.result(), QDialog.Accepted)
+            self.assertTrue(startup.enabled)
+            self.assertTrue(controller.settings().first_run_completed)
+            self.assertEqual(controller.settings().close_behavior, "background")
+
+    def test_background_close_hides_window_and_quit_setting_closes_it(self):
+        from paper_organizer.application.ai_settings import AiSettingsController
+        from paper_organizer.application.library_workflow import LibraryWorkflowController
+        from paper_organizer.application.lifecycle import LifecycleSettingsController
+        from paper_organizer.application.summary_service import ImmediateSummaryController
+        from paper_organizer.ui.main_window import PaperOrganizerWindow
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            secret_store = MemorySecretStore()
+            startup = MemoryLoginStartup()
+            lifecycle = LifecycleSettingsController(path, startup)
+            lifecycle.save_preferences(
+                start_with_windows=False,
+                close_behavior="background",
+            )
+            window = PaperOrganizerWindow(
+                AiSettingsController(secret_store, path),
+                ImmediateSummaryController(secret_store, path),
+                LibraryWorkflowController(path),
+                lifecycle=lifecycle,
+            )
+            window.show()
+            self.app.processEvents()
+
+            with mock.patch(
+                "paper_organizer.ui.main_window.QSystemTrayIcon.isSystemTrayAvailable",
+                return_value=True,
+            ):
+                self.assertFalse(window.close())
+            self.assertFalse(window.isVisible())
+
+            lifecycle.save_preferences(
+                start_with_windows=False,
+                close_behavior="quit",
+            )
+            window.show()
+            self.app.processEvents()
+            self.assertTrue(window.close())
 
 
 if __name__ == "__main__":
