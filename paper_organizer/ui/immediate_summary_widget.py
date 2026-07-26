@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from PyQt5.QtCore import QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -255,11 +255,15 @@ class ImmediateSummaryDialog(QDialog):
 
     def __init__(self, controller: ImmediateSummaryController, parent=None) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self.setWindowTitle("즉시 요약")
         self.setMinimumSize(680, 560)
         layout = QVBoxLayout(self)
         self.widget = ImmediateSummaryWidget(controller, self)
         layout.addWidget(self.widget)
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        )
 
     def select_pdf(self, path) -> None:
         self.widget.select_pdf(path)

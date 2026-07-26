@@ -21,6 +21,9 @@
 - 요약 요청의 Ollama thinking 및 OpenAI reasoning 비활성화
 - 앱이 직접 시작한 Ollama 서버는 AI 작업 후 종료
 - WindowsApps 실행 별칭에 접근할 수 없는 경우에도 Ollama 탐색을 계속 처리
+- Ollama 자동 설치의 경과 시간과 Delivery Optimization 사용 안내를 표시하고,
+  3분 타임아웃 후 공식 다운로드 버튼 제공
+- 사용하지 않는 대화상자 제목 표시줄의 `?` 도움말 버튼 제거
 
 ## [1.0.0] - 2026-07-26
 

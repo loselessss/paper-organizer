@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from threading import Event
 
-from PyQt5.QtCore import QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
@@ -34,6 +35,7 @@ class _RuntimeSetupWorker(QThread):
 
     def __init__(self, allow_install: bool, parent=None) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self._allow_install = allow_install
 
     def run(self) -> None:
@@ -113,6 +115,11 @@ class OllamaModelDialog(QDialog):
         self._snapshot = None
         self._refresh_after_operation = False
         self._runtime_worker: _RuntimeSetupWorker | None = None
+        self._runtime_elapsed_seconds = 0
+        self._runtime_installing = False
+        self._runtime_timer = QTimer(self)
+        self._runtime_timer.setInterval(1000)
+        self._runtime_timer.timeout.connect(self._runtime_tick)
         self.setWindowTitle("Ollama 모델 관리")
         self.resize(680, 520)
 
@@ -138,6 +145,11 @@ class OllamaModelDialog(QDialog):
         self.setup_runtime_button.clicked.connect(self._setup_runtime)
         self.setup_runtime_button.setVisible(False)
         runtime_row.addWidget(self.setup_runtime_button)
+        self.open_download_button = QPushButton("Ollama 공식 다운로드")
+        self.open_download_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(OLLAMA_DOWNLOAD_URL))
+        )
+        runtime_row.addWidget(self.open_download_button)
         runtime_row.addStretch(1)
         root.addLayout(runtime_row)
 
@@ -184,6 +196,9 @@ class OllamaModelDialog(QDialog):
         self.cancel_button.clicked.connect(self._cancel_download)
         self.delete_button.clicked.connect(self._delete)
         self._update_actions()
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowContextHelpButtonHint
+        )
 
     def refresh(self) -> None:
         if self._busy():
@@ -291,6 +306,9 @@ class OllamaModelDialog(QDialog):
         self.runtime_status.setText(
             "Ollama를 설치하고 실행하는 중…" if allow_install else "Ollama를 실행하는 중…"
         )
+        self._runtime_elapsed_seconds = 0
+        self._runtime_installing = allow_install
+        self._runtime_timer.start()
         worker = _RuntimeSetupWorker(allow_install, self)
         worker.completed.connect(self._runtime_setup_finished)
         worker.finished.connect(worker.deleteLater)
@@ -298,6 +316,7 @@ class OllamaModelDialog(QDialog):
         worker.start()
 
     def _runtime_setup_finished(self, result) -> None:
+        self._runtime_timer.stop()
         self._runtime_worker = None
         self.setup_runtime_button.setEnabled(True)
         self.runtime_status.setText(result.message)
@@ -312,6 +331,21 @@ class OllamaModelDialog(QDialog):
             )
         else:
             QMessageBox.warning(self, "Ollama 준비 실패", result.message)
+
+    def _runtime_tick(self) -> None:
+        self._runtime_elapsed_seconds += 1
+        elapsed = self._runtime_elapsed_seconds
+        if not self._runtime_installing:
+            self.runtime_status.setText(
+                f"Ollama 서버가 응답하기를 기다리는 중 · {elapsed}초 경과"
+            )
+            return
+        self.runtime_status.setText(
+            f"Ollama 자동 설치 요청 중 · {elapsed}초 경과\n"
+            "winget 다운로드는 작업 관리자에서 Delivery Optimization/Service의 "
+            "네트워크 사용량으로 표시될 수 있습니다. 3분 안에 끝나지 않으면 자동 "
+            "설치를 중단하고 공식 다운로드를 안내합니다."
+        )
 
     def _apply_snapshot(self, snapshot) -> None:
         self._snapshot = snapshot

@@ -41,6 +41,7 @@ class UiSmokeTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_ai_settings_and_summary_shell_construct(self):
+        from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -51,6 +52,7 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
+        from paper_organizer.ui.immediate_summary_widget import ImmediateSummaryDialog
         from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
         with tempfile.TemporaryDirectory() as temp:
@@ -61,6 +63,7 @@ class UiSmokeTests(unittest.TestCase):
             workflow_controller = LibraryWorkflowController(path)
             dialog = AiSettingsDialog(ai_controller)
             model_dialog = OllamaModelDialog(ai_controller)
+            summary_dialog = ImmediateSummaryDialog(summary_controller)
             window = PaperOrganizerWindow(
                 ai_controller, summary_controller, workflow_controller
             )
@@ -77,6 +80,12 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
+            self.assertFalse(
+                bool(model_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+            )
+            self.assertFalse(
+                bool(summary_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+            )
             self.assertEqual(window.tabs.count(), 2)
             self.assertEqual(window.tabs.tabText(0), "수집 및 분석")
             self.assertEqual(window.tabs.tabText(1), "라이브러리")

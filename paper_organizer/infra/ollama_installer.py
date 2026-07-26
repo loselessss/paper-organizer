@@ -19,7 +19,7 @@ from paper_organizer.infra.ollama_runtime import OllamaRuntimeInspector
 
 OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
 WINGET_PACKAGE_ID = "Ollama.Ollama"
-_INSTALL_TIMEOUT_SECONDS = 900
+_INSTALL_TIMEOUT_SECONDS = 180
 _START_TIMEOUT_SECONDS = 60
 
 CommandRunner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
@@ -234,6 +234,15 @@ def ensure_runtime(
                 "--accept-source-agreements",
             ],
             _INSTALL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return OllamaSetupResult(
+            False,
+            inspect_runtime(probe),
+            "winget 자동 설치가 3분 동안 완료되지 않아 중단했습니다. "
+            "Windows의 Delivery Optimization 상태를 확인하거나 Ollama 공식 "
+            "설치 프로그램을 사용하세요.",
+            needs_manual_download=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return OllamaSetupResult(
