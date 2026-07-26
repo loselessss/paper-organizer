@@ -47,6 +47,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("choco install innosetup", workflow)
         self.assertIn("cmd /c build_installer.bat", workflow)
         self.assertIn("Get-FileHash -Algorithm SHA256", workflow)
+        self.assertIn("PaperOrganizer_Setup_latest.exe", workflow)
+        self.assertIn("$latestInstaller $latestChecksum", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("contents: write", workflow)
 

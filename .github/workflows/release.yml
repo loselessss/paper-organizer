@@ -47,6 +47,10 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
           "$hash  PaperOrganizer_Setup_$version.exe" |
             Set-Content -Encoding ascii -LiteralPath "$installer.sha256"
+          $latestInstaller = "Output\PaperOrganizer_Setup_latest.exe"
+          Copy-Item -LiteralPath $installer -Destination $latestInstaller
+          "$hash  PaperOrganizer_Setup_latest.exe" |
+            Set-Content -Encoding ascii -LiteralPath "$latestInstaller.sha256"
 
       - name: Preserve installer as workflow artifact
         uses: actions/upload-artifact@v6
@@ -66,7 +70,9 @@ jobs:
           $version = $tag.TrimStart("v")
           $installer = "Output\PaperOrganizer_Setup_$version.exe"
           $checksum = "$installer.sha256"
-          gh release create $tag $installer $checksum `
+          $latestInstaller = "Output\PaperOrganizer_Setup_latest.exe"
+          $latestChecksum = "$latestInstaller.sha256"
+          gh release create $tag $installer $checksum $latestInstaller $latestChecksum `
             --verify-tag `
             --title "Paper Organizer $version" `
             --generate-notes
