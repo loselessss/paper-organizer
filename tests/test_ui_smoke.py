@@ -202,6 +202,10 @@ class UiSmokeTests(unittest.TestCase):
                 window.library_widget.save_button.text(),
                 "색인 편집 저장 및 재색인",
             )
+            self.assertEqual(
+                window.library_widget.delete_button.text(),
+                "선택 항목 완전 삭제",
+            )
             self.assertTrue(window.queue_widget.table.acceptDrops())
             self.assertEqual(
                 window.collection_widget.trash_button.text(),
@@ -690,7 +694,7 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_selecting_same_library_path_renders_analysis_immediately(self):
         from PyQt5.QtCore import QItemSelectionModel
-        from PyQt5.QtWidgets import QAbstractItemView
+        from PyQt5.QtWidgets import QAbstractItemView, QMessageBox
 
         from paper_organizer.application.library_workflow import (
             EditablePaperMetadata,
@@ -726,22 +730,31 @@ class UiSmokeTests(unittest.TestCase):
             class FakeLibraryController:
                 def __init__(self):
                     self.search_queries = []
+                    self.deleted = []
 
                 def invalidate_library_cache(self):
                     pass
 
                 def list_library(self):
-                    return [entry, second]
+                    return [
+                        value
+                        for value in (entry, second)
+                        if value not in self.deleted
+                    ]
 
                 def search_library(self, query):
                     self.search_queries.append(query)
-                    return [entry, second]
+                    return self.list_library()
 
                 def analysis_queue(self):
                     return []
 
                 def paperpack_working_copy(self, _path):
                     return None
+
+                def permanently_delete_library_entries(self, entries):
+                    self.deleted.extend(entries)
+                    return mock.Mock(deleted=len(entries), problems=())
 
             controller = FakeLibraryController()
             widget = LibraryWidget(controller)
@@ -777,6 +790,20 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(widget.select_path(paperpack))
             self.assertEqual(widget.search_edit.text(), "")
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.table.selectAll()
+            with (
+                mock.patch(
+                    "paper_organizer.ui.library_workflow_widget.QMessageBox.question",
+                    return_value=QMessageBox.Yes,
+                ),
+                mock.patch(
+                    "paper_organizer.ui.library_workflow_widget.QMessageBox.warning"
+                ) as warning,
+            ):
+                widget._delete_selected()
+            self.assertEqual(len(controller.deleted), 2)
+            self.assertEqual(widget.table.rowCount(), 0)
+            warning.assert_not_called()
             widget.close()
 
     def test_background_close_hides_window_and_quit_setting_closes_it(self):

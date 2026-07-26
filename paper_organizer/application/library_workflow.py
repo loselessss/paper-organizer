@@ -199,6 +199,12 @@ class LibraryEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class LibraryDeletionResult:
+    deleted: int
+    problems: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PaperPackWorkingCopy:
     paperpack_path: Path
     pdf_path: Path
@@ -2107,6 +2113,166 @@ class LibraryWorkflowController:
 
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
+
+    def permanently_delete_library_entries(
+        self, entries: Iterable[LibraryEntry]
+    ) -> LibraryDeletionResult:
+        """Permanently remove approved library files and their derived state."""
+
+        selected = list(entries)
+        if not selected:
+            raise LibraryWorkflowError("완전 삭제할 라이브러리 항목을 선택하세요.")
+        _input_dir, root = self.configured_paths()
+        papers_root = (root / "papers").resolve()
+        queue = self._queue()
+        queue_by_id = {item.queue_id: item for item in queue.load()}
+        plans: list[
+            tuple[
+                LibraryEntry,
+                tuple[Path, ...],
+                str,
+                str,
+            ]
+        ] = []
+        seen: set[Path] = set()
+        for entry in selected:
+            sidecar = entry.sidecar_path.expanduser().resolve()
+            if sidecar in seen:
+                raise LibraryWorkflowError("같은 라이브러리 항목이 중복 선택되었습니다.")
+            seen.add(sidecar)
+            if not _inside(papers_root, sidecar):
+                raise LibraryWorkflowError("라이브러리 밖의 파일은 삭제할 수 없습니다.")
+            is_paperpack = sidecar.suffix.casefold() == PAPERPACK_SUFFIX
+            is_legacy_sidecar = sidecar.name.endswith(SIDECAR_SUFFIX)
+            if not sidecar.is_file() or not (is_paperpack or is_legacy_sidecar):
+                raise LibraryWorkflowError(
+                    f"삭제할 PaperPack 또는 색인 파일을 찾을 수 없습니다: {sidecar.name}"
+                )
+            try:
+                record = load_record(sidecar)
+                identity = _identity_from_record(record)
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                PaperPackError,
+            ) as exc:
+                raise LibraryWorkflowError(
+                    f"삭제 대상을 검증할 수 없습니다: {sidecar.name}: {exc}"
+                ) from None
+            queue_id = f"sha256:{identity.file_sha256}"
+            queue_item = queue_by_id.get(queue_id)
+            if queue_item is not None and queue_item.status == "analyzing":
+                raise LibraryWorkflowError(
+                    f"현재 분석 중인 항목은 삭제할 수 없습니다: "
+                    f"{entry.metadata.title or sidecar.stem}"
+                )
+            targets = [sidecar]
+            if is_legacy_sidecar:
+                pdf_path = entry.pdf_path.expanduser().resolve()
+                targets.extend(
+                    (
+                        pdf_path,
+                        Path(f"{pdf_path}.content.json"),
+                        Path(
+                            str(sidecar)[: -len(SIDECAR_SUFFIX)]
+                            + ".content.json"
+                        ),
+                    )
+                )
+            unique_targets: list[Path] = []
+            for target in targets:
+                target = target.resolve()
+                if target in unique_targets or not target.exists():
+                    continue
+                if not _inside(papers_root, target):
+                    raise LibraryWorkflowError(
+                        f"라이브러리 밖의 연관 파일은 삭제할 수 없습니다: {target.name}"
+                    )
+                unique_targets.append(target)
+            plans.append(
+                (
+                    entry,
+                    tuple(unique_targets),
+                    identity.file_sha256,
+                    identity.file_id,
+                )
+            )
+
+        deleted = 0
+        problems: list[str] = []
+        for entry, targets, file_sha256, file_id in plans:
+            title = entry.metadata.title or entry.sidecar_path.stem
+            queue_id = f"sha256:{file_sha256}"
+            current = next(
+                (item for item in queue.load() if item.queue_id == queue_id),
+                None,
+            )
+            if current is not None and current.status == "analyzing":
+                problems.append(f"{title}: 분석이 시작되어 삭제하지 않았습니다.")
+                continue
+            try:
+                if entry.sidecar_path.suffix.casefold() == PAPERPACK_SUFFIX:
+                    _source, _workspace, edit_state = self._paperpack_edit_paths(
+                        entry.sidecar_path
+                    )
+                    self.discard_paperpack_working_copy(entry.sidecar_path)
+                    try:
+                        edit_state.parent.rmdir()
+                    except OSError:
+                        pass
+                for target in targets:
+                    target.unlink()
+            except (OSError, LibraryWorkflowError) as exc:
+                problems.append(f"{title}: 파일 삭제 실패: {exc}")
+                continue
+            deleted += 1
+            try:
+                if current is not None:
+                    queue.remove(queue_id)
+            except (OSError, AnalysisQueueError) as exc:
+                problems.append(f"{title}: 분석 큐 정리 실패: {exc}")
+            try:
+                remove_search_entry(root, file_id)
+            except (OSError, SearchIndexError) as exc:
+                problems.append(f"{title}: 검색 색인 정리 실패: {exc}")
+            for cached in (
+                root / "cache" / "pdf" / f"{file_sha256}.pdf",
+                _discovery_ocr_cache_path(root, file_sha256),
+            ):
+                try:
+                    cached.unlink(missing_ok=True)
+                except OSError as exc:
+                    problems.append(f"{title}: 임시 파일 정리 실패: {exc}")
+            history_root = (root / "history").resolve()
+            history = (
+                history_root / _safe_component(file_sha256, "unknown")
+            ).resolve()
+            if (
+                file_sha256
+                and history.is_dir()
+                and _inside(history_root, history)
+            ):
+                try:
+                    shutil.rmtree(history)
+                except OSError as exc:
+                    problems.append(f"{title}: 편집 이력 정리 실패: {exc}")
+            parent = entry.sidecar_path.resolve().parent
+            while parent != papers_root and _inside(papers_root, parent):
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+
+        if deleted:
+            try:
+                rebuild_library_index(root)
+            except Exception as exc:
+                problems.append(f"통합 색인 재생성 실패: {exc}")
+        self._library_cache = None
+        return LibraryDeletionResult(deleted, tuple(problems))
 
     def rebuild_search_index(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
         """Rebuild the disposable full-text cache from every paperpack."""

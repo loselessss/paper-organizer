@@ -1255,24 +1255,29 @@ class LibraryWidget(QWidget):
         self.open_button = QPushButton("sPDF로 열기")
         self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
         self.discard_pdf_button = QPushButton("편집본 폐기")
+        self.delete_button = QPushButton("선택 항목 완전 삭제")
+        self.delete_button.setStyleSheet("color: #a40000;")
         self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
         self.reanalyze_all_button = QPushButton("전체 논문 재요약")
         self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
         self.open_button.clicked.connect(self._open_selected)
         self.apply_pdf_button.clicked.connect(self._apply_pdf_edit)
         self.discard_pdf_button.clicked.connect(self._discard_pdf_edit)
+        self.delete_button.clicked.connect(self._delete_selected)
         self.reanalyze_selected_button.clicked.connect(self._reanalyze_selected)
         self.reanalyze_all_button.clicked.connect(self._reanalyze_all)
         self.approve_category_button.clicked.connect(self._approve_category)
         self.open_button.setEnabled(False)
         self.apply_pdf_button.setEnabled(False)
         self.discard_pdf_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
         self.approve_category_button.setEnabled(False)
         actions.addWidget(self.open_button)
         actions.addWidget(self.apply_pdf_button)
         actions.addWidget(self.discard_pdf_button)
+        actions.addWidget(self.delete_button)
         actions.addStretch(1)
         root.addLayout(actions)
         analysis_actions = QHBoxLayout()
@@ -1373,6 +1378,7 @@ class LibraryWidget(QWidget):
             self.open_button.setEnabled(False)
             self.apply_pdf_button.setEnabled(False)
             self.discard_pdf_button.setEnabled(False)
+            self.delete_button.setEnabled(False)
             self.reanalyze_selected_button.setEnabled(False)
             self.approve_category_button.setEnabled(False)
 
@@ -1411,6 +1417,7 @@ class LibraryWidget(QWidget):
             any(value.pdf_path.is_file() for value in entries)
         )
         self.reanalyze_selected_button.setEnabled(bool(entries))
+        self.delete_button.setEnabled(bool(entries))
         self.approve_category_button.setEnabled(
             bool(
                 entry
@@ -1589,6 +1596,45 @@ class LibraryWidget(QWidget):
         self.refresh()
         self.status_label.setText(status)
         self.metadata_changed.emit()
+
+    def _delete_selected(self) -> None:
+        entries = self._selected_entries()
+        if not entries:
+            return
+        titles = "\n".join(
+            f"• {entry.metadata.title or entry.sidecar_path.stem}"
+            for entry in entries[:5]
+        )
+        if len(entries) > 5:
+            titles += f"\n• 외 {len(entries) - 5}건"
+        if QMessageBox.question(
+            self,
+            "라이브러리 완전 삭제",
+            f"선택한 {len(entries)}건의 PaperPack과 저장된 PDF·분석 내용을 "
+            "완전히 삭제할까요?\n\n"
+            f"{titles}\n\n"
+            "이 작업은 제외 목록이나 앱 휴지통으로 보내지 않으며 복원할 수 없습니다. "
+            "감시 폴더에 남아 있는 원본 PDF는 삭제하지 않습니다.",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            result = self._controller.permanently_delete_library_entries(entries)
+        except Exception as exc:
+            QMessageBox.warning(self, "라이브러리 삭제 실패", str(exc))
+            return
+        self.refresh(True)
+        self.status_label.setText(
+            f"라이브러리 항목 {result.deleted}건을 완전히 삭제했습니다."
+            + (f" · 확인 필요 {len(result.problems)}건" if result.problems else "")
+        )
+        if result.problems:
+            QMessageBox.warning(
+                self,
+                "일부 삭제 작업 확인 필요",
+                "\n".join(result.problems[:10]),
+            )
+        if result.deleted:
+            self.metadata_changed.emit()
 
     def _open_selected(self) -> None:
         failures: list[str] = []

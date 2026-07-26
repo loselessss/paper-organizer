@@ -127,6 +127,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget.reanalysis_queued.connect(
                 self._library_reanalysis_queued
             )
+            self.library_widget.metadata_changed.connect(
+                self.queue_widget.refresh
+            )
             self.library_widget.natural_search_requested.connect(
                 self.show_natural_search
             )

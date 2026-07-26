@@ -275,6 +275,64 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(saved["curation"]["revision"], 2)
             self.assertEqual(saved["curation"]["last_edited_by"], "user")
 
+    def test_library_entry_can_be_permanently_deleted_with_derived_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            source = input_dir / "paper.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Delete Me"),
+            )
+            cached_pdf = controller.materialize_pdf(organized.pdf_path)
+            working_pdf = controller.materialize_editable_pdf(organized.pdf_path)
+            entry = controller.list_library()[0]
+            file_sha256 = str(entry.record["file"]["sha256"])
+            history = library / "history" / file_sha256
+            history.mkdir(parents=True)
+            (history / "revision-0001.paper.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+
+            result = controller.permanently_delete_library_entries([entry])
+
+            self.assertEqual(result.deleted, 1)
+            self.assertEqual(result.problems, ())
+            self.assertFalse(organized.pdf_path.exists())
+            self.assertFalse(cached_pdf.exists())
+            self.assertFalse(working_pdf.exists())
+            self.assertFalse(history.exists())
+            self.assertTrue(source.exists())
+            self.assertEqual(controller.analysis_queue(), [])
+            self.assertEqual(controller.list_library(), [])
+            index = json.loads(
+                (library / "index" / "library.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(index["work_count"], 0)
+
+    def test_library_entry_cannot_be_deleted_while_analysis_is_running(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Analyzing Paper"),
+            )
+            claimed = controller.claim_next_analysis()
+            self.assertIsNotNone(claimed)
+
+            with self.assertRaisesRegex(Exception, "분석 중"):
+                controller.permanently_delete_library_entries(
+                    controller.list_library()
+                )
+
+            self.assertTrue(organized.pdf_path.exists())
+
     def test_organize_can_remove_input_pdf_after_verified_pack_creation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
