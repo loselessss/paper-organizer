@@ -476,6 +476,8 @@ def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadat
     ]
     title = pdf_title or (lines[0] if lines else path.stem)
     authors = [value.strip() for value in re.split(r"[;,]", pdf_author) if value.strip()]
+    if not authors:
+        authors = _extract_first_page_byline(lines)
     beginning = " ".join(page_texts[:3])
     match = _YEAR_RE.search(beginning)
     return EditablePaperMetadata(
@@ -483,6 +485,45 @@ def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadat
         authors=authors,
         year=int(match.group(0)) if match else None,
     )
+
+
+def _extract_first_page_byline(lines: list[str]) -> list[str]:
+    """Conservatively extract author names between the title and abstract."""
+
+    excluded = (
+        "abstract",
+        "introduction",
+        "review",
+        "department",
+        "university",
+        "institute",
+        "hospital",
+        "corresponding",
+        "received",
+        "accepted",
+        "doi",
+        "http",
+        "@",
+    )
+    initial_name = re.compile(
+        r"(?:^|,\s*|\band\s+)(?:[A-Z]\.\s*)+[A-Z][A-Za-z'’-]+(?:\s|$)"
+    )
+    for line in lines[1:10]:
+        folded = line.casefold()
+        if folded.startswith(("abstract", "introduction")):
+            break
+        if any(marker in folded for marker in excluded):
+            continue
+        if not initial_name.search(line):
+            continue
+        values = [
+            value.strip()
+            for value in re.split(r"\s*;\s*|\s+\band\b\s+|,\s*(?=[A-Z]\.)", line)
+            if value.strip()
+        ]
+        if values:
+            return values
+    return []
 
 
 def _detection(page_texts: list[str]) -> tuple[str, str]:

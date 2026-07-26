@@ -46,6 +46,7 @@ class UiSmokeTests(unittest.TestCase):
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
+        from paper_organizer import __version__
         from paper_organizer.application.summary_service import (
             ImmediateSummaryController,
         )
@@ -96,6 +97,9 @@ class UiSmokeTests(unittest.TestCase):
                 bool(summary_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
             )
             self.assertEqual(window.tabs.count(), 2)
+            self.assertEqual(
+                window.windowTitle(), f"Paper Organizer — v{__version__}"
+            )
             self.assertEqual(window.tabs.tabText(0), "수집 및 분석")
             self.assertEqual(window.tabs.tabText(1), "라이브러리")
             menu_titles = [
@@ -123,8 +127,10 @@ class UiSmokeTests(unittest.TestCase):
                 window.library_widget.apply_pdf_button.text(),
                 "편집본을 PaperPack에 적용",
             )
-            self.assertFalse(window.library_widget.apply_pdf_button.isEnabled())
-            self.assertFalse(window.library_widget.discard_pdf_button.isEnabled())
+            self.assertEqual(
+                window.library_widget._selected() is not None,
+                bool(window.library_widget._entries),
+            )
             self.assertEqual(
                 window.collection_widget.form.venue_edit.placeholderText(),
                 "저널명 또는 학회명",
@@ -288,7 +294,11 @@ class UiSmokeTests(unittest.TestCase):
                     return None
 
             widget = LibraryWidget(FakeLibraryController())
+            self.assertTrue(widget.search_edit.isClearButtonEnabled())
+            self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.search_edit.setText("다른 검색어")
             self.assertTrue(widget.select_path(paperpack))
+            self.assertEqual(widget.search_edit.text(), "")
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
             widget.close()
 

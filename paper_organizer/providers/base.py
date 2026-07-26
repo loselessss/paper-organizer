@@ -51,6 +51,9 @@ SYSTEM_INSTRUCTIONS = (
     "year as a string, and venue is the journal or conference name. Never "
     "translate, romanize, summarize, or rewrite the title, author names, or "
     "venue; copy those fields verbatim in the source document's original language. "
+    "Every article type, including narrative reviews, systematic reviews, and "
+    "meta-analyses, has a byline: extract all authors shown in that byline. Never "
+    "treat a review article as authorless and never copy cited-reference authors. "
     "Classify the paper into one university department-level category and a "
     "narrower subcategory, both written in Korean."
 )
@@ -81,7 +84,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v2"
+    prompt_version: str = "paper-summary-v3"
     allowed_categories: tuple[str, ...] = ()
 
     def validate(self) -> None:

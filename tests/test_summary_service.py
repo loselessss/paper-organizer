@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import fitz
 
@@ -148,7 +149,7 @@ class SummaryServiceTests(unittest.TestCase):
                     http_client=FakeHttpClient(),
                 )
 
-    def test_too_little_text_requests_ocr(self):
+    def test_too_little_text_automatically_runs_bundled_ocr(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "scan.pdf"
             document = fitz.open()
@@ -158,8 +159,34 @@ class SummaryServiceTests(unittest.TestCase):
             settings = AppSettings(
                 summary_provider="ollama", selected_model="qwen-test"
             )
-            with self.assertRaisesRegex(SummaryPreparationError, "OCR"):
-                prepare_summary(path, settings)
+            recognized = ["Recognized patent claims and description. " * 30]
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                return_value=recognized,
+            ) as ocr:
+                prepared = prepare_summary(path, settings)
+
+            ocr.assert_called_once_with(path.resolve(), page_indexes=(0,))
+            self.assertIn("Recognized patent claims", prepared.document_text)
+
+    def test_bundled_ocr_failure_is_reported_directly(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "scan.pdf"
+            document = fitz.open()
+            document.new_page()
+            document.save(path)
+            document.close()
+            settings = AppSettings(
+                summary_provider="ollama", selected_model="qwen-test"
+            )
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                side_effect=RuntimeError("worker unavailable"),
+            ):
+                with self.assertRaisesRegex(
+                    SummaryPreparationError, "내장 OCR 실행에 실패"
+                ):
+                    prepare_summary(path, settings)
 
 
 if __name__ == "__main__":

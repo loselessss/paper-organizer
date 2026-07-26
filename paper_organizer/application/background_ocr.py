@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 import fitz
@@ -17,12 +18,22 @@ class BackgroundOcrError(RuntimeError):
     pass
 
 
-def ocr_page_texts(pdf_path: Path, *, timeout_seconds: int = 900) -> list[str]:
+def ocr_page_texts(
+    pdf_path: Path,
+    *,
+    page_indexes: Iterable[int] | None = None,
+    timeout_seconds: int = 900,
+) -> list[str]:
     """Return page text recognized by the isolated sPDF OCR worker."""
 
     source = pdf_path.expanduser().resolve()
     with fitz.open(source) as document:
-        pages = list(range(document.page_count))
+        page_count = document.page_count
+    pages = (
+        list(range(page_count))
+        if page_indexes is None
+        else sorted({index for index in page_indexes if 0 <= index < page_count})
+    )
     if getattr(sys, "frozen", False):
         command = [str(Path(sys.executable).parent / "ocr" / "spdf-ocr.exe")]
         environment = None
@@ -68,4 +79,4 @@ def ocr_page_texts(pdf_path: Path, *, timeout_seconds: int = 900) -> list[str]:
             error = str(event.get("message") or "")
     if completed.returncode or error:
         raise BackgroundOcrError(error or completed.stderr.strip() or "OCR worker failed")
-    return ["\n".join(recognized.get(page, [])) for page in pages]
+    return ["\n".join(recognized.get(page, [])) for page in range(page_count)]

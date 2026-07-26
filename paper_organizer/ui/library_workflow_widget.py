@@ -836,9 +836,11 @@ class LibraryWidget(QWidget):
         self.search_edit.setPlaceholderText(
             "제목·저자·분야·태그와 논문 본문 전체에서 검색"
         )
+        self.search_edit.setClearButtonEnabled(True)
         refresh_button = QPushButton("새로고침")
         refresh_button.clicked.connect(lambda: self.refresh(True))
         self.search_edit.returnPressed.connect(self.refresh)
+        self.search_edit.textChanged.connect(self._search_text_changed)
         search_row.addWidget(self.search_edit, 1)
         search_row.addWidget(refresh_button)
         root.addLayout(search_row)
@@ -897,6 +899,10 @@ class LibraryWidget(QWidget):
         root.addWidget(self.status_label)
         self.refresh()
 
+    def _search_text_changed(self, text: str) -> None:
+        if not text.strip():
+            self.refresh()
+
     def refresh(self, force: bool = False) -> None:
         if force:
             self._controller.invalidate_library_cache()
@@ -935,13 +941,17 @@ class LibraryWidget(QWidget):
             ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
-        self.form.set_metadata(None)
-        self._render_analysis(None)
-        self.save_button.setEnabled(False)
-        self.open_button.setEnabled(False)
-        self.apply_pdf_button.setEnabled(False)
-        self.discard_pdf_button.setEnabled(False)
         self.status_label.setText(f"논문 파일 {len(self._entries)}개")
+        if self._entries:
+            self.table.selectRow(0)
+            self._selection_changed()
+        else:
+            self.form.set_metadata(None)
+            self._render_analysis(None)
+            self.save_button.setEnabled(False)
+            self.open_button.setEnabled(False)
+            self.apply_pdf_button.setEnabled(False)
+            self.discard_pdf_button.setEnabled(False)
 
     def _selected(self) -> LibraryEntry | None:
         row = self.table.currentRow()
@@ -949,6 +959,10 @@ class LibraryWidget(QWidget):
 
     def select_path(self, path: str | Path) -> bool:
         target = Path(path).expanduser().resolve()
+        if self.search_edit.text():
+            signals_were_blocked = self.search_edit.blockSignals(True)
+            self.search_edit.clear()
+            self.search_edit.blockSignals(signals_were_blocked)
         self.refresh(True)
         for row, entry in enumerate(self._entries):
             if entry.sidecar_path.resolve() == target:

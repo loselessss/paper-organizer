@@ -141,6 +141,19 @@ def prepare_summary(
         ]
     finally:
         document.close()
+    if len(_clean_text("\n\n".join(chunks))) < MINIMUM_TEXT_CHARS:
+        try:
+            from paper_organizer.application.background_ocr import ocr_page_texts
+
+            recognized = ocr_page_texts(path, page_indexes=page_indexes)
+        except Exception as exc:
+            raise SummaryPreparationError(
+                f"내장 OCR 실행에 실패했습니다: {' '.join(str(exc).split())}"
+            ) from None
+        chunks = [
+            f"[PDF PAGE {index + 1}]\n{recognized[index]}"
+            for index in page_indexes
+        ]
     return _prepared_from_chunks(path, page_count, page_indexes, chunks, settings, selected_mode)
 
 
@@ -179,7 +192,7 @@ def _prepared_from_chunks(
     text = _clean_text("\n\n".join(chunks))
     if len(text) < MINIMUM_TEXT_CHARS:
         raise SummaryPreparationError(
-            "추출된 본문이 너무 적습니다. sPDF에서 OCR을 먼저 실행하세요."
+            "내장 OCR을 실행했지만 인식된 본문이 너무 적습니다."
         )
     max_chars = QUICK_MAX_CHARS if selected_mode is SummaryMode.QUICK else FULL_MAX_CHARS
     text, truncated = _truncate_text(text, max_chars)
@@ -221,7 +234,7 @@ def run_prepared_summary(
         SummaryRequest(
             document_text=prepared.document_text,
             cloud_consent=consent,
-            prompt_version="paper-summary-v2",
+            prompt_version="paper-summary-v3",
             allowed_categories=_allowed_categories(settings),
         )
     )

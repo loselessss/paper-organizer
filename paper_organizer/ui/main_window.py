@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QTabWidget,
 )
 
+from paper_organizer import __version__
 from paper_organizer.application.ai_settings import AiSettingsController
 from paper_organizer.application.background_analysis import BackgroundAnalysisService
 from paper_organizer.application.lifecycle import LifecycleSettingsController
@@ -56,7 +57,7 @@ class PaperOrganizerWindow(QMainWindow):
         self._force_quit = False
         self._tray_message_shown = False
         self._tray: QSystemTrayIcon | None = None
-        self.setWindowTitle("Paper Organizer")
+        self.setWindowTitle(f"Paper Organizer — v{__version__}")
         self.setWindowIcon(QIcon(str(app_icon_path())))
         self.resize(1280, 760)
 

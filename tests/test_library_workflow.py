@@ -89,6 +89,26 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(controller.scan().items, ())
             self.assertEqual(controller.analysis_queue(), [])
 
+    def test_review_article_byline_is_not_treated_as_authorless(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            pages = academic_pages()
+            pages[0] = (
+                "A Comprehensive Review of Cell Analysis\n"
+                "A. Researcher and B. Scientist\n"
+                "Review Article\nAbstract\n"
+                + "This review synthesizes reliable methods for cell analysis. " * 14
+            )
+            write_pdf(input_dir / "review.pdf", pages)
+
+            result = self._scan_twice(controller)
+
+            self.assertEqual(
+                result.items[0].metadata.authors,
+                ["A. Researcher", "B. Scientist"],
+            )
+
     def test_multiple_watch_folders_are_scanned_and_duplicate_bytes_are_seen_once(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
