@@ -10,12 +10,14 @@ from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QInputDialog,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -33,6 +35,7 @@ from paper_organizer.application.library_workflow import (
     LibraryWorkflowController,
     ReviewItem,
     ReviewScan,
+    TrashEntry,
 )
 from paper_organizer.application.analysis_queue import AnalysisQueueItem
 from paper_organizer.application.background_analysis import (
@@ -40,6 +43,129 @@ from paper_organizer.application.background_analysis import (
     BackgroundAnalysisService,
 )
 from paper_organizer.integrations.spdf_bridge import open_pdf
+
+
+_DETECTION_LABELS = {
+    "academic_likely": "학술 논문",
+    "patent_likely": "특허",
+    "needs_ocr": "OCR 필요",
+    "needs_review": "검토 필요",
+}
+
+_DUPLICATE_KIND_LABELS = {
+    "exact_file": "동일 파일",
+    "same_work": "같은 문헌",
+    "possible_related": "중복 후보",
+    "different": "다른 문헌",
+}
+
+
+def _trash_judgment(entry: TrashEntry) -> str:
+    if entry.detection_status:
+        return _DETECTION_LABELS.get(
+            entry.detection_status, entry.detection_status
+        )
+    if entry.kind == "unorganized_duplicate":
+        return "중복 파일"
+    if entry.kind == "discarded_new_pdf":
+        return "제외됨"
+    return "기록 없음"
+
+
+def _trash_duplicate(entry: TrashEntry) -> str:
+    title = entry.duplicate_title
+    has_duplicate_path = str(entry.duplicate_of) not in {"", "."}
+    if not title and has_duplicate_path:
+        title = entry.duplicate_of.stem
+    if not title:
+        return "없음"
+    kind = _DUPLICATE_KIND_LABELS.get(entry.duplicate_kind, entry.duplicate_kind)
+    details = [title]
+    if kind:
+        details.append(kind)
+    if entry.duplicate_score is not None:
+        details.append(f"{entry.duplicate_score:.2f}")
+    return " · ".join(details)
+
+
+class TrashRestoreDialog(QDialog):
+    """Show recoverable excluded PDFs in a spacious, multi-select table."""
+
+    def __init__(self, entries: list[TrashEntry], parent=None) -> None:
+        super().__init__(parent)
+        self._entries = entries
+        self.setWindowTitle("제외 파일 복원")
+        self.setMinimumSize(900, 460)
+        self.resize(1080, 560)
+
+        layout = QVBoxLayout(self)
+        description = QLabel(
+            "복원할 파일을 선택하세요. Ctrl 또는 Shift를 누르면 여러 파일을 "
+            "한 번에 선택할 수 있습니다."
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self.table = QTableWidget(len(entries), 4)
+        self.table.setHorizontalHeaderLabels(
+            ["파일", "판정", "중복", "추정 제목"]
+        )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+
+        for row, entry in enumerate(entries):
+            values = [
+                entry.original_path.name,
+                _trash_judgment(entry),
+                _trash_duplicate(entry),
+                entry.estimated_title or entry.original_path.stem,
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                if column == 0:
+                    cell.setToolTip(str(entry.original_path))
+                elif column == 1 and entry.detection_reason:
+                    cell.setToolTip(entry.detection_reason)
+                elif column == 2 and str(entry.duplicate_of) not in {"", "."}:
+                    cell.setToolTip(str(entry.duplicate_of))
+                self.table.setItem(row, column, cell)
+        if entries:
+            self.table.selectRow(0)
+        self.table.itemSelectionChanged.connect(self._update_restore_button)
+        self.table.cellDoubleClicked.connect(
+            lambda _row, _column: self._accept_selection()
+        )
+        layout.addWidget(self.table, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        self.restore_button = buttons.button(QDialogButtonBox.Ok)
+        self.restore_button.setText("선택 파일 복원")
+        buttons.button(QDialogButtonBox.Cancel).setText("취소")
+        buttons.accepted.connect(self._accept_selection)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._update_restore_button()
+
+    def selected_entries(self) -> list[TrashEntry]:
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        return [self._entries[row] for row in rows]
+
+    def _update_restore_button(self) -> None:
+        self.restore_button.setEnabled(bool(self.selected_entries()))
+
+    def _accept_selection(self) -> None:
+        if self.selected_entries():
+            self.accept()
 
 
 class _ScanWorker(QThread):
@@ -305,15 +431,9 @@ class CollectionReviewWidget(QWidget):
             duplicate_text = "없음"
             if duplicate:
                 duplicate_text = f"{duplicate.match.kind.value} ({duplicate.match.score:.2f})"
-            detection_labels = {
-                "academic_likely": "학술 논문",
-                "patent_likely": "특허",
-                "needs_ocr": "OCR 필요",
-                "needs_review": "검토 필요",
-            }
             values = [
                 item.path.name,
-                detection_labels.get(item.detection_status, item.detection_status),
+                _DETECTION_LABELS.get(item.detection_status, item.detection_status),
                 duplicate_text,
                 item.metadata.title,
             ]
@@ -431,19 +551,34 @@ class CollectionReviewWidget(QWidget):
         if not entries:
             QMessageBox.information(self, "제외 목록", "복원할 제외 파일이 없습니다.")
             return
-        labels = [f"{entry.operation_id} · {entry.original_path.name}" for entry in entries]
-        selected, accepted = QInputDialog.getItem(
-            self, "제외 파일 복원", "복원할 작업", labels, 0, False
-        )
-        if not accepted:
+        dialog = TrashRestoreDialog(entries, self)
+        if dialog.exec_() != QDialog.Accepted:
             return
-        entry = entries[labels.index(selected)]
-        try:
-            restored = self._controller.restore_trash(entry)
-        except Exception as exc:
-            QMessageBox.warning(self, "복원 실패", str(exc))
+        selected = dialog.selected_entries()
+        restored: list[Path] = []
+        failures: list[str] = []
+        for entry in selected:
+            try:
+                restored.append(self._controller.restore_trash(entry))
+            except Exception as exc:
+                failures.append(f"{entry.original_path.name}: {exc}")
+        if failures:
+            QMessageBox.warning(
+                self,
+                "일부 복원 실패",
+                f"{len(restored)}개 복원, {len(failures)}개 실패\n\n"
+                + "\n".join(failures),
+            )
+        elif len(restored) == 1:
+            QMessageBox.information(
+                self, "복원 완료", f"복원 위치: {restored[0]}"
+            )
+        else:
+            QMessageBox.information(
+                self, "복원 완료", f"선택한 파일 {len(restored)}개를 복원했습니다."
+            )
+        if not restored:
             return
-        QMessageBox.information(self, "복원 완료", f"복원 위치: {restored}")
         self.queue_changed.emit()
         self.scan_now(True)
 

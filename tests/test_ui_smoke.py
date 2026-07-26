@@ -42,7 +42,7 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
-        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtWidgets import QAction, QMessageBox
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -168,11 +168,74 @@ class UiSmokeTests(unittest.TestCase):
                 window.collection_widget.trash_button.text(),
                 "제외 목록으로 보내기",
             )
+            self.assertIn(
+                "업데이트 확인...",
+                {action.text() for action in window.findChildren(QAction)},
+            )
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             model_dialog.close()
             dialog.close()
             window.close()
+
+    def test_excluded_file_restore_dialog_uses_wide_multi_select_table(self):
+        from PyQt5.QtCore import QItemSelectionModel
+
+        from paper_organizer.application.library_workflow import TrashEntry
+        from paper_organizer.ui.library_workflow_widget import TrashRestoreDialog
+
+        entries = [
+            TrashEntry(
+                operation_id="one",
+                manifest_path=Path("C:/trash/one/manifest.json"),
+                original_path=Path("C:/papers/paper-one.pdf"),
+                trashed_path=Path("C:/trash/one/paper-one.pdf"),
+                duplicate_of=Path("C:/library/published.paperpack"),
+                kind="unorganized_duplicate",
+                detection_status="academic_likely",
+                detection_reason="학술 문서 특징을 찾았습니다.",
+                estimated_title="An Estimated Paper Title",
+                duplicate_title="Published Paper",
+                duplicate_kind="same_work",
+                duplicate_score=0.97,
+            ),
+            TrashEntry(
+                operation_id="two",
+                manifest_path=Path("C:/trash/two/manifest.json"),
+                original_path=Path("C:/papers/patent-two.pdf"),
+                trashed_path=Path("C:/trash/two/patent-two.pdf"),
+                duplicate_of=Path(),
+                kind="discarded_new_pdf",
+                detection_status="patent_likely",
+                estimated_title="A Patent Title",
+            ),
+        ]
+        dialog = TrashRestoreDialog(entries)
+        self.assertGreaterEqual(dialog.minimumWidth(), 900)
+        self.assertEqual(dialog.table.columnCount(), 4)
+        self.assertEqual(
+            [
+                dialog.table.horizontalHeaderItem(column).text()
+                for column in range(4)
+            ],
+            ["파일", "판정", "중복", "추정 제목"],
+        )
+        self.assertEqual(dialog.table.item(0, 1).text(), "학술 논문")
+        self.assertEqual(
+            dialog.table.item(0, 2).text(),
+            "Published Paper · 같은 문헌 · 0.97",
+        )
+        self.assertEqual(dialog.table.item(1, 1).text(), "특허")
+        self.assertEqual(dialog.table.item(1, 2).text(), "없음")
+        dialog.table.selectionModel().select(
+            dialog.table.model().index(1, 0),
+            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+        )
+        self.assertEqual(
+            [entry.operation_id for entry in dialog.selected_entries()],
+            ["one", "two"],
+        )
+        dialog.close()
 
     def test_analysis_queue_sorting_keeps_selection_mapping(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt

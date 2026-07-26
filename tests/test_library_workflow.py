@@ -402,12 +402,20 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertTrue(operation.trashed_path.exists())
             manifest = json.loads(operation.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["kind"], "unorganized_duplicate")
+            self.assertEqual(manifest["detection_status"], "academic_likely")
+            self.assertEqual(manifest["estimated_title"], "ResearchGate")
+            self.assertEqual(manifest["duplicate_title"], "Published Paper")
+            self.assertEqual(manifest["duplicate_kind"], "same_work")
             self.assertIsNone(manifest["restored_at"])
             self.assertEqual(len(controller.analysis_queue()), 1)
             self.assertEqual(
                 controller.analysis_queue()[0].title, "Published Paper"
             )
-            restored = controller.restore_trash(controller.list_trash()[0])
+            trash_entry = controller.list_trash()[0]
+            self.assertEqual(trash_entry.detection_status, "academic_likely")
+            self.assertEqual(trash_entry.estimated_title, "ResearchGate")
+            self.assertEqual(trash_entry.duplicate_title, "Published Paper")
+            restored = controller.restore_trash(trash_entry)
             self.assertTrue(restored.is_file())
             self.assertEqual(controller.list_trash(), [])
             self.assertEqual(len(controller.analysis_queue()), 2)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+import sys
+from pathlib import Path
+
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QAction,
@@ -24,6 +27,10 @@ from paper_organizer.application.background_analysis import BackgroundAnalysisSe
 from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import ImmediateSummaryController
+from paper_organizer.application.update_service import (
+    AvailableUpdate,
+    GitHubUpdateService,
+)
 
 from .ai_settings_dialog import AiSettingsDialog
 from .immediate_summary_widget import ImmediateSummaryDialog
@@ -38,6 +45,7 @@ from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
 from .folder_settings_dialog import FolderSettingsDialog
 from .startup_splash import app_icon_path
+from .update_dialog import UpdateCheckWorker, UpdateDialog
 
 
 class PaperOrganizerWindow(QMainWindow):
@@ -57,6 +65,10 @@ class PaperOrganizerWindow(QMainWindow):
         self._force_quit = False
         self._tray_message_shown = False
         self._tray: QSystemTrayIcon | None = None
+        self._update_service = GitHubUpdateService(__version__)
+        self._update_worker: UpdateCheckWorker | None = None
+        self._available_update: AvailableUpdate | None = None
+        self._pending_installer: Path | None = None
         self.setWindowTitle(f"Paper Organizer — v{__version__}")
         self.setWindowIcon(QIcon(str(app_icon_path())))
         self.resize(1280, 760)
@@ -140,6 +152,8 @@ class PaperOrganizerWindow(QMainWindow):
             self.queue_widget.analysis_progress.connect(self._analysis_progress_changed)
             self.queue_widget.refresh()
         self.statusBar().showMessage("다운로드 폴더의 새 논문을 검색할 준비가 되었습니다.")
+        if getattr(sys, "frozen", False):
+            QTimer.singleShot(5000, lambda: self.check_for_updates(False))
 
     def _analysis_progress_changed(self, message: str, busy: bool) -> None:
         self._analysis_status_label.setText(message)
@@ -203,6 +217,10 @@ class PaperOrganizerWindow(QMainWindow):
 
     def _create_help_menu(self) -> None:
         menu = self.menuBar().addMenu("도움말")
+        update_action = QAction("업데이트 확인...", self)
+        update_action.triggered.connect(lambda: self.check_for_updates(True))
+        menu.addAction(update_action)
+        menu.addSeparator()
         about_action = QAction("Paper Organizer 정보", self)
         about_action.triggered.connect(self._show_about)
         menu.addAction(about_action)
@@ -376,6 +394,114 @@ class PaperOrganizerWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        if self._available_update is not None:
+            QTimer.singleShot(0, self._show_available_update)
+
+    def check_for_updates(self, manual: bool = True) -> None:
+        if self._pending_installer is not None and self._pending_installer.is_file():
+            self._prompt_install_when_idle()
+            return
+        if self._update_worker is not None and self._update_worker.isRunning():
+            if manual:
+                self.statusBar().showMessage("업데이트를 확인하고 있습니다…", 4000)
+            return
+        if manual:
+            self.statusBar().showMessage("GitHub에서 최신 버전을 확인하는 중입니다…")
+        worker = UpdateCheckWorker(self._update_service, self)
+        worker.completed.connect(
+            lambda update: self._update_check_completed(update, manual)
+        )
+        worker.failed.connect(
+            lambda message: self._update_check_failed(message, manual)
+        )
+        worker.finished.connect(self._update_check_finished)
+        self._update_worker = worker
+        worker.start()
+
+    def _update_check_completed(
+        self, update: AvailableUpdate | None, manual: bool
+    ) -> None:
+        if update is None:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "업데이트 확인",
+                    f"현재 v{__version__}이 최신 버전입니다.",
+                )
+            return
+        self._available_update = update
+        message = f"Paper Organizer {update.version} 업데이트가 있습니다."
+        self.statusBar().showMessage(message, 10000)
+        if self.isVisible() or manual:
+            self._show_available_update()
+        elif self._tray is not None and self._tray.isVisible():
+            self._tray.showMessage(
+                "Paper Organizer 업데이트",
+                message + " 앱을 열어 설치할 수 있습니다.",
+                QSystemTrayIcon.Information,
+                8000,
+            )
+
+    def _update_check_failed(self, message: str, manual: bool) -> None:
+        if manual:
+            QMessageBox.warning(self, "업데이트 확인 실패", message)
+
+    def _update_check_finished(self) -> None:
+        worker = self._update_worker
+        self._update_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _show_available_update(self) -> None:
+        update = self._available_update
+        if update is None:
+            return
+        self._available_update = None
+        dialog = UpdateDialog(self._update_service, update, self)
+        dialog.install_requested.connect(self._update_downloaded)
+        dialog.exec_()
+
+    def _update_downloaded(self, path: Path) -> None:
+        self._pending_installer = path
+        self._prompt_install_when_idle()
+
+    def _prompt_install_when_idle(self) -> None:
+        path = self._pending_installer
+        if path is None or not path.is_file():
+            self._pending_installer = None
+            return
+        busy = bool(
+            (self.collection_widget and self.collection_widget.is_busy())
+            or (self.queue_widget and self.queue_widget.is_analysis_busy())
+        )
+        if busy:
+            self.statusBar().showMessage(
+                "업데이트 준비 완료 · 현재 작업이 끝나면 설치 여부를 다시 묻습니다."
+            )
+            QTimer.singleShot(5000, self._prompt_install_when_idle)
+            return
+        if QMessageBox.question(
+            self,
+            "업데이트 설치",
+            "업데이트 설치파일 준비가 끝났습니다.\n"
+            "Paper Organizer를 종료하고 설치를 시작할까요?",
+        ) != QMessageBox.Yes:
+            self.statusBar().showMessage(
+                "업데이트가 준비되어 있습니다. 도움말 → 업데이트 확인에서 설치할 수 있습니다."
+            )
+            return
+        try:
+            self._update_service.launch_installer(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "업데이트 실행 실패", str(exc))
+            return
+        self._pending_installer = None
+        self._force_quit = True
+        if self.queue_widget is not None:
+            self.queue_widget.shutdown_background_analysis()
+        if self._tray is not None:
+            self._tray.hide()
+        QApplication.instance().quit()
 
     def _quit_from_tray(self) -> None:
         self._force_quit = True
@@ -463,6 +589,9 @@ class PaperOrganizerWindow(QMainWindow):
             return
         if self.queue_widget is not None:
             self.queue_widget.shutdown_background_analysis()
+        if self._update_worker is not None and self._update_worker.isRunning():
+            self._update_worker.requestInterruption()
+            self._update_worker.wait(1000)
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)

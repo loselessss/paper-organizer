@@ -178,6 +178,13 @@ class TrashEntry:
     original_path: Path
     trashed_path: Path
     duplicate_of: Path
+    kind: str = ""
+    detection_status: str = ""
+    detection_reason: str = ""
+    estimated_title: str = ""
+    duplicate_title: str = ""
+    duplicate_kind: str = ""
+    duplicate_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1206,6 +1213,22 @@ class LibraryWorkflowController:
                     "duplicate_of": (
                         str(item.duplicate.pdf_path) if item.duplicate is not None else ""
                     ),
+                    "detection_status": item.detection_status,
+                    "detection_reason": item.detection_reason,
+                    "estimated_title": item.metadata.title,
+                    "duplicate_title": (
+                        item.duplicate.title if item.duplicate is not None else ""
+                    ),
+                    "duplicate_kind": (
+                        item.duplicate.match.kind.value
+                        if item.duplicate is not None
+                        else ""
+                    ),
+                    "duplicate_score": (
+                        item.duplicate.match.score
+                        if item.duplicate is not None
+                        else None
+                    ),
                     "restored_at": None,
                 },
             )
@@ -1244,9 +1267,20 @@ class LibraryWorkflowController:
                         original_path=Path(str(data["original_path"])),
                         trashed_path=trashed,
                         duplicate_of=Path(str(data.get("duplicate_of", ""))),
+                        kind=str(data.get("kind", "")),
+                        detection_status=str(data.get("detection_status", "")),
+                        detection_reason=str(data.get("detection_reason", "")),
+                        estimated_title=str(data.get("estimated_title", "")),
+                        duplicate_title=str(data.get("duplicate_title", "")),
+                        duplicate_kind=str(data.get("duplicate_kind", "")),
+                        duplicate_score=(
+                            float(data["duplicate_score"])
+                            if data.get("duplicate_score") is not None
+                            else None
+                        ),
                     )
                 )
-            except (OSError, KeyError, TypeError, json.JSONDecodeError):
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
         return sorted(entries, key=lambda entry: entry.operation_id, reverse=True)
 

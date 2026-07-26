@@ -7,6 +7,13 @@ Windows에서 다운로드한 학술 PDF를 로컬에서 판별·정리하고 `.
 개발을 이어받는다면 [docs/HANDOFF.md](docs/HANDOFF.md)부터 읽으세요. 환경 준비와
 코드 지도, 지켜야 할 원칙, 다음 할 일이 한곳에 있습니다.
 
+## 설치
+
+[GitHub 최신 릴리스](https://github.com/loselessss/paper-organizer/releases/latest)에서
+`PaperOrganizer_Setup_<버전>.exe`를 받아 실행하세요. 설치된 앱은 시작할 때
+백그라운드에서 새 릴리스를 확인하고, 사용자가 승인하면 설치파일을 내려받아
+GitHub가 제공한 SHA-256과 대조한 뒤 설치를 시작합니다.
+
 현재 구현된 첫 번째 코어:
 
 - 원자적으로 저장되는 애플리케이션 설정
@@ -22,6 +29,7 @@ Windows에서 다운로드한 학술 PDF를 로컬에서 판별·정리하고 `.
 - 재시작 가능한 분석 큐와 동시성 1의 백그라운드 AI 분석 실행기
 - 페이지 단위 본문 저장과 SQLite FTS5 전문 검색
 - PyInstaller 실행본과 한국어 Inno Setup 설치 프로그램
+- GitHub Releases 기반 앱 내 업데이트와 태그 기반 자동 Windows 릴리스
 
 ## 자동 처리 흐름
 
