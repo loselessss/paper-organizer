@@ -149,13 +149,6 @@ class GitHubUpdateService:
             and str(item.get("name", "")).casefold() == expected_name
         ]
         if not candidates:
-            candidates = [
-                item
-                for item in raw_assets
-                if isinstance(item, dict)
-                and _INSTALLER_RE.fullmatch(str(item.get("name", "")))
-            ]
-        if not candidates:
             return None
         item = candidates[0]
         name = str(item.get("name", ""))

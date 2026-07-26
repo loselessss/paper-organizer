@@ -241,6 +241,46 @@ class UiSmokeTests(unittest.TestCase):
         dialog.reject()
         self.assertEqual(controller.stop_calls, 1)
 
+    def test_update_dialog_shows_the_versioned_installer_name(self):
+        from PyQt5.QtWidgets import QLabel
+
+        from paper_organizer.application.update_service import (
+            AvailableUpdate,
+            GitHubUpdateService,
+            ReleaseAsset,
+        )
+        from paper_organizer.ui.update_dialog import UpdateDialog
+
+        asset = ReleaseAsset(
+            name="PaperOrganizer_Setup_1.3.1.exe",
+            download_url=(
+                "https://github.com/loselessss/paper-organizer/releases/"
+                "download/v1.3.1/PaperOrganizer_Setup_1.3.1.exe"
+            ),
+            size=128 * 1024 * 1024,
+            sha256="0" * 64,
+        )
+        update = AvailableUpdate(
+            version="1.3.1",
+            tag_name="v1.3.1",
+            release_name="Paper Organizer 1.3.1",
+            release_notes="Update notes",
+            release_url=(
+                "https://github.com/loselessss/paper-organizer/releases/"
+                "tag/v1.3.1"
+            ),
+            published_at="2026-07-26T00:00:00Z",
+            asset=asset,
+        )
+        dialog = UpdateDialog(GitHubUpdateService("1.3.0"), update)
+
+        labels = {label.text() for label in dialog.findChildren(QLabel)}
+        self.assertIn(
+            "PaperOrganizer_Setup_1.3.1.exe (128.0 MB)",
+            labels,
+        )
+        dialog.close()
+
     def test_excluded_file_restore_dialog_uses_wide_multi_select_table(self):
         from PyQt5.QtCore import QItemSelectionModel
 

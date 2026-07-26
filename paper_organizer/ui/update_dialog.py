@@ -108,7 +108,13 @@ class UpdateDialog(QDialog):
         form.addRow("새 버전", QLabel(update.version))
         form.addRow(
             "설치파일",
-            QLabel(_size_text(update.asset.size) if update.asset else "등록 대기 중"),
+            QLabel(
+                (
+                    f"{update.asset.name} ({_size_text(update.asset.size)})"
+                    if update.asset
+                    else "등록 대기 중"
+                )
+            ),
         )
         layout.addLayout(form)
 

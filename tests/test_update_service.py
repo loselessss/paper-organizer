@@ -73,6 +73,42 @@ class UpdateServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(update.asset.sha256), 64)
 
+    def test_versioned_installer_wins_over_latest_alias(self):
+        data = json.loads(release_payload())
+        data["assets"].insert(
+            0,
+            {
+                "name": "PaperOrganizer_Setup_latest.exe",
+                "browser_download_url": (
+                    "https://github.com/loselessss/paper-organizer/releases/"
+                    "download/v1.2.0/PaperOrganizer_Setup_latest.exe"
+                ),
+                "size": 10,
+                "digest": f"sha256:{'0' * 64}",
+            },
+        )
+        service = GitHubUpdateService(
+            "1.1.0",
+            opener=lambda _request, timeout: FakeResponse(
+                json.dumps(data).encode("utf-8")
+            ),
+        )
+
+        update = service.check()
+
+        self.assertEqual(update.asset.name, "PaperOrganizer_Setup_1.2.0.exe")
+
+    def test_mismatched_numbered_installer_is_not_used(self):
+        payload = release_payload(tag="v1.3.0")
+        service = GitHubUpdateService(
+            "1.2.0", opener=lambda _request, timeout: FakeResponse(payload)
+        )
+
+        update = service.check()
+
+        self.assertEqual(update.version, "1.3.0")
+        self.assertIsNone(update.asset)
+
     def test_same_or_older_release_does_not_offer_update(self):
         payload = release_payload(tag="v1.1.0")
         service = GitHubUpdateService(
