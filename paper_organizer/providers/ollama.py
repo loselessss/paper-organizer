@@ -36,6 +36,9 @@ class OllamaProvider:
 
     def summarize(self, request: SummaryRequest) -> SummaryResult:
         request.validate()
+        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        if request.context_window is not None:
+            options["num_ctx"] = request.context_window
         payload: dict[str, Any] = {
             "model": self.model,
             "stream": False,
@@ -45,7 +48,7 @@ class OllamaProvider:
                 {"role": "user", "content": request.document_text},
             ],
             "format": SUMMARY_SCHEMA,
-            "options": {"num_predict": request.max_output_tokens},
+            "options": options,
         }
         response = self._http.post_json(
             self._endpoint,

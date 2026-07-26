@@ -162,10 +162,15 @@ class ImmediateSummaryWidget(QWidget):
         preview = prepared.preview
         destination = "클라우드 전송" if preview.sends_to_cloud else "로컬 처리"
         truncated = " · 길이 제한으로 일부 생략" if preview.truncated else ""
+        context = (
+            f" · 컨텍스트 {preview.context_window:,}토큰"
+            if preview.context_window is not None
+            else ""
+        )
         self.preview_label.setText(
             f"{destination}: {preview.provider} / {preview.model}\n"
             f"PDF {len(preview.included_pdf_pages)}쪽, {preview.character_count:,}자, "
-            f"입력 약 {preview.estimated_input_tokens:,}토큰{truncated}\n"
+            f"입력 약 {preview.estimated_input_tokens:,}토큰{context}{truncated}\n"
             f"대상 페이지: {', '.join(map(str, preview.included_pdf_pages))}"
         )
         self.consent_check.setVisible(preview.sends_to_cloud)

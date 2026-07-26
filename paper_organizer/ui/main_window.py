@@ -117,6 +117,9 @@ class PaperOrganizerWindow(QMainWindow):
                 if self.library_widget is not None
                 else None
             )
+            self.library_widget.reanalysis_queued.connect(
+                self._library_reanalysis_queued
+            )
         self.setCentralWidget(self.tabs)
 
         settings_menu = self.menuBar().addMenu("설정")
@@ -176,6 +179,19 @@ class PaperOrganizerWindow(QMainWindow):
             self._tray.showMessage(
                 "Paper Organizer", message, QSystemTrayIcon.Information, 5000
             )
+
+    def _library_reanalysis_queued(self, count: int) -> None:
+        if self.queue_widget is None:
+            return
+        self.queue_widget.refresh()
+        if (
+            self._library_workflow is not None
+            and self._library_workflow.settings().background_analysis_enabled
+        ):
+            self.queue_widget.start_background_analysis()
+        self.statusBar().showMessage(
+            f"재요약 {count}건을 분석 대기열에 넣었습니다.", 8000
+        )
 
     def _create_ai_menu(self, settings_menu: QMenu) -> None:
         menu = settings_menu.addMenu("AI")

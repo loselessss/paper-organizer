@@ -21,6 +21,7 @@ from paper_organizer.providers.registry import build_provider
 QUICK_MAX_CHARS = 30_000
 FULL_MAX_CHARS = 120_000
 MINIMUM_TEXT_CHARS = 500
+CONTEXT_TOKEN_RESERVE = 3_000
 _REFERENCE_HEADING_RE = re.compile(
     r"(?im)^[ \t]*(?:(?:\d+(?:\.\d+)*)[.)]?[ \t]+)?"
     r"(?:references?(?:[ \t]+(?:and[ \t]+notes|and[ \t]+further[ \t]+reading|cited))?|bibliography|"
@@ -51,6 +52,7 @@ class SummaryPreview:
     truncated: bool
     sends_to_cloud: bool
     requires_cloud_consent: bool
+    context_window: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +75,7 @@ class SummaryExecution:
             "analysis_level": self.preview.mode.value,
             "input_tokens": self.result.input_tokens,
             "output_tokens": self.result.output_tokens,
+            "context_window": self.preview.context_window,
         }
 
 
@@ -208,7 +211,10 @@ def _prepared_from_chunks(
         raise SummaryPreparationError(
             "내장 OCR을 실행했지만 인식된 본문이 너무 적습니다."
         )
+    context_window = _adaptive_context_window(settings, model, len(text))
     max_chars = QUICK_MAX_CHARS if selected_mode is SummaryMode.QUICK else FULL_MAX_CHARS
+    if context_window is not None:
+        max_chars = min(max_chars, max(4_000, (context_window - CONTEXT_TOKEN_RESERVE) * 4))
     text, truncated = _truncate_text(text, max_chars)
     sends_to_cloud = provider in {"openai", "anthropic"}
     preview = SummaryPreview(
@@ -223,6 +229,7 @@ def _prepared_from_chunks(
         truncated=truncated,
         sends_to_cloud=sends_to_cloud,
         requires_cloud_consent=sends_to_cloud and not settings.cloud_processing_consent,
+        context_window=context_window,
     )
     return PreparedSummary(preview=preview, document_text=text)
 
@@ -248,8 +255,9 @@ def run_prepared_summary(
         SummaryRequest(
             document_text=prepared.document_text,
             cloud_consent=consent,
-            prompt_version="paper-summary-v5",
+            prompt_version="paper-summary-v6",
             allowed_categories=_allowed_categories(settings),
+            context_window=prepared.preview.context_window,
         )
     )
     return SummaryExecution(preview=prepared.preview, result=result)
@@ -284,6 +292,60 @@ def _selected_model(settings: AppSettings) -> str:
     if settings.summary_provider == "openai":
         return settings.openai_model.strip()
     return settings.anthropic_model.strip()
+
+
+def _adaptive_context_window(
+    settings: AppSettings, model: str, character_count: int
+) -> int | None:
+    """Choose a quiet local context that fits the model, PC and paper length."""
+
+    if settings.summary_provider != "ollama":
+        return None
+    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", model.casefold())
+    parameters = float(match.group(1)) if match else 0.0
+    hardware = settings.hardware_profile
+    try:
+        memory_gb = float(hardware.get("memory_total_gb") or 0)
+    except (TypeError, ValueError):
+        memory_gb = 0.0
+    gpu_vram = 0.0
+    gpus = hardware.get("gpus", [])
+    for gpu in gpus if isinstance(gpus, list) else []:
+        if not isinstance(gpu, dict):
+            continue
+        try:
+            gpu_vram = max(
+                gpu_vram,
+                float(
+                    gpu.get("dedicated_memory_gb")
+                    or gpu.get("vram_total_gb")
+                    or gpu.get("vram_gb")
+                    or gpu.get("memory_total_gb")
+                    or 0
+                ),
+            )
+        except (TypeError, ValueError):
+            continue
+
+    if 3.0 <= parameters < 6.0:
+        maximum = 24_576 if memory_gb >= 12 or gpu_vram >= 6 else 16_384
+    elif 6.0 <= parameters <= 10.0:
+        maximum = 16_384
+        if memory_gb >= 16 or gpu_vram >= 8:
+            maximum = 24_576
+        if (
+            settings.resource_profile == "performance"
+            and (memory_gb >= 24 or gpu_vram >= 12)
+        ):
+            maximum = 40_960
+    else:
+        return None
+
+    needed = math.ceil(character_count / 4) + CONTEXT_TOKEN_RESERVE
+    for bucket in (16_384, 24_576, 40_960):
+        if needed <= bucket:
+            return min(bucket, maximum)
+    return maximum
 
 
 def _clean_text(text: str) -> str:

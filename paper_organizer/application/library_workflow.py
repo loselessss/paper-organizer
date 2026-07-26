@@ -32,6 +32,7 @@ from paper_organizer.core.classifier import (
     TaxonomyError,
     classify_text,
     extract_venue,
+    taxonomy_category_names,
 )
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
 from paper_organizer.core.document_identity import (
@@ -236,6 +237,21 @@ def default_library_root() -> Path:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalized_ai_tags(values: Iterable[Any]) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        tag = " ".join(str(value).split()).strip(" ,;#")
+        key = tag.casefold()
+        if not tag or len(tag) > 80 or key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+        if len(tags) == 5:
+            break
+    return tags
 
 
 def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
@@ -1353,6 +1369,69 @@ class LibraryWorkflowController:
     def retry_queue_item(self, queue_id: str, *, high: bool = False) -> AnalysisQueueItem:
         return self._queue().retry(queue_id, high=high)
 
+    def queue_reanalysis(
+        self, entries: Iterable[LibraryEntry], *, high: bool = False
+    ) -> tuple[int, tuple[str, ...]]:
+        """Queue stored papers for a fresh AI result without deleting the old one."""
+
+        queue = self._queue()
+        queued = 0
+        problems: list[str] = []
+        current = {item.queue_id: item for item in queue.load()}
+        for entry in entries:
+            title = entry.metadata.title or entry.sidecar_path.stem
+            file_sha256 = str(entry.record.get("file", {}).get("sha256") or "").strip()
+            if not file_sha256 or not entry.sidecar_path.is_file():
+                problems.append(f"{title}: PaperPack 또는 파일 식별자가 없습니다.")
+                continue
+            queue_id = f"sha256:{file_sha256}"
+            existing = current.get(queue_id)
+            if existing is not None and existing.status == "analyzing":
+                problems.append(f"{title}: 현재 분석 중입니다.")
+                continue
+            try:
+                item = queue.relocate(
+                    file_sha256,
+                    entry.sidecar_path,
+                    status="organized_pending_analysis",
+                    title=title,
+                )
+                if high:
+                    item = queue.set_priority(item.queue_id, True)
+                current[item.queue_id] = item
+                queued += 1
+            except (OSError, AnalysisQueueError) as exc:
+                problems.append(f"{title}: {exc}")
+        return queued, tuple(problems)
+
+    def approve_category_suggestion(self, entry: LibraryEntry) -> str:
+        """Save an AI-proposed category only after explicit user approval."""
+
+        suggestion = str(
+            entry.record.get("analysis", {}).get("suggested_category") or ""
+        ).strip()
+        if not suggestion:
+            raise LibraryWorkflowError("승인할 추천 연구분야가 없습니다.")
+        if len(suggestion) > 80 or "," in suggestion:
+            raise LibraryWorkflowError("추천 연구분야 이름이 올바르지 않습니다.")
+        settings = self.settings()
+        categories = list(settings.research_categories)
+        if not categories:
+            try:
+                categories = list(taxonomy_category_names())
+            except TaxonomyError:
+                categories = []
+        existing = {name.casefold() for name in categories}
+        if suggestion.casefold() not in existing:
+            categories.append(suggestion)
+        settings.research_categories = categories
+        if settings.focus_categories and suggestion.casefold() not in {
+            name.casefold() for name in settings.focus_categories
+        }:
+            settings.focus_categories.append(suggestion)
+        save_settings(settings, self._settings_path)
+        return suggestion
+
     def set_background_analysis_enabled(self, enabled: bool) -> AppSettings:
         settings = self.settings()
         settings.background_analysis_enabled = bool(enabled)
@@ -1384,6 +1463,10 @@ class LibraryWorkflowController:
         now = _now_iso()
         result = execution.result
         data = result.data
+        ai_tags = _normalized_ai_tags(data.meta_tags)
+        suggested_category = (
+            data.suggested_category.strip() if not data.category.strip() else ""
+        )
         record["analysis"] = {
             "status": "completed",
             "analysis_level": execution.preview.mode.value,
@@ -1393,10 +1476,14 @@ class LibraryWorkflowController:
             "contributions": list(data.contributions),
             "limitations": list(data.limitations),
             "keywords": list(data.keywords),
+            "meta_tags": ai_tags,
+            "suggested_category": suggested_category,
             "completed_at": now,
             "provenance": execution.provenance,
         }
         description = record.setdefault("description", {})
+        classification = record.setdefault("classification", {})
+        classification["ai_tags"] = ai_tags
         curation = record.setdefault("curation", {})
         locked = set(curation.get("locked_fields", []))
         sources = curation.setdefault("field_sources", {})
@@ -1410,10 +1497,15 @@ class LibraryWorkflowController:
         }
         for name, value in values.items():
             field = f"description.{name}"
-            if field in locked or description.get(name):
+            current_source = str(sources.get(field) or "")
+            current = description.get(name)
+            if field in locked or current_source == "user":
+                continue
+            if current and not current_source.startswith("ai:"):
                 continue
             description[name] = value
             sources[field] = f"ai:{result.provider}"
+        sources["classification.ai_tags"] = f"ai:{result.provider}"
         self._apply_ai_bibliography(record, data, f"ai:{result.provider}")
         curation["revision"] = int(curation.get("revision", 0)) + 1
         curation["last_edited_at"] = now
@@ -1462,7 +1554,12 @@ class LibraryWorkflowController:
         def replaceable(field: str, current: Any) -> bool:
             if field in locked or sources.get(field) == "user":
                 return False
-            return not current or sources.get(field) in {"auto:regex", source_label}
+            current_source = str(sources.get(field) or "")
+            return (
+                not current
+                or current_source == "auto:regex"
+                or current_source.startswith("ai:")
+            )
 
         year: int | None = None
         if data.year.strip().isdigit() and len(data.year.strip()) == 4:
@@ -1497,8 +1594,6 @@ class LibraryWorkflowController:
         ]
         for target, field, key, value in candidates:
             if not value:
-                continue
-            if key in {"authors", "venue"} and target.get(key):
                 continue
             if not replaceable(field, target.get(key)):
                 continue
@@ -1991,6 +2086,12 @@ class LibraryWorkflowController:
                     metadata.category,
                     metadata.subcategory,
                     *metadata.tags,
+                    *[
+                        str(value)
+                        for value in entry.record.get("classification", {}).get(
+                            "ai_tags", []
+                        )
+                    ],
                     metadata.summary_ko,
                     json.dumps(
                         entry.record.get("experimental_details", {}),

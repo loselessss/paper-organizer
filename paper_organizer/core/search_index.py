@@ -137,7 +137,14 @@ def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tu
         str(bibliography.get("venue") or ""),
         str(classification.get("category") or ""),
         str(classification.get("subcategory") or ""),
-        _text_list(classification.get("tags")),
+        ", ".join(
+            value
+            for value in (
+                _text_list(classification.get("tags")),
+                _text_list(classification.get("ai_tags")),
+            )
+            if value
+        ),
         str(description.get("summary_ko") or ""),
         indexed_at,
     )

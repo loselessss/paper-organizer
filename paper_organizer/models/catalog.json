@@ -39,7 +39,7 @@
       "tier": "light",
       "quality": 3,
       "license": "Apache-2.0",
-      "recommended_context": 8192
+      "recommended_context": 24576
     },
     {
       "id": "gemma3:4b",
@@ -65,7 +65,7 @@
       "tier": "balanced",
       "quality": 4,
       "license": "Apache-2.0",
-      "recommended_context": 16384
+      "recommended_context": 40960
     },
     {
       "id": "gemma3:12b",

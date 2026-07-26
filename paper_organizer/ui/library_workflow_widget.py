@@ -1202,6 +1202,7 @@ class AnalysisQueueWidget(QWidget):
 
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
+    reanalysis_queued = pyqtSignal(int)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -1260,20 +1261,35 @@ class LibraryWidget(QWidget):
         self.open_button = QPushButton("sPDF로 열기")
         self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
         self.discard_pdf_button = QPushButton("편집본 폐기")
+        self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
+        self.reanalyze_all_button = QPushButton("전체 논문 재요약")
+        self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
         self.save_button.clicked.connect(self._save_selected)
         self.open_button.clicked.connect(self._open_selected)
         self.apply_pdf_button.clicked.connect(self._apply_pdf_edit)
         self.discard_pdf_button.clicked.connect(self._discard_pdf_edit)
+        self.reanalyze_selected_button.clicked.connect(self._reanalyze_selected)
+        self.reanalyze_all_button.clicked.connect(self._reanalyze_all)
+        self.approve_category_button.clicked.connect(self._approve_category)
         self.save_button.setEnabled(False)
         self.open_button.setEnabled(False)
         self.apply_pdf_button.setEnabled(False)
         self.discard_pdf_button.setEnabled(False)
+        self.reanalyze_selected_button.setEnabled(False)
+        self.reanalyze_all_button.setEnabled(False)
+        self.approve_category_button.setEnabled(False)
         actions.addWidget(self.save_button)
         actions.addWidget(self.open_button)
         actions.addWidget(self.apply_pdf_button)
         actions.addWidget(self.discard_pdf_button)
         actions.addStretch(1)
         root.addLayout(actions)
+        analysis_actions = QHBoxLayout()
+        analysis_actions.addWidget(self.reanalyze_selected_button)
+        analysis_actions.addWidget(self.reanalyze_all_button)
+        analysis_actions.addWidget(self.approve_category_button)
+        analysis_actions.addStretch(1)
+        root.addLayout(analysis_actions)
         self.status_label = QLabel()
         root.addWidget(self.status_label)
         self.refresh()
@@ -1321,17 +1337,28 @@ class LibraryWidget(QWidget):
                     )
                     if value
                 )
+            stored_status = str(
+                entry.record.get("analysis", {}).get("status")
+                or entry.record.get("workflow", {}).get("analysis_status")
+                or ""
+            )
+            analysis_status = (
+                status_labels.get(queue_item.status, "미등록")
+                if queue_item
+                else status_labels.get(stored_status, "미등록")
+            )
             values = [
                 metadata.title,
                 source_text,
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",
-                status_labels.get(queue_item.status, "미등록") if queue_item else "미등록",
+                analysis_status,
             ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.status_label.setText(f"라이브러리 문서 {len(self._entries)}개")
+        self.reanalyze_all_button.setEnabled(bool(self._entries))
         if self._entries:
             self.table.selectRow(0)
             self._selection_changed()
@@ -1342,6 +1369,8 @@ class LibraryWidget(QWidget):
             self.open_button.setEnabled(False)
             self.apply_pdf_button.setEnabled(False)
             self.discard_pdf_button.setEnabled(False)
+            self.reanalyze_selected_button.setEnabled(False)
+            self.approve_category_button.setEnabled(False)
 
     def _selected(self) -> LibraryEntry | None:
         row = self.table.currentRow()
@@ -1376,6 +1405,15 @@ class LibraryWidget(QWidget):
         self.save_button.setEnabled(entry is not None)
         self.open_button.setEnabled(
             any(value.pdf_path.is_file() for value in entries)
+        )
+        self.reanalyze_selected_button.setEnabled(bool(entries))
+        self.approve_category_button.setEnabled(
+            bool(
+                entry
+                and str(
+                    entry.record.get("analysis", {}).get("suggested_category") or ""
+                ).strip()
+            )
         )
         self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entries)
@@ -1418,6 +1456,18 @@ class LibraryWidget(QWidget):
             values = [str(item) for item in description.get(key) or []]
             if values:
                 sections.append(f"<h3>{label}</h3>{bullets(values)}")
+        classification = entry.record.get("classification", {})
+        ai_tags = [str(value) for value in classification.get("ai_tags") or []]
+        if ai_tags:
+            sections.append(
+                f"<h3>AI 메타태그</h3><p>{esc(' · '.join(ai_tags))}</p>"
+            )
+        suggestion = str(analysis.get("suggested_category") or "").strip()
+        if suggestion:
+            sections.append(
+                "<h3>추천 연구분야</h3>"
+                f"<p><b>{esc(suggestion)}</b> — 승인 전에는 설정에 추가되지 않습니다.</p>"
+            )
         provenance = analysis.get("provenance") or entry.record.get(
             "provenance", {}
         ).get("summary")
@@ -1428,6 +1478,76 @@ class LibraryWidget(QWidget):
                 f" · {esc(analysis.get('completed_at', ''))}</p>"
             )
         self.analysis_view.setHtml("".join(sections))
+
+    def _reanalyze_selected(self) -> None:
+        entries = self._selected_entries()
+        if not entries:
+            return
+        if QMessageBox.question(
+            self,
+            "선택 논문 재요약",
+            f"선택한 논문 {len(entries)}건을 재요약 대기열에 넣을까요? "
+            "현재 분석 결과는 새 분석이 성공할 때까지 유지됩니다.",
+        ) != QMessageBox.Yes:
+            return
+        self._queue_reanalysis(entries)
+
+    def _reanalyze_all(self) -> None:
+        entries = self._controller.list_library()
+        if not entries:
+            return
+        if QMessageBox.question(
+            self,
+            "전체 논문 재요약",
+            f"라이브러리 전체 {len(entries)}건을 재요약 대기열에 넣을까요? "
+            "백그라운드에서 한 건씩 조용히 처리합니다.",
+        ) != QMessageBox.Yes:
+            return
+        self._queue_reanalysis(entries)
+
+    def _queue_reanalysis(
+        self, entries: list[LibraryEntry], *, high: bool = False
+    ) -> None:
+        try:
+            queued, problems = self._controller.queue_reanalysis(entries, high=high)
+        except Exception as exc:
+            QMessageBox.warning(self, "재요약 요청 실패", str(exc))
+            return
+        self.status_label.setText(
+            f"재요약 {queued}건을 분석 대기열에 넣었습니다."
+            + (f" · 제외 {len(problems)}건" if problems else "")
+        )
+        if problems:
+            QMessageBox.warning(
+                self, "일부 재요약 요청 실패", "\n".join(problems[:10])
+            )
+        if queued:
+            self.reanalysis_queued.emit(queued)
+
+    def _approve_category(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        suggestion = str(
+            entry.record.get("analysis", {}).get("suggested_category") or ""
+        ).strip()
+        if not suggestion:
+            return
+        if QMessageBox.question(
+            self,
+            "추천 연구분야 승인",
+            f"‘{suggestion}’을 설정의 연구분야에 추가하고 이 논문을 다시 분석할까요?",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            approved = self._controller.approve_category_suggestion(entry)
+        except Exception as exc:
+            QMessageBox.warning(self, "연구분야 승인 실패", str(exc))
+            return
+        self._queue_reanalysis([entry], high=True)
+        self.status_label.setText(
+            f"‘{approved}’을 연구분야에 추가하고 재분석을 요청했습니다."
+        )
 
     def _refresh_pdf_edit_actions(
         self, entries: list[LibraryEntry] | LibraryEntry | None

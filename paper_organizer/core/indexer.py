@@ -177,6 +177,7 @@ def build_library_index(
                 classification.get("category", ""),
                 classification.get("subcategory", ""),
                 classification.get("tags", []),
+                classification.get("ai_tags", []),
                 description.get("keywords", []),
                 description.get("summary_ko", ""),
                 experimental,
@@ -191,7 +192,12 @@ def build_library_index(
                 "venue": bibliography.get("venue", ""),
                 "category": classification.get("category", ""),
                 "subcategory": classification.get("subcategory", ""),
-                "tags": _text_list(classification.get("tags")),
+                "tags": _text_list(
+                    [
+                        *_text_list(classification.get("tags")),
+                        *_text_list(classification.get("ai_tags")),
+                    ]
+                ),
                 "summary_ko": description.get("summary_ko", ""),
                 "experimental_terms": experimental,
                 "representative_file_id": representative.get("file_id", ""),

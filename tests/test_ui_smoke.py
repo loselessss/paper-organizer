@@ -596,6 +596,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertTrue(widget.search_edit.isClearButtonEnabled())
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            self.assertEqual(widget.table.item(0, 5).text(), "분석 완료")
             widget.table.selectionModel().select(
                 widget.table.model().index(1, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows,

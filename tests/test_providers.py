@@ -33,6 +33,8 @@ SUMMARY = {
     "venue": "Journal of Molecular Biology",
     "category": "생물공학",
     "subcategory": "단백질공학",
+    "meta_tags": ["directed evolution", "enzyme engineering"],
+    "suggested_category": "",
 }
 
 
@@ -124,13 +126,14 @@ class ProviderTests(unittest.TestCase):
             }
         )
         result = OllamaProvider("qwen3:4b", http_client=client).summarize(
-            SummaryRequest("paper text")
+            SummaryRequest("paper text", context_window=24_576)
         )
 
         self.assertEqual(result.provider, "ollama")
         self.assertEqual(client.calls[0]["url"], "http://127.0.0.1:11434/api/chat")
         self.assertEqual(client.calls[0]["payload"]["format"]["type"], "object")
         self.assertFalse(client.calls[0]["payload"]["think"])
+        self.assertEqual(client.calls[0]["payload"]["options"]["num_ctx"], 24_576)
         self.assertIn(
             "copy those fields verbatim",
             client.calls[0]["payload"]["messages"][0]["content"],

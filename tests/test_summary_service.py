@@ -31,6 +31,8 @@ SUMMARY = {
     "venue": "시험 저널",
     "category": "생물공학",
     "subcategory": "단백질공학",
+    "meta_tags": ["효소공학", "단백질 설계"],
+    "suggested_category": "",
 }
 
 
@@ -106,6 +108,44 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(prepared.preview.included_pdf_pages, (1, 2, 3, 4))
         self.assertFalse(prepared.preview.sends_to_cloud)
         self.assertFalse(prepared.preview.requires_cloud_consent)
+
+    def test_qwen_4b_uses_up_to_24k_context_and_trims_to_fit(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:4b",
+            resource_profile="balanced",
+            hardware_profile={"memory_total_gb": 16, "gpus": []},
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Main academic evidence and methods. " * 4_000],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertEqual(prepared.preview.context_window, 24_576)
+        self.assertTrue(prepared.preview.truncated)
+        self.assertLessEqual(
+            prepared.preview.estimated_input_tokens,
+            24_576 - 3_000,
+        )
+
+    def test_qwen_8b_performance_uses_40k_context_when_hardware_allows(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+            resource_profile="performance",
+            hardware_profile={"memory_total_gb": 24, "gpus": []},
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Main academic evidence and methods. " * 2_500],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertEqual(prepared.preview.context_window, 40_960)
+        self.assertFalse(prepared.preview.truncated)
 
     def test_reference_section_is_kept_out_of_ai_input(self):
         settings = AppSettings(

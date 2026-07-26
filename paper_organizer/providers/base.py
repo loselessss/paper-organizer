@@ -24,6 +24,8 @@ SUMMARY_SCHEMA: dict[str, Any] = {
         "venue": {"type": "string"},
         "category": {"type": "string"},
         "subcategory": {"type": "string"},
+        "meta_tags": {"type": "array", "items": {"type": "string"}},
+        "suggested_category": {"type": "string"},
     },
     "required": [
         "summary_ko",
@@ -38,6 +40,8 @@ SUMMARY_SCHEMA: dict[str, Any] = {
         "venue",
         "category",
         "subcategory",
+        "meta_tags",
+        "suggested_category",
     ],
     "additionalProperties": False,
 }
@@ -62,7 +66,10 @@ SYSTEM_INSTRUCTIONS = (
     "For patents, put inventors in authors and always return an empty venue; a "
     "patent office, applicant, assignee, or publication number is not a journal. "
     "Classify the paper into one university department-level category and a "
-    "narrower subcategory, both written in Korean."
+    "narrower subcategory, both written in Korean. Return about five concise, "
+    "searchable meta_tags that describe the paper's topic, method, material, or "
+    "application. Preserve established technical terms and do not use cited "
+    "authors or reference titles as tags."
 )
 
 ApiKeySource = str | None | Callable[[], str | None]
@@ -91,14 +98,20 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v5"
+    prompt_version: str = "paper-summary-v6"
     allowed_categories: tuple[str, ...] = ()
+    context_window: int | None = None
 
     def validate(self) -> None:
         if not self.document_text.strip():
             raise ValueError("document_text cannot be empty")
         if not 128 <= self.max_output_tokens <= 32_000:
             raise ValueError("max_output_tokens must be between 128 and 32000")
+        if (
+            self.context_window is not None
+            and not 4_096 <= self.context_window <= 262_144
+        ):
+            raise ValueError("context_window must be between 4096 and 262144")
 
 
 def system_instructions(request: SummaryRequest) -> str:
@@ -109,8 +122,11 @@ def system_instructions(request: SummaryRequest) -> str:
         return SYSTEM_INSTRUCTIONS
     return (
         f"{SYSTEM_INSTRUCTIONS} Choose category from exactly this list: "
-        f"{', '.join(allowed)}. If none of them fits, return an empty string "
-        "for category."
+        f"{', '.join(allowed)}. If one fits, return it in category and return "
+        "an empty suggested_category. If none fits, return empty category and "
+        "subcategory strings and propose one concise Korean university "
+        "department-level name in suggested_category. Never add a category on "
+        "the user's behalf."
     )
 
 
@@ -128,6 +144,8 @@ class SummaryData:
     venue: str = ""
     category: str = ""
     subcategory: str = ""
+    meta_tags: tuple[str, ...] = ()
+    suggested_category: str = ""
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "SummaryData":
@@ -145,12 +163,20 @@ class SummaryData:
             "venue",
             "category",
             "subcategory",
+            "suggested_category",
         ):
             if not isinstance(raw[name], str):
                 raise ProviderError(f"Summary field '{name}' must be a string")
             strings[name] = raw[name]
         arrays: dict[str, tuple[str, ...]] = {}
-        for name in ("methods", "contributions", "limitations", "keywords", "authors"):
+        for name in (
+            "methods",
+            "contributions",
+            "limitations",
+            "keywords",
+            "authors",
+            "meta_tags",
+        ):
             value = raw[name]
             if not isinstance(value, list) or any(
                 not isinstance(item, str) for item in value

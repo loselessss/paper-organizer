@@ -12,7 +12,7 @@ from paper_organizer.application.summary_service import (
     SummaryMode,
     SummaryPreview,
 )
-from paper_organizer.core.paperpack import load_paperpack_metadata
+from paper_organizer.core.paperpack import load_paperpack_metadata, update_paperpack
 from paper_organizer.core.search_index import search
 from paper_organizer.infra.settings import load_settings, save_settings
 from paper_organizer.providers.base import (
@@ -52,19 +52,21 @@ def write_pdf(path: Path, pages: list[str]) -> None:
 
 def execution(pdf: Path, **overrides) -> SummaryExecution:
     data = SummaryData(
-        summary_ko="AI 요약",
-        research_question="질문",
-        methods=("방법",),
-        contributions=("기여",),
-        limitations=("한계",),
-        keywords=("키워드",),
         **{
+            "summary_ko": "AI 요약",
+            "research_question": "질문",
+            "methods": ("방법",),
+            "contributions": ("기여",),
+            "limitations": ("한계",),
+            "keywords": ("키워드",),
             "title": "Directed Evolution of a Thermostable Enzyme Scaffold",
             "authors": ("A. Researcher", "B. Scientist"),
             "year": "2019",
             "venue": "Journal of Molecular Biology",
             "category": "생명과학",
             "subcategory": "생화학",
+            "meta_tags": ["단백질공학", "효소"],
+            "suggested_category": "",
             **overrides,
         },
     )
@@ -97,6 +99,8 @@ class SystemInstructionTests(unittest.TestCase):
         )
         instructions = system_instructions(request)
         self.assertIn("생물공학, 의학", instructions)
+        self.assertIn("suggested_category", instructions)
+        self.assertIn("Never add a category", instructions)
 
     def test_instructions_stay_unchanged_without_a_category_list(self):
         plain = system_instructions(SummaryRequest(document_text="text"))
@@ -201,6 +205,88 @@ class AiClassificationTests(unittest.TestCase):
             self.assertTrue(pack.is_file())
             record = load_paperpack_metadata(pack)
             self.assertEqual(record["classification"]["category"], "생물공학")
+
+    def test_reanalysis_replaces_ai_fields_but_preserves_user_tags(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, library, pack = self._organized(root)
+            record = load_paperpack_metadata(pack)
+            record.setdefault("classification", {})["tags"] = ["내 태그"]
+            record.setdefault("curation", {}).setdefault("field_sources", {})[
+                "classification.tags"
+            ] = "user"
+            update_paperpack(pack, record, changed_by="user")
+            pdf = controller.materialize_pdf(pack)
+
+            controller.apply_analysis_result(
+                pack,
+                execution(
+                    pdf,
+                    summary_ko="첫 요약",
+                    meta_tags=("효소공학", "바이오촉매", "효소공학"),
+                ),
+            )
+            moved = next((library / "papers").rglob("*.paperpack"))
+            moved_pdf = controller.materialize_pdf(moved)
+            controller.apply_analysis_result(
+                moved,
+                execution(
+                    moved_pdf,
+                    summary_ko="새 요약",
+                    meta_tags=("열안정성", "단백질 설계"),
+                ),
+            )
+
+            final = next((library / "papers").rglob("*.paperpack"))
+            record = load_paperpack_metadata(final)
+            self.assertEqual(record["description"]["summary_ko"], "새 요약")
+            self.assertEqual(record["classification"]["tags"], ["내 태그"])
+            self.assertEqual(
+                record["classification"]["ai_tags"],
+                ["열안정성", "단백질 설계"],
+            )
+
+    def test_category_suggestion_requires_approval_then_can_be_requeued(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, library, pack = self._organized(root)
+            pdf = controller.materialize_pdf(pack)
+            controller.apply_analysis_result(
+                pack,
+                execution(
+                    pdf,
+                    category="",
+                    subcategory="",
+                    suggested_category="우주생물학",
+                ),
+            )
+            entry = controller.list_library()[0]
+            settings = load_settings(root / "settings.json")
+            self.assertNotIn("우주생물학", settings.research_categories)
+            self.assertEqual(
+                entry.record["analysis"]["suggested_category"], "우주생물학"
+            )
+
+            approved = controller.approve_category_suggestion(entry)
+            queued, problems = controller.queue_reanalysis([entry], high=True)
+
+            self.assertEqual(approved, "우주생물학")
+            self.assertIn(
+                "우주생물학",
+                load_settings(root / "settings.json").research_categories,
+            )
+            self.assertEqual((queued, problems), (1, ()))
+            item = next(
+                value
+                for value in controller.analysis_queue()
+                if value.file_sha256 == entry.record["file"]["sha256"]
+            )
+            self.assertEqual(item.status, "organized_pending_analysis")
+            self.assertEqual(item.priority, 1)
+            self.assertEqual(
+                load_paperpack_metadata(entry.sidecar_path)["analysis"]["summary_ko"],
+                "AI 요약",
+            )
 
 
 if __name__ == "__main__":
