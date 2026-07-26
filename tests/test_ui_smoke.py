@@ -80,10 +80,13 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
                 dialog.use_recommendation_button.text(),
-                "추천 모델 선택 (다운로드 안 함)",
+                "추천 모델 선택 → 설치/검증",
             )
             self.assertFalse(dialog.use_recommendation_button.isEnabled())
-            self.assertEqual(dialog.manage_models_button.text(), "Ollama 모델 관리…")
+            self.assertEqual(
+                dialog.manage_models_button.text(),
+                "다른 모델 선택·설치·삭제…",
+            )
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
@@ -189,7 +192,15 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(
                 window.queue_widget.run_now_button.text(),
-                "선택 항목 지금 분석",
+                "선택 항목 바로 분석",
+            )
+            self.assertEqual(
+                window.collection_widget.organize_button.text(),
+                "선택 항목 분석 큐로 보내기",
+            )
+            self.assertEqual(
+                window.library_widget.save_button.text(),
+                "색인 편집 저장 및 재색인",
             )
             self.assertTrue(window.queue_widget.table.acceptDrops())
             self.assertEqual(
@@ -240,6 +251,58 @@ class UiSmokeTests(unittest.TestCase):
         self.assertFalse(dialog.answer_button.isEnabled())
         dialog.reject()
         self.assertEqual(controller.stop_calls, 1)
+
+    def test_model_manager_opens_on_the_recommended_model(self):
+        from paper_organizer.application.ai_settings import AiSettingsController
+        from paper_organizer.application.ollama_model_manager import (
+            OllamaModelEntry,
+            OllamaModelSnapshot,
+        )
+        from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
+
+        with tempfile.TemporaryDirectory() as temp:
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                Path(temp) / "settings.json",
+            )
+            dialog = OllamaModelDialog(
+                controller,
+                initial_model="qwen3:8b",
+            )
+            snapshot = OllamaModelSnapshot(
+                reachable=True,
+                version="test",
+                disk_path=temp,
+                disk_free_gb=100,
+                entries=(
+                    OllamaModelEntry(
+                        "qwen3:4b",
+                        "Qwen3 4B",
+                        2.5,
+                        True,
+                        2.5,
+                        "4B",
+                        "Q4_K_M",
+                        True,
+                    ),
+                    OllamaModelEntry(
+                        "qwen3:8b",
+                        "Qwen3 8B",
+                        5.2,
+                        False,
+                        0,
+                        "",
+                        "",
+                        False,
+                    ),
+                ),
+            )
+
+            dialog._apply_snapshot(snapshot)
+
+            self.assertEqual(dialog.model_combo.currentData(), "qwen3:8b")
+            self.assertEqual(dialog.install_button.text(), "다운로드 후 선택")
+            dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):
         from PyQt5.QtWidgets import QLabel
@@ -402,6 +465,8 @@ class UiSmokeTests(unittest.TestCase):
 
         controller = FakeController()
         widget = CollectionReviewWidget(controller)
+        immediate_requests = []
+        widget.immediate_analysis_requested.connect(immediate_requests.append)
         widget._items = [review_item(1), review_item(2)]
         widget.table.setRowCount(2)
         for row, item in enumerate(widget._items):
@@ -430,7 +495,8 @@ class UiSmokeTests(unittest.TestCase):
 
         self.assertEqual(len(controller.organized), 2)
         information.assert_not_called()
-        self.assertIn("2개를 보관", widget.status_label.text())
+        self.assertIn("2개를 분석 큐", widget.status_label.text())
+        self.assertEqual(immediate_requests, [2])
 
         controller.organized.clear()
         with (
@@ -445,6 +511,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(len(controller.organized), 2)
         question.assert_not_called()
         information.assert_not_called()
+        self.assertEqual(immediate_requests, [2, 2])
 
         with (
             mock.patch.object(
@@ -478,6 +545,7 @@ class UiSmokeTests(unittest.TestCase):
                 self.calls.append(
                     (
                         time.monotonic(),
+                        kwargs["force"],
                         keep_runtime() if callable(keep_runtime) else keep_runtime,
                     )
                 )
@@ -502,7 +570,11 @@ class UiSmokeTests(unittest.TestCase):
         worker.request_stop()
         self.assertTrue(worker.wait(2000))
         self.assertEqual(
-            [keep_runtime for _when, keep_runtime in service.calls[:2]],
+            [force for _when, force, _keep_runtime in service.calls[:2]],
+            [True, True],
+        )
+        self.assertEqual(
+            [keep_runtime for _when, _force, keep_runtime in service.calls[:2]],
             [True, False],
         )
         self.assertLess(service.calls[1][0] - service.calls[0][0], 1)
@@ -678,6 +750,10 @@ class UiSmokeTests(unittest.TestCase):
                 QAbstractItemView.ExtendedSelection,
             )
             self.assertTrue(widget.search_edit.isClearButtonEnabled())
+            self.assertEqual(
+                widget.search_edit.placeholderText(),
+                "제목·저자·키워드 검색 · 자연어 질문 검색도 가능",
+            )
             routed_queries = []
             widget.natural_search_requested.connect(routed_queries.append)
             widget.search_edit.setText("열에 강한 효소를 만든 논문은?")

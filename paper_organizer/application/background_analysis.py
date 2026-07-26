@@ -48,12 +48,14 @@ class BackgroundAnalysisService:
         secret_store: SecretStore,
         settings_path: Path | None = None,
         ollama: OllamaRuntimeInspector | None = None,
+        ollama_starter: Callable[[], bool] | None = None,
     ) -> None:
         self._workflow = workflow
         self._summary = summary
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._ollama = ollama or OllamaRuntimeInspector()
+        self._ollama_starter = ollama_starter
 
     def recover_interrupted(self) -> int:
         recovered = self._workflow.recover_interrupted_analysis()
@@ -72,6 +74,14 @@ class BackgroundAnalysisService:
             if not model:
                 return AnalysisReadiness(False, "Ollama 모델을 먼저 선택하세요.")
             status = self._ollama.inspect()
+            if not status.reachable:
+                starter = self._ollama_starter
+                if starter is None:
+                    from paper_organizer.infra.ollama_installer import start_runtime
+
+                    starter = lambda: start_runtime(inspector=self._ollama)
+                if starter():
+                    status = self._ollama.inspect()
             if not status.reachable:
                 return AnalysisReadiness(False, "Ollama가 실행될 때까지 기다리는 중입니다.")
             if not _model_installed(status, model):

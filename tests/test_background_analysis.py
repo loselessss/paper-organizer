@@ -201,6 +201,54 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(workflow.completed, [])
         self.assertFalse(workflow.failed)
 
+    def test_pending_local_analysis_starts_ollama_when_needed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            ollama = FakeOllama(reachable=False)
+            starts = []
+
+            def start_ollama():
+                starts.append(True)
+                ollama.status = OllamaRuntimeStatus(
+                    True,
+                    "test",
+                    (
+                        InstalledOllamaModel(
+                            "qwen3:4b",
+                            2.5,
+                            "4B",
+                            "Q4",
+                            "",
+                        ),
+                    ),
+                    "",
+                )
+                return True
+
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=ollama,
+                ollama_starter=start_ollama,
+            )
+
+            event = service.run_next(force=True)
+
+        self.assertEqual(event.state, "completed")
+        self.assertEqual(starts, [True])
+
     def test_full_ocr_runs_before_ai_readiness_and_reports_each_page(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -218,6 +266,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 MemorySecrets(),
                 settings_path,
                 ollama=FakeOllama(reachable=False),
+                ollama_starter=lambda: False,
             )
             started = []
             progress = []

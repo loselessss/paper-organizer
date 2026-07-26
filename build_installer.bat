@@ -14,5 +14,6 @@ exit /b 1
 "%ISCC%" installer.iss
 if errorlevel 1 exit /b %errorlevel%
 
-echo [OK] Output\PaperOrganizer_Setup_1.1.0.exe
+for /f "tokens=3" %%V in ('findstr /b /c:"#define MyAppVersion" installer.iss') do set "APP_VERSION=%%~V"
+echo [OK] Output\PaperOrganizer_Setup_%APP_VERSION%.exe
 endlocal

@@ -287,6 +287,7 @@ class _BackgroundAnalysisWorker(QThread):
             immediate_this_run = self._immediate_remaining > 0
             self._processing = True
             result = self._service.run_next(
+                force=immediate_this_run,
                 keep_runtime=lambda: self._immediate_remaining
                 > (1 if immediate_this_run else 0),
                 on_start=self._notify_started,
@@ -311,7 +312,12 @@ class _BackgroundAnalysisWorker(QThread):
                 if self._immediate_remaining:
                     continue
                 self._wake.set()
-            self._wake.wait(self._service.poll_interval())
+            wait_seconds = (
+                1
+                if self._immediate_remaining
+                else self._service.poll_interval()
+            )
+            self._wake.wait(wait_seconds)
             self._wake.clear()
         self._processing = False
 
@@ -417,6 +423,7 @@ class CollectionReviewWidget(QWidget):
     library_changed = pyqtSignal()
     queue_changed = pyqtSignal()
     papers_auto_organized = pyqtSignal(list)
+    immediate_analysis_requested = pyqtSignal(int)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -465,7 +472,7 @@ class CollectionReviewWidget(QWidget):
         review_actions = QHBoxLayout()
         self.select_all_button = QPushButton("전체 선택")
         self.open_button = QPushButton("sPDF로 열기")
-        self.organize_button = QPushButton("승인 후 paperpack으로 보관")
+        self.organize_button = QPushButton("선택 항목 분석 큐로 보내기")
         self.trash_button = QPushButton("제외 목록으로 보내기")
         self.restore_button = QPushButton("제외 목록에서 복원…")
         self.select_all_button.clicked.connect(self.table.selectAll)
@@ -622,7 +629,9 @@ class CollectionReviewWidget(QWidget):
         items = self._selected_items()
         if not items:
             return
-        self._organize_items(items, ask_confirmation=True)
+        organized = self._organize_items(items, ask_confirmation=True)
+        if organized:
+            self.immediate_analysis_requested.emit(organized)
 
     def organize_dropped(self, file_ids: list[str]) -> None:
         if self.is_busy():
@@ -639,11 +648,13 @@ class CollectionReviewWidget(QWidget):
                 "드롭한 검토 항목을 찾지 못했습니다. 새 PDF 검색 후 다시 시도하세요."
             )
             return
-        self._organize_items(items, ask_confirmation=False)
+        organized = self._organize_items(items, ask_confirmation=False)
+        if organized:
+            self.immediate_analysis_requested.emit(organized)
 
     def _organize_items(
         self, items: list[ReviewItem], *, ask_confirmation: bool
-    ) -> None:
+    ) -> int:
         uncertain = sum(
             item.detection_status not in {"academic_likely", "patent_likely"}
             for item in items
@@ -663,7 +674,7 @@ class CollectionReviewWidget(QWidget):
         if ask_confirmation and (len(items) > 1 or uncertain) and QMessageBox.question(
             self, "수동 승인 확인", message
         ) != QMessageBox.Yes:
-            return
+            return 0
         organized = 0
         warnings: list[str] = []
         failures: list[str] = []
@@ -681,7 +692,7 @@ class CollectionReviewWidget(QWidget):
             except Exception as exc:
                 failures.append(f"{item.path.name}: {exc}")
         self.status_label.setText(
-            f"선택한 PDF {organized}개를 보관했습니다."
+            f"선택한 PDF {organized}개를 분석 큐로 보냈습니다."
             + (f" · 실패 {len(failures)}개" if failures else "")
         )
         if warnings or failures:
@@ -694,10 +705,11 @@ class CollectionReviewWidget(QWidget):
                 self, "일부 PDF 보관 확인 필요", "\n\n".join(parts)
             )
         if not organized:
-            return
+            return 0
         self.library_changed.emit()
         self.queue_changed.emit()
         self.scan_now(False)
+        return organized
 
     def _trash_selected(self) -> None:
         items = self._selected_items()
@@ -783,8 +795,6 @@ class _SortableQueueItem(QTableWidgetItem):
 
 
 class AnalysisQueueWidget(QWidget):
-    summary_requested = pyqtSignal(str)
-    summaries_requested = pyqtSignal(list)
     library_requested = pyqtSignal(str)
     review_items_dropped = pyqtSignal(list)
     library_changed = pyqtSignal()
@@ -830,26 +840,23 @@ class AnalysisQueueWidget(QWidget):
         refresh_button = QPushButton("새로고침")
         select_all_button = QPushButton("전체 선택")
         self.priority_button = QPushButton("최우선으로 표시")
-        self.summary_button = QPushButton("즉시 요약으로 보내기")
+        self.run_now_button = QPushButton("선택 항목 바로 분석")
         self.remove_button = QPushButton("선택 항목 큐에서 제외")
         self.retry_button = QPushButton("실패 항목 다시 분석")
-        self.run_now_button = QPushButton("선택 항목 지금 분석")
         self.background_button = QPushButton("백그라운드 분석 시작")
         refresh_button.clicked.connect(self.refresh)
         select_all_button.clicked.connect(self.table.selectAll)
         self.priority_button.clicked.connect(self._toggle_priority)
-        self.summary_button.clicked.connect(self._send_to_summary)
+        self.run_now_button.clicked.connect(self._run_selected_now)
         self.remove_button.clicked.connect(self._remove_selected)
         self.retry_button.clicked.connect(self._retry_selected)
-        self.run_now_button.clicked.connect(self._run_selected_now)
         self.background_button.clicked.connect(self._toggle_background)
         actions.addWidget(refresh_button)
         actions.addWidget(select_all_button)
         actions.addWidget(self.priority_button)
-        actions.addWidget(self.summary_button)
+        actions.addWidget(self.run_now_button)
         actions.addWidget(self.remove_button)
         actions.addWidget(self.retry_button)
-        actions.addWidget(self.run_now_button)
         actions.addWidget(self.background_button)
         actions.addStretch(1)
         root.addLayout(actions)
@@ -950,9 +957,6 @@ class AnalysisQueueWidget(QWidget):
         mutable_items = [value for value in selected if value.status != "analyzing"]
         mutable = bool(mutable_items)
         self.priority_button.setEnabled(mutable)
-        self.summary_button.setEnabled(
-            any(Path(value.path).is_file() for value in selected)
-        )
         self.remove_button.setEnabled(mutable)
         self.retry_button.setEnabled(
             any(item.status == "failed" for item in self._selected_items())
@@ -1011,24 +1015,6 @@ class AnalysisQueueWidget(QWidget):
             QMessageBox.warning(self, "우선순위 변경 실패", str(exc))
             return
         self.refresh()
-
-    def _send_to_summary(self) -> None:
-        paths: list[str] = []
-        failures: list[str] = []
-        for item in self._selected_items():
-            if not Path(item.path).is_file():
-                failures.append(f"{item.title}: 파일 없음")
-                continue
-            try:
-                paths.append(
-                    str(self._controller.materialize_pdf(Path(item.path)))
-                )
-            except Exception as exc:
-                failures.append(f"{item.title}: {exc}")
-        if failures:
-            QMessageBox.warning(self, "일부 PDF 준비 실패", "\n".join(failures[:10]))
-        if paths:
-            self.summaries_requested.emit(paths)
 
     def _remove_selected(self) -> None:
         items = [
@@ -1214,7 +1200,7 @@ class LibraryWidget(QWidget):
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(
-            "단어는 즉시 검색 · 질문은 AI가 근거 논문으로 답변"
+            "제목·저자·키워드 검색 · 자연어 질문 검색도 가능"
         )
         self.search_edit.setClearButtonEnabled(True)
         refresh_button = QPushButton("새로고침")
@@ -1243,6 +1229,13 @@ class LibraryWidget(QWidget):
         self.form = MetadataForm("선택한 논문의 PaperPack 색인 편집")
         self.form.set_metadata(None)
         detail_layout.addWidget(self.form)
+        edit_actions = QHBoxLayout()
+        self.save_button = QPushButton("색인 편집 저장 및 재색인")
+        self.save_button.clicked.connect(self._save_selected)
+        self.save_button.setEnabled(False)
+        edit_actions.addStretch(1)
+        edit_actions.addWidget(self.save_button)
+        detail_layout.addLayout(edit_actions)
         analysis_group = QGroupBox("AI 분석 내용")
         analysis_layout = QVBoxLayout(analysis_group)
         self.analysis_view = QTextBrowser()
@@ -1259,28 +1252,24 @@ class LibraryWidget(QWidget):
         root.addWidget(splitter, 1)
         self._render_analysis(None)
         actions = QHBoxLayout()
-        self.save_button = QPushButton("수정 저장 및 재색인")
         self.open_button = QPushButton("sPDF로 열기")
         self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
         self.discard_pdf_button = QPushButton("편집본 폐기")
         self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
         self.reanalyze_all_button = QPushButton("전체 논문 재요약")
         self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
-        self.save_button.clicked.connect(self._save_selected)
         self.open_button.clicked.connect(self._open_selected)
         self.apply_pdf_button.clicked.connect(self._apply_pdf_edit)
         self.discard_pdf_button.clicked.connect(self._discard_pdf_edit)
         self.reanalyze_selected_button.clicked.connect(self._reanalyze_selected)
         self.reanalyze_all_button.clicked.connect(self._reanalyze_all)
         self.approve_category_button.clicked.connect(self._approve_category)
-        self.save_button.setEnabled(False)
         self.open_button.setEnabled(False)
         self.apply_pdf_button.setEnabled(False)
         self.discard_pdf_button.setEnabled(False)
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
         self.approve_category_button.setEnabled(False)
-        actions.addWidget(self.save_button)
         actions.addWidget(self.open_button)
         actions.addWidget(self.apply_pdf_button)
         actions.addWidget(self.discard_pdf_button)

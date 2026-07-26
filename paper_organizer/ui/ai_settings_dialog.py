@@ -110,8 +110,8 @@ class AiSettingsDialog(QDialog):
         self.hardware_status.setWordWrap(True)
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
-        self.use_recommendation_button = QPushButton("추천 모델 선택 (다운로드 안 함)")
-        self.manage_models_button = QPushButton("Ollama 모델 관리…")
+        self.use_recommendation_button = QPushButton("추천 모델 선택 → 설치/검증")
+        self.manage_models_button = QPushButton("다른 모델 선택·설치·삭제…")
         self.use_recommendation_button.setEnabled(False)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
@@ -127,8 +127,8 @@ class AiSettingsDialog(QDialog):
         )
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
-            "추천 선택은 모델명만 저장하며 다운로드를 시작하지 않습니다. "
-            "모델 다운로드·삭제는 관리 화면에서 용량을 확인하고 명시적으로 실행합니다."
+            "추천 → 모델 선택 → 설치 또는 검증 → 활성 모델 저장 순서로 이어집니다. "
+            "다운로드와 삭제는 용량을 확인하고 사용자가 승인한 경우에만 실행합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
@@ -157,7 +157,9 @@ class AiSettingsDialog(QDialog):
         self.key_delete_button.clicked.connect(self._delete_key)
         self.hardware_scan_button.clicked.connect(self._scan_hardware)
         self.use_recommendation_button.clicked.connect(self._use_recommendation)
-        self.manage_models_button.clicked.connect(self._open_model_manager)
+        self.manage_models_button.clicked.connect(
+            lambda: self._open_model_manager()
+        )
         self._load()
 
     def _load(self) -> None:
@@ -196,6 +198,9 @@ class AiSettingsDialog(QDialog):
                 f" ({profile_note}사양 재검사 권장)"
             )
             self.use_recommendation_button.setEnabled(True)
+            self.use_recommendation_button.setText(
+                "추천 모델 선택 → 설치/검증"
+            )
         self._refresh_key_status()
         self._profile_changed()
 
@@ -317,6 +322,11 @@ class AiSettingsDialog(QDialog):
                 + explanation
             )
             self.use_recommendation_button.setEnabled(True)
+            self.use_recommendation_button.setText(
+                "추천 모델 검증 후 선택"
+                if chosen.installed
+                else "추천 모델 설치 후 선택"
+            )
         lines: list[str] = []
         for candidate in recommendation.candidates:
             installed = " · 설치됨" if candidate.installed else ""
@@ -339,10 +349,15 @@ class AiSettingsDialog(QDialog):
         ollama_index = self.provider_combo.findData("ollama")
         if ollama_index >= 0:
             self.provider_combo.setCurrentIndex(ollama_index)
-        self.model_edit.setText(self._recommended_model)
+        self._open_model_manager(self._recommended_model)
 
-    def _open_model_manager(self) -> None:
-        dialog = OllamaModelDialog(self._controller, self)
+    def _open_model_manager(self, initial_model: str = "") -> None:
+        preferred = initial_model or self.model_edit.text().strip()
+        dialog = OllamaModelDialog(
+            self._controller,
+            self,
+            initial_model=preferred,
+        )
         dialog.model_verified.connect(self._model_install_verified)
         dialog.model_deleted.connect(self._model_deleted)
         dialog.refresh()

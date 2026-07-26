@@ -107,9 +107,16 @@ class OllamaModelDialog(QDialog):
     model_verified = pyqtSignal(str)
     model_deleted = pyqtSignal(str, bool)
 
-    def __init__(self, controller: AiSettingsController, parent=None) -> None:
+    def __init__(
+        self,
+        controller: AiSettingsController,
+        parent=None,
+        *,
+        initial_model: str = "",
+    ) -> None:
         super().__init__(parent)
         self._controller = controller
+        self._preferred_model = initial_model.strip()
         self._worker: _ModelOperationWorker | None = None
         self._operation = ""
         self._operation_model = ""
@@ -366,7 +373,7 @@ class OllamaModelDialog(QDialog):
                 + detail
             )
         self.setup_runtime_button.setVisible(not snapshot.reachable)
-        selected = self.model_combo.currentData()
+        selected = self._preferred_model or self.model_combo.currentData()
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         for entry in snapshot.entries:
@@ -387,6 +394,7 @@ class OllamaModelDialog(QDialog):
             if index >= 0:
                 self.model_combo.setCurrentIndex(index)
                 selected_found = True
+                self._preferred_model = ""
         if not selected_found:
             first_installed = next(
                 (
