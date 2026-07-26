@@ -45,6 +45,7 @@ from paper_organizer.integrations.spdf_bridge import open_pdf
 class _ScanWorker(QThread):
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
+    progress = pyqtSignal(str)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -52,7 +53,7 @@ class _ScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self._controller.scan())
+            self.completed.emit(self._controller.scan(progress=self.progress.emit))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -88,13 +89,18 @@ class _BackgroundAnalysisWorker(QThread):
             return
         while not self._stop.is_set():
             self._processing = True
-            result = self._service.run_next(on_start=self._notify_started)
+            result = self._service.run_next(
+                on_start=self._notify_started,
+                on_progress=self.event.emit,
+            )
             self._processing = False
             self.event.emit(result)
-            if result.state in {"completed", "failed"}:
+            if result.state in {"completed", "failed", "ocr_completed"}:
                 self.queue_changed.emit()
             if result.state == "disabled":
                 break
+            if result.state == "ocr_completed":
+                self._wake.set()
             self._wake.wait(self._service.poll_interval())
             self._wake.clear()
         self._processing = False
@@ -243,6 +249,7 @@ class CollectionReviewWidget(QWidget):
         worker = _ScanWorker(self._controller, self)
         worker.completed.connect(self._scan_ready)
         worker.failed.connect(self._scan_failed)
+        worker.progress.connect(self.status_label.setText)
         worker.finished.connect(self._scan_finished)
         self._worker = worker
         worker.start()
@@ -758,13 +765,16 @@ class AnalysisQueueWidget(QWidget):
     def _analysis_event(self, event: AnalysisRunEvent) -> None:
         labels = {
             "started": "분석 중",
+            "ocr_started": "OCR 시작",
+            "ocr_progress": "OCR 진행",
+            "ocr_completed": "OCR 완료",
             "idle": "대기",
             "waiting": "AI 준비 대기",
             "completed": "완료",
             "failed": "실패",
             "disabled": "중지",
         }
-        if event.state == "started":
+        if event.state in {"started", "ocr_started", "ocr_progress"}:
             self._analysis_running = True
             self._current_analysis_title = event.title
         else:

@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz
 
@@ -19,6 +20,7 @@ from paper_organizer.core.paperpack import (
     extract_paperpack_pdf,
     inspect_paperpack,
     load_paperpack_metadata,
+    load_paperpack_content,
     update_paperpack,
 )
 
@@ -108,6 +110,79 @@ class LibraryWorkflowTests(unittest.TestCase):
                 result.items[0].metadata.authors,
                 ["A. Researcher", "B. Scientist"],
             )
+
+    def test_discovery_ocr_uses_first_five_pages_and_disk_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "scanned-patent.pdf"
+            write_pdf(source, [""] * 8)
+            recognized = [""] * 8
+            recognized[0] = (
+                "Patent publication number application number inventor claims. " * 20
+            )
+
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                return_value=recognized,
+            ) as ocr:
+                result = self._scan_twice(controller)
+
+            args, kwargs = ocr.call_args
+            self.assertEqual(args[0], source.resolve())
+            self.assertEqual(kwargs["page_indexes"], (0, 1, 2, 3, 4))
+            self.assertTrue(kwargs["background"])
+            self.assertTrue(callable(kwargs["progress"]))
+            self.assertTrue(result.items[0].ocr_used)
+            self.assertFalse(result.items[0].ocr_complete)
+
+            restarted = LibraryWorkflowController(root / "settings.json")
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts"
+            ) as repeated_ocr:
+                restarted.scan()
+                restarted_result = restarted.scan()
+
+            repeated_ocr.assert_not_called()
+            self.assertTrue(restarted_result.items[0].ocr_used)
+
+    def test_partial_discovery_ocr_is_completed_after_paperpack_storage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "scanned-patent.pdf"
+            write_pdf(source, [""] * 8)
+            preview_text = [""] * 8
+            preview_text[0] = (
+                "Patent publication number application number inventor claims. " * 20
+            )
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                return_value=preview_text,
+            ):
+                item = self._scan_twice(controller).items[0]
+            organized = controller.organize(item, item.metadata)
+
+            self.assertTrue(controller.paperpack_needs_ocr(organized.pdf_path))
+            full_text = [
+                f"Recognized patent page {index}. " * 30 for index in range(1, 9)
+            ]
+            page_progress = []
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                return_value=full_text,
+            ) as ocr:
+                completed = controller.complete_paperpack_ocr(
+                    organized.pdf_path,
+                    progress=lambda done, total: page_progress.append((done, total)),
+                )
+
+            ocr.assert_called_once()
+            self.assertEqual(completed, full_text)
+            content = load_paperpack_content(organized.pdf_path)
+            self.assertEqual(content["ocr_status"], "complete")
+            self.assertEqual(content["extractor"], "rapidocr")
+            self.assertFalse(controller.paperpack_needs_ocr(organized.pdf_path))
 
     def test_multiple_watch_folders_are_scanned_and_duplicate_bytes_are_seen_once(self):
         with tempfile.TemporaryDirectory() as temp:

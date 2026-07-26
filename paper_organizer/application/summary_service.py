@@ -142,10 +142,18 @@ def prepare_summary(
     finally:
         document.close()
     if len(_clean_text("\n\n".join(chunks))) < MINIMUM_TEXT_CHARS:
+        if page_count < 2:
+            raise SummaryPreparationError(
+                "2페이지 미만 문서는 OCR 대상에서 제외됩니다."
+            )
         try:
             from paper_organizer.application.background_ocr import ocr_page_texts
 
-            recognized = ocr_page_texts(path, page_indexes=page_indexes)
+            recognized = ocr_page_texts(
+                path,
+                page_indexes=page_indexes,
+                background=False,
+            )
         except Exception as exc:
             raise SummaryPreparationError(
                 f"내장 OCR 실행에 실패했습니다: {' '.join(str(exc).split())}"

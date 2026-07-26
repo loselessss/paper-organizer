@@ -82,7 +82,13 @@ class BackgroundAnalysisService:
             return AnalysisReadiness(False, f"{provider} API 키가 등록되지 않았습니다.")
         return AnalysisReadiness(True, f"{provider} 백그라운드 분석 준비됨")
 
-    def run_next(self, *, force: bool = False, on_start=None) -> AnalysisRunEvent:
+    def run_next(
+        self,
+        *,
+        force: bool = False,
+        on_start=None,
+        on_progress=None,
+    ) -> AnalysisRunEvent:
         settings = load_settings(self._settings_path)
         if not force and not settings.background_analysis_enabled:
             return AnalysisRunEvent("disabled", "백그라운드 분석이 중지되어 있습니다.")
@@ -93,6 +99,52 @@ class BackgroundAnalysisService:
         ]
         if not pending:
             return AnalysisRunEvent("idle", "분석할 정리된 논문이 없습니다.")
+        next_item = pending[0]
+        queued_path = Path(next_item.path)
+        if self._workflow.paperpack_needs_ocr(queued_path):
+            if on_start is not None:
+                on_start(
+                    AnalysisRunEvent(
+                        "ocr_started",
+                        f"{next_item.title} 전체 OCR을 시작했습니다.",
+                        next_item.queue_id,
+                        next_item.title,
+                    )
+                )
+            try:
+                self._workflow.complete_paperpack_ocr(
+                    queued_path,
+                    progress=(
+                        lambda done, total: on_progress(
+                            AnalysisRunEvent(
+                                "ocr_progress",
+                                f"{next_item.title} OCR {done}/{total}페이지",
+                                next_item.queue_id,
+                                next_item.title,
+                            )
+                        )
+                        if on_progress is not None
+                        else None
+                    ),
+                )
+                return AnalysisRunEvent(
+                    "ocr_completed",
+                    f"{next_item.title} 전체 OCR을 저장했습니다. AI 분석을 이어갑니다.",
+                    next_item.queue_id,
+                    next_item.title,
+                )
+            except Exception as exc:
+                message = _safe_error(exc)
+                try:
+                    self._workflow.fail_analysis(next_item.queue_id, message)
+                except Exception as queue_exc:
+                    message += f" / 큐 상태 기록 실패: {_safe_error(queue_exc)}"
+                return AnalysisRunEvent(
+                    "failed",
+                    message,
+                    next_item.queue_id,
+                    next_item.title,
+                )
         readiness = self.readiness()
         if not readiness.ready:
             return AnalysisRunEvent("waiting", readiness.reason)

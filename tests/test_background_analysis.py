@@ -105,6 +105,8 @@ class FakeWorkflow:
         self.completed = []
         self.failed = []
         self.applied = []
+        self.needs_ocr = False
+        self.ocr_completed = []
 
     def analysis_queue(self):
         return [] if self.claimed else [self.item]
@@ -112,6 +114,17 @@ class FakeWorkflow:
     def claim_next_analysis(self):
         self.claimed = True
         return self.item
+
+    def paperpack_needs_ocr(self, path):
+        return self.needs_ocr
+
+    def complete_paperpack_ocr(self, path, *, progress=None):
+        if progress is not None:
+            progress(1, 2)
+            progress(2, 2)
+        self.needs_ocr = False
+        self.ocr_completed.append(path)
+        return ["recognized"] * 2
 
     def materialize_pdf(self, path):
         return path
@@ -182,6 +195,39 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(summary.modes, [SummaryMode.QUICK])
         self.assertEqual(workflow.completed, [workflow.item.queue_id])
         self.assertFalse(workflow.failed)
+
+    def test_full_ocr_runs_before_ai_readiness_and_reports_each_page(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(selected_model="qwen3:4b", background_analysis_enabled=True),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            workflow.needs_ocr = True
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(reachable=False),
+            )
+            started = []
+            progress = []
+
+            event = service.run_next(
+                on_start=started.append,
+                on_progress=progress.append,
+            )
+
+        self.assertEqual(event.state, "ocr_completed")
+        self.assertEqual(started[0].state, "ocr_started")
+        self.assertEqual([item.state for item in progress], ["ocr_progress"] * 2)
+        self.assertEqual(workflow.ocr_completed, [root / "paper.paperpack"])
+        self.assertFalse(workflow.claimed)
+        self.assertEqual(summary.modes, [])
 
     def test_paperpack_result_keeps_curated_summary_and_saves_ai_analysis(self):
         with tempfile.TemporaryDirectory() as temp:

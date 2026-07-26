@@ -46,6 +46,7 @@ class ContentPayloadTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["page_count"], 2)
         self.assertEqual(payload["extractor"], "pymupdf")
+        self.assertEqual(payload["ocr_status"], "not-needed")
         self.assertEqual(
             [(entry["page"], entry["text"]) for entry in payload["pages"]],
             [(1, "첫 페이지"), (2, "second page")],

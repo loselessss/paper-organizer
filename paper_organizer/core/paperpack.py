@@ -293,7 +293,11 @@ def _copy_entry(
 
 
 def build_content_payload(
-    page_texts: Iterable[str], *, extractor: str = "pymupdf", ocr_used: bool = False
+    page_texts: Iterable[str],
+    *,
+    extractor: str = "pymupdf",
+    ocr_used: bool = False,
+    ocr_complete: bool | None = None,
 ) -> dict[str, Any]:
     """Build the page-level full text stored in content/content.json.
 
@@ -307,10 +311,17 @@ def build_content_payload(
         value = str(text or "")
         total_characters += len(value)
         pages.append({"page": number, "text": value})
+    complete = bool(ocr_used) if ocr_complete is None else bool(ocr_complete)
+    ocr_status = (
+        "not-needed"
+        if not ocr_used
+        else ("complete" if complete else "partial")
+    )
     return {
         "schema_version": CONTENT_SCHEMA_VERSION,
         "extractor": extractor,
         "ocr_used": bool(ocr_used),
+        "ocr_status": ocr_status,
         "extracted_at": _now_iso(),
         "page_count": len(pages),
         "character_count": total_characters,

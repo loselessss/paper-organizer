@@ -154,25 +154,34 @@ class SummaryServiceTests(unittest.TestCase):
             path = Path(temp) / "scan.pdf"
             document = fitz.open()
             document.new_page()
+            document.new_page()
             document.save(path)
             document.close()
             settings = AppSettings(
                 summary_provider="ollama", selected_model="qwen-test"
             )
-            recognized = ["Recognized patent claims and description. " * 30]
+            recognized = [
+                "Recognized patent claims and description. " * 30,
+                "Recognized patent drawings and examples. " * 20,
+            ]
             with patch(
                 "paper_organizer.application.background_ocr.ocr_page_texts",
                 return_value=recognized,
             ) as ocr:
                 prepared = prepare_summary(path, settings)
 
-            ocr.assert_called_once_with(path.resolve(), page_indexes=(0,))
+            ocr.assert_called_once_with(
+                path.resolve(),
+                page_indexes=(0, 1),
+                background=False,
+            )
             self.assertIn("Recognized patent claims", prepared.document_text)
 
     def test_bundled_ocr_failure_is_reported_directly(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "scan.pdf"
             document = fitz.open()
+            document.new_page()
             document.new_page()
             document.save(path)
             document.close()
@@ -187,6 +196,23 @@ class SummaryServiceTests(unittest.TestCase):
                     SummaryPreparationError, "내장 OCR 실행에 실패"
                 ):
                     prepare_summary(path, settings)
+
+    def test_one_page_scan_is_excluded_before_ocr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "one-page.pdf"
+            document = fitz.open()
+            document.new_page()
+            document.save(path)
+            document.close()
+            settings = AppSettings(
+                summary_provider="ollama", selected_model="qwen-test"
+            )
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts"
+            ) as ocr:
+                with self.assertRaisesRegex(SummaryPreparationError, "2페이지 미만"):
+                    prepare_summary(path, settings)
+            ocr.assert_not_called()
 
 
 if __name__ == "__main__":

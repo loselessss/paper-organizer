@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import fitz
 
@@ -85,6 +85,7 @@ from paper_organizer.models.paper import (
 
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+DISCOVERY_OCR_PAGE_LIMIT = 5
 _RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -134,6 +135,7 @@ class ReviewItem:
     duplicate: DuplicateReference | None = None
     page_texts: tuple[str, ...] = field(default=(), repr=False, compare=False)
     ocr_used: bool = field(default=False, repr=False, compare=False)
+    ocr_complete: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +244,57 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def _discovery_ocr_cache_path(library_root: Path, file_sha256: str) -> Path:
+    return library_root / "cache" / "ocr-discovery" / f"{file_sha256}.json"
+
+
+def _load_discovery_ocr_cache(
+    library_root: Path, file_sha256: str, page_count: int
+) -> list[str] | None:
+    path = _discovery_ocr_cache_path(library_root, file_sha256)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            data.get("schema_version") != 1
+            or data.get("file_sha256") != file_sha256
+            or int(data.get("page_count", -1)) != page_count
+            or not isinstance(data.get("pages"), list)
+        ):
+            return None
+        texts = [""] * page_count
+        for entry in data["pages"]:
+            if not isinstance(entry, dict):
+                continue
+            index = int(entry.get("page", 0)) - 1
+            text = entry.get("text")
+            if 0 <= index < page_count and isinstance(text, str):
+                texts[index] = text
+        return texts
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _save_discovery_ocr_cache(
+    library_root: Path, file_sha256: str, page_texts: list[str]
+) -> None:
+    _atomic_json_write(
+        _discovery_ocr_cache_path(library_root, file_sha256),
+        {
+            "schema_version": 1,
+            "file_sha256": file_sha256,
+            "page_count": len(page_texts),
+            "pages": [
+                {"page": index, "text": text}
+                for index, text in enumerate(page_texts, start=1)
+                if text.strip()
+            ],
+            "updated_at": _now_iso(),
+        },
+    )
 
 
 def _import_receipts_path(library_root: Path) -> Path:
@@ -720,7 +773,7 @@ class LibraryWorkflowController:
         self._library_cache = None
         return settings
 
-    def scan(self) -> ReviewScan:
+    def scan(self, progress: Callable[[str], None] | None = None) -> ReviewScan:
         settings = self.settings()
         input_dirs = self.configured_input_dirs()
         library_root = self.configured_paths()[1]
@@ -770,33 +823,69 @@ class LibraryWorkflowController:
                 items.append(cached[2])
                 continue
             try:
+                if progress is not None:
+                    progress(f"{found.path.name}: PDF 본문 확인 중")
                 page_texts = extract_page_texts(found.path)
                 if len(page_texts) < 3:
                     self._short_documents[found.path] = key
                     self._forget_discovery(found.path)
                     self._cache.pop(found.path, None)
                     continue
+                file_sha256 = sha256_file(found.path)
+                if file_sha256 in ignored_file_ids:
+                    self._forget_discovery(found.path)
+                    continue
+                if file_sha256 in seen_file_ids:
+                    self._forget_discovery(found.path)
+                    continue
+                seen_file_ids.add(file_sha256)
                 ocr_used = False
+                ocr_complete = False
                 if _detection(page_texts)[0] == "needs_ocr":
                     try:
                         from paper_organizer.application.background_ocr import (
                             ocr_page_texts,
                         )
 
-                        recognized = ocr_page_texts(found.path)
+                        ocr_indexes = tuple(
+                            range(min(len(page_texts), DISCOVERY_OCR_PAGE_LIMIT))
+                        )
+                        recognized = _load_discovery_ocr_cache(
+                            library_root, file_sha256, len(page_texts)
+                        )
+                        if recognized is None:
+                            if progress is not None:
+                                progress(
+                                    f"{found.path.name}: 빠른 OCR 준비 "
+                                    f"(앞 {len(ocr_indexes)}페이지)"
+                                )
+                            recognized = ocr_page_texts(
+                                found.path,
+                                page_indexes=ocr_indexes,
+                                background=True,
+                                progress=(
+                                    lambda done, total, name=found.path.name: progress(
+                                        f"{name}: 빠른 OCR {done}/{total}페이지"
+                                    )
+                                    if progress is not None
+                                    else None
+                                ),
+                            )
+                            _save_discovery_ocr_cache(
+                                library_root, file_sha256, recognized
+                            )
                         if sum(len(text.strip()) for text in recognized) >= 500:
-                            page_texts = recognized
+                            page_texts = [
+                                ocr_text if ocr_text.strip() else native_text
+                                for native_text, ocr_text in zip(page_texts, recognized)
+                            ]
                             ocr_used = True
-                    except Exception:
-                        pass
-                identity = build_identity_from_pages(sha256_file(found.path), page_texts)
-                if identity.file_sha256 in ignored_file_ids:
-                    self._forget_discovery(found.path)
-                    continue
-                if identity.file_sha256 in seen_file_ids:
-                    self._forget_discovery(found.path)
-                    continue
-                seen_file_ids.add(identity.file_sha256)
+                            ocr_complete = len(ocr_indexes) == len(page_texts)
+                    except Exception as exc:
+                        problems.append(
+                            ScanProblem(found.path, f"빠른 OCR 실패: {exc}")
+                        )
+                identity = build_identity_from_pages(file_sha256, page_texts)
                 status, reason = _detection(page_texts)
                 item = ReviewItem(
                     path=found.path,
@@ -807,6 +896,7 @@ class LibraryWorkflowController:
                     duplicate=_best_duplicate(identity, references),
                     page_texts=tuple(page_texts),
                     ocr_used=ocr_used,
+                    ocr_complete=ocr_complete,
                 )
                 self._cache[found.path] = (*key, item)
                 try:
@@ -925,7 +1015,11 @@ class LibraryWorkflowController:
                 page_texts = extract_page_texts(source)
             except PdfIdentityError:
                 page_texts = []
-        content = build_content_payload(page_texts, ocr_used=item.ocr_used)
+        content = build_content_payload(
+            page_texts,
+            ocr_used=item.ocr_used,
+            ocr_complete=item.ocr_complete,
+        )
         try:
             import_result = import_pdf_to_paperpack(
                 destination,
@@ -1336,6 +1430,101 @@ class LibraryWorkflowController:
         if filled:
             self._library_cache = None
         return filled, tuple(problems)
+
+    def paperpack_needs_ocr(self, path: Path) -> bool:
+        source = path.expanduser().resolve()
+        if source.suffix.casefold() != PAPERPACK_SUFFIX or not source.is_file():
+            return False
+        try:
+            content = load_paperpack_content(source)
+            page_count = int(content.get("page_count", 0))
+            if page_count <= 0:
+                record = load_paperpack_metadata(source)
+                page_count = int(record.get("file", {}).get("page_count", 0))
+            if page_count < 2:
+                return False
+            status = str(content.get("ocr_status") or "")
+            if status == "partial":
+                return True
+            if status == "complete" or content.get("ocr_used"):
+                return False
+            return int(content.get("character_count", 0)) < 500
+        except (OSError, TypeError, ValueError, PaperPackError):
+            return False
+
+    def complete_paperpack_ocr(
+        self,
+        path: Path,
+        *,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> list[str]:
+        """Complete full-document OCR and atomically persist it in the PaperPack."""
+
+        source = path.expanduser().resolve()
+        if source.suffix.casefold() != PAPERPACK_SUFFIX or not source.is_file():
+            raise LibraryWorkflowError("전체 OCR 대상 PaperPack을 찾을 수 없습니다.")
+        try:
+            content = load_paperpack_content(source)
+            pdf_path = self.materialize_pdf(source)
+            from paper_organizer.application.background_ocr import ocr_page_texts
+
+            recognized = ocr_page_texts(
+                pdf_path,
+                progress=progress,
+                background=True,
+            )
+            if len(recognized) < 2:
+                raise LibraryWorkflowError(
+                    "2페이지 미만 문서는 OCR 대상에서 제외됩니다."
+                )
+            existing = [""] * len(recognized)
+            raw_pages = content.get("pages", [])
+            if isinstance(raw_pages, list):
+                for fallback, entry in enumerate(raw_pages, start=1):
+                    if not isinstance(entry, dict):
+                        continue
+                    try:
+                        index = int(entry.get("page", fallback)) - 1
+                    except (TypeError, ValueError):
+                        continue
+                    text = entry.get("text")
+                    if 0 <= index < len(existing) and isinstance(text, str):
+                        existing[index] = text
+            merged = [
+                ocr_text if ocr_text.strip() else native_text
+                for native_text, ocr_text in zip(existing, recognized)
+            ]
+            if sum(len(text.strip()) for text in merged) < 500:
+                raise LibraryWorkflowError(
+                    "내장 OCR을 완료했지만 인식된 본문이 너무 적습니다."
+                )
+            record = load_paperpack_metadata(source)
+            record.setdefault("provenance", {}).update(
+                {
+                    "ocr_used": True,
+                    "ocr_completed_at": _now_iso(),
+                    "extractor": "rapidocr",
+                }
+            )
+            payload = build_content_payload(
+                merged,
+                extractor="rapidocr",
+                ocr_used=True,
+                ocr_complete=True,
+            )
+            update_paperpack(
+                source,
+                record,
+                content=payload,
+                changed_by="background-ocr",
+            )
+            self._index_search_entry(source)
+            self._library_cache = None
+            return merged
+        except LibraryWorkflowError:
+            raise
+        except Exception as exc:
+            raise LibraryWorkflowError(f"전체 OCR을 저장하지 못했습니다: {exc}") from None
 
     def materialize_pdf(self, path: Path) -> Path:
         """Return a real PDF path, extracting a verified paperpack lazily."""

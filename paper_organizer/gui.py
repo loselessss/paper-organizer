@@ -22,6 +22,9 @@ def main() -> int:
     start_in_background = "--background" in sys.argv[1:]
     qt_argv = [argument for argument in sys.argv if argument != "--background"]
     app = QApplication.instance() or QApplication(qt_argv)
+    from paper_organizer.application.background_ocr import stop_active_ocr_workers
+
+    app.aboutToQuit.connect(stop_active_ocr_workers)
     lifecycle = LifecycleSettingsController()
     was_first_run = lifecycle.first_run_required()
     if was_first_run:
