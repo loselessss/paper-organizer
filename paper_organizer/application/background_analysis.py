@@ -16,6 +16,11 @@ from paper_organizer.infra.ollama_runtime import (
 )
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import default_settings_path, load_settings
+from paper_organizer.core.paperpack import (
+    PAPERPACK_SUFFIX,
+    content_pages,
+    load_paperpack_content,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,13 +109,26 @@ class BackgroundAnalysisService:
                 )
             )
         try:
-            pdf = self._workflow.materialize_pdf(Path(item.path))
             mode = (
                 SummaryMode.QUICK
                 if settings.resource_profile == "eco"
                 else SummaryMode.FULL
             )
-            prepared = self._summary.prepare(pdf, mode)
+            queued_path = Path(item.path)
+            try:
+                content = (
+                    load_paperpack_content(queued_path)
+                    if queued_path.suffix.casefold() == PAPERPACK_SUFFIX
+                    else {}
+                )
+            except Exception:
+                content = {}
+            pages = [text for _number, text in content_pages(content)]
+            if content.get("ocr_used") and pages:
+                prepared = self._summary.prepare_text(queued_path, pages, mode)
+            else:
+                pdf = self._workflow.materialize_pdf(queued_path)
+                prepared = self._summary.prepare(pdf, mode)
             execution = self._summary.run(prepared)
             self._workflow.apply_analysis_result(Path(item.path), execution)
             self._workflow.complete_analysis(item.queue_id)
@@ -132,6 +150,11 @@ class BackgroundAnalysisService:
                 item.queue_id,
                 item.title,
             )
+        finally:
+            if settings.summary_provider == "ollama":
+                from paper_organizer.infra.ollama_installer import stop_managed_runtime
+
+                stop_managed_runtime()
 
 
 def poll_interval_seconds(resource_profile: str) -> int:

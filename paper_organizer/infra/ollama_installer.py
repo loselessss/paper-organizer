@@ -23,6 +23,7 @@ _INSTALL_TIMEOUT_SECONDS = 900
 _START_TIMEOUT_SECONDS = 60
 
 CommandRunner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
+_managed_process: subprocess.Popen | None = None
 
 
 def _is_accessible_file(path: Path) -> bool:
@@ -144,8 +145,9 @@ def start_runtime(
     executable = find_ollama_executable()
     if not executable:
         return False
+    global _managed_process
     try:
-        subprocess.Popen(
+        _managed_process = subprocess.Popen(
             [executable, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -159,7 +161,27 @@ def start_runtime(
             return True
         sleep(1.0)
         deadline -= 1
+    stop_managed_runtime()
     return False
+
+
+def stop_managed_runtime() -> bool:
+    """Stop only the Ollama server process started by this application."""
+
+    global _managed_process
+    process = _managed_process
+    _managed_process = None
+    if process is None or process.poll() is not None:
+        return False
+    try:
+        process.terminate()
+        process.wait(timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        try:
+            process.kill()
+        except OSError:
+            pass
+    return True
 
 
 def ensure_runtime(

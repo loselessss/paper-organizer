@@ -50,6 +50,7 @@ class OpenAIProvider:
             "input": request.document_text,
             "max_output_tokens": request.max_output_tokens,
             "store": False,
+            "reasoning": {"effort": "none"},
             "text": {
                 "format": {
                     "type": "json_schema",

@@ -39,6 +39,7 @@ class OllamaProvider:
         payload: dict[str, Any] = {
             "model": self.model,
             "stream": False,
+            "think": False,
             "messages": [
                 {"role": "system", "content": system_instructions(request)},
                 {"role": "user", "content": request.document_text},

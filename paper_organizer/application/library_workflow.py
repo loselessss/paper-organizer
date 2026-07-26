@@ -133,6 +133,7 @@ class ReviewItem:
     detection_reason: str
     duplicate: DuplicateReference | None = None
     page_texts: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    ocr_used: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +246,41 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
 
 def _import_receipts_path(library_root: Path) -> Path:
     return library_root / "state" / "imported-sources.json"
+
+
+def _ignored_file_ids_path(library_root: Path) -> Path:
+    return library_root / "state" / "ignored-file-ids.json"
+
+
+def _load_ignored_file_ids(library_root: Path) -> set[str]:
+    path = _ignored_file_ids_path(library_root)
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(value) for value in data.get("file_sha256", []) if value}
+    except (OSError, TypeError, json.JSONDecodeError):
+        return set()
+
+
+def _record_ignored_file_id(library_root: Path, file_sha256: str) -> None:
+    values = _load_ignored_file_ids(library_root)
+    values.add(file_sha256)
+    _atomic_json_write(
+        _ignored_file_ids_path(library_root),
+        {"schema_version": 1, "file_sha256": sorted(values), "updated_at": _now_iso()},
+    )
+
+
+def _forget_ignored_file_id(library_root: Path, file_sha256: str) -> None:
+    values = _load_ignored_file_ids(library_root)
+    if file_sha256 not in values:
+        return
+    values.remove(file_sha256)
+    _atomic_json_write(
+        _ignored_file_ids_path(library_root),
+        {"schema_version": 1, "file_sha256": sorted(values), "updated_at": _now_iso()},
+    )
 
 
 def _load_import_receipts(library_root: Path) -> dict[str, dict[str, Any]]:
@@ -554,6 +590,30 @@ class LibraryWorkflowController:
         if input_path == library_path:
             raise LibraryWorkflowError("입력 폴더와 라이브러리 폴더는 달라야 합니다.")
         settings = self.settings()
+        previous_library = (
+            Path(settings.library_root).expanduser().resolve()
+            if settings.library_root
+            else None
+        )
+        if (
+            previous_library is not None
+            and previous_library != library_path
+            and previous_library.is_dir()
+        ):
+            library_path.mkdir(parents=True, exist_ok=True)
+            if any(library_path.iterdir()):
+                raise LibraryWorkflowError(
+                    "새 라이브러리 폴더가 비어 있지 않아 기존 데이터를 옮길 수 없습니다."
+                )
+            try:
+                for child in previous_library.iterdir():
+                    shutil.move(str(child), str(library_path / child.name))
+            except Exception as exc:
+                raise LibraryWorkflowError(
+                    f"라이브러리 데이터 이동 중 실패했습니다: {exc}"
+                ) from None
+        else:
+            library_path.mkdir(parents=True, exist_ok=True)
         settings.input_dir = str(input_path)
         settings.library_root = str(library_path)
         settings.auto_enabled = bool(auto_enabled)
@@ -599,6 +659,7 @@ class LibraryWorkflowController:
             if found.path in active_candidates
         ]
         references = tuple(_library_references(library_root)) if library_root.is_dir() else ()
+        ignored_file_ids = _load_ignored_file_ids(library_root)
         items: list[ReviewItem] = []
         problems: list[ScanProblem] = []
         for found in stable:
@@ -609,7 +670,23 @@ class LibraryWorkflowController:
                 continue
             try:
                 page_texts = extract_page_texts(found.path)
+                ocr_used = False
+                if _detection(page_texts)[0] == "needs_ocr":
+                    try:
+                        from paper_organizer.application.background_ocr import (
+                            ocr_page_texts,
+                        )
+
+                        recognized = ocr_page_texts(found.path)
+                        if sum(len(text.strip()) for text in recognized) >= 500:
+                            page_texts = recognized
+                            ocr_used = True
+                    except Exception:
+                        pass
                 identity = build_identity_from_pages(sha256_file(found.path), page_texts)
+                if identity.file_sha256 in ignored_file_ids:
+                    self._tracker.forget(found.path)
+                    continue
                 status, reason = _detection(page_texts)
                 item = ReviewItem(
                     path=found.path,
@@ -619,6 +696,7 @@ class LibraryWorkflowController:
                     detection_reason=reason,
                     duplicate=_best_duplicate(identity, references),
                     page_texts=tuple(page_texts),
+                    ocr_used=ocr_used,
                 )
                 self._cache[found.path] = (*key, item)
                 try:
@@ -733,7 +811,7 @@ class LibraryWorkflowController:
                 page_texts = extract_page_texts(source)
             except PdfIdentityError:
                 page_texts = []
-        content = build_content_payload(page_texts)
+        content = build_content_payload(page_texts, ocr_used=item.ocr_used)
         try:
             import_result = import_pdf_to_paperpack(
                 destination,
@@ -785,8 +863,7 @@ class LibraryWorkflowController:
         return OrganizedPaper(destination, destination, "; ".join(warnings))
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
-        if item.duplicate is None or not item.duplicate.confirmed:
-            raise LibraryWorkflowError("확인된 중복 파일만 휴지통으로 이동할 수 있습니다.")
+        """Move a new PDF to recoverable app trash and remember its file ID."""
         _input_dir, library_root = self.configured_paths()
         source = item.path.resolve()
         if not source.is_file() or sha256_file(source) != item.identity.file_sha256:
@@ -805,12 +882,18 @@ class LibraryWorkflowController:
                 {
                     "schema_version": 1,
                     "operation_id": operation_id,
-                    "kind": "unorganized_duplicate",
+                    "kind": (
+                        "unorganized_duplicate"
+                        if item.duplicate is not None and item.duplicate.confirmed
+                        else "discarded_new_pdf"
+                    ),
                     "created_at": _now_iso(),
                     "original_path": str(source),
                     "trashed_name": destination.name,
                     "sha256": item.identity.file_sha256,
-                    "duplicate_of": str(item.duplicate.pdf_path),
+                    "duplicate_of": (
+                        str(item.duplicate.pdf_path) if item.duplicate is not None else ""
+                    ),
                     "restored_at": None,
                 },
             )
@@ -820,6 +903,7 @@ class LibraryWorkflowController:
             raise LibraryWorkflowError(f"휴지통 이동을 완료하지 못했습니다: {exc}") from None
         self._tracker.forget(source)
         self._cache.pop(source, None)
+        _record_ignored_file_id(library_root, item.identity.file_sha256)
         try:
             self._queue().remove(f"sha256:{item.identity.file_sha256}")
         except AnalysisQueueError:
@@ -876,6 +960,7 @@ class LibraryWorkflowController:
             else _unique_destination(destination_dir, requested.name)
         )
         shutil.move(str(trashed), str(destination))
+        _forget_ignored_file_id(root, str(data.get("sha256", "")))
         data["restored_at"] = _now_iso()
         data["restored_path"] = str(destination)
         try:

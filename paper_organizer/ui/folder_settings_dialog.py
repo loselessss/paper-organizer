@@ -162,6 +162,17 @@ class FolderSettingsDialog(QDialog):
             self.interval_spin.setValue(defaults[profile])
 
     def _save(self) -> None:
+        _old_input, old_library = self._controller.configured_paths()
+        new_library = Path(self.library_edit.text().strip()).expanduser().resolve()
+        if old_library.resolve() != new_library and old_library.exists():
+            if QMessageBox.question(
+                self,
+                "라이브러리 폴더 이동",
+                "라이브러리 폴더를 변경하면 PaperPack, 색인 DB, 분석 큐와 상태 파일을 "
+                "모두 새 폴더로 옮깁니다. 파일이 많으면 시간이 오래 걸릴 수 있습니다.\n\n"
+                "계속할까요?",
+            ) != QMessageBox.Yes:
+                return
         try:
             self._controller.save_paths(
                 Path(self.input_edit.text().strip()),

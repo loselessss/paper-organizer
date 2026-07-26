@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
@@ -35,6 +35,7 @@ from .lifecycle_dialog import LifecyclePreferencesDialog
 from .migration_widget import LegacyMigrationDialog
 from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
+from .folder_settings_dialog import FolderSettingsDialog
 from .startup_splash import app_icon_path
 
 
@@ -91,6 +92,10 @@ class PaperOrganizerWindow(QMainWindow):
 
         settings_menu = self.menuBar().addMenu("설정")
         if self._library_workflow is not None:
+            folder_action = QAction("폴더 및 감시 설정...", self)
+            folder_action.triggered.connect(self.show_folder_settings)
+            settings_menu.addAction(folder_action)
+        if self._library_workflow is not None:
             tools_menu = self.menuBar().addMenu("도구")
             export_action = QAction("PDF 환원 (일괄 추출)...", self)
             export_action.triggered.connect(self.show_pdf_export)
@@ -103,6 +108,8 @@ class PaperOrganizerWindow(QMainWindow):
             reindex_action.triggered.connect(self.rebuild_search_index)
             tools_menu.addAction(reindex_action)
         self._create_ai_menu()
+        self._create_shortcuts()
+        self._create_help_menu()
         if self._lifecycle is not None:
             lifecycle_action = QAction("시작 및 종료 설정...", self)
             lifecycle_action.triggered.connect(self.show_lifecycle_settings)
@@ -157,6 +164,7 @@ class PaperOrganizerWindow(QMainWindow):
             menu.addAction(action)
         menu.addSeparator()
         summary_action = QAction("즉시 요약...", self)
+        summary_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         summary_action.triggered.connect(self.show_immediate_summary)
         menu.addAction(summary_action)
         menu.addSeparator()
@@ -168,6 +176,48 @@ class PaperOrganizerWindow(QMainWindow):
         menu.addAction(models_action)
         menu.aboutToShow.connect(self._sync_provider_actions)
         self._sync_provider_actions()
+
+    def _create_shortcuts(self) -> None:
+        if self.collection_widget is not None:
+            scan_action = QAction("새 PDF 검색", self)
+            scan_action.setShortcut(QKeySequence.Refresh)
+            scan_action.triggered.connect(lambda: self.collection_widget.scan_now(True))
+            self.addAction(scan_action)
+        if self.library_widget is not None:
+            search_action = QAction("라이브러리 검색", self)
+            search_action.setShortcut(QKeySequence.Find)
+            search_action.triggered.connect(self.library_widget.search_edit.setFocus)
+            self.addAction(search_action)
+
+    def _create_help_menu(self) -> None:
+        menu = self.menuBar().addMenu("도움말")
+        about_action = QAction("Paper Organizer 정보", self)
+        about_action.triggered.connect(self._show_about)
+        menu.addAction(about_action)
+        shortcuts_action = QAction("단축키", self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        menu.addAction(shortcuts_action)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "Paper Organizer 정보",
+            "<h3>Paper Organizer</h3>"
+            "<p>제작: SANGKYU SHIN, Ph.D.</p>"
+            "<p>1.0 기능 확장 기여: leonkim25</p>"
+            "<p>학술 PDF를 로컬 우선 방식으로 분류·보관·검색합니다.</p>",
+        )
+
+    def _show_shortcuts(self) -> None:
+        QMessageBox.information(
+            self,
+            "단축키",
+            "F5: 새 PDF 검색\n"
+            "Ctrl+F: 라이브러리 검색\n"
+            "Ctrl+Shift+S: 즉시 요약\n"
+            "Ctrl+A: 표 전체 선택\n"
+            "Esc: 대화상자 닫기",
+        )
 
     def _sync_provider_actions(self) -> None:
         current = self._ai_settings.settings().summary_provider
@@ -197,15 +247,40 @@ class PaperOrganizerWindow(QMainWindow):
         OllamaModelDialog(self._ai_settings, self).exec_()
 
     def show_immediate_summary(self, path: str = "") -> None:
+        resume_background = bool(
+            self.queue_widget is not None
+            and self.queue_widget.is_background_running()
+        )
+        if resume_background and not self.queue_widget.pause_background_analysis():
+            QMessageBox.information(
+                self,
+                "백그라운드 분석 마무리 중",
+                "현재 논문 분석이 끝난 뒤 백그라운드 작업이 멈춥니다. "
+                "완료 후 즉시 요약을 다시 열어 주세요.",
+            )
+            return
         dialog = ImmediateSummaryDialog(self._immediate_summary, self)
         if path:
             dialog.select_pdf(path)
         dialog.exec_()
+        if resume_background and self.queue_widget is not None:
+            self.queue_widget.start_background_analysis()
 
     def show_pdf_export(self) -> None:
         if self._library_workflow is None:
             return
         PdfExportDialog(self._library_workflow, self).exec_()
+
+    def show_folder_settings(self) -> None:
+        if self._library_workflow is None:
+            return
+        if FolderSettingsDialog(self._library_workflow, self).exec_():
+            if self.collection_widget is not None:
+                self.collection_widget._reload_watch_settings()
+            if self.queue_widget is not None:
+                self.queue_widget.refresh()
+            if self.library_widget is not None:
+                self.library_widget.refresh(True)
 
     def show_legacy_migration(self) -> None:
         if self._library_workflow is None:

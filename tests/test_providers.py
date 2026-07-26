@@ -79,6 +79,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(call["url"], "https://api.openai.com/v1/responses")
         self.assertEqual(call["headers"]["Authorization"], "Bearer secret")
         self.assertFalse(call["payload"]["store"])
+        self.assertEqual(call["payload"]["reasoning"], {"effort": "none"})
         self.assertEqual(
             call["payload"]["text"]["format"]["type"], "json_schema"
         )
@@ -129,6 +130,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.provider, "ollama")
         self.assertEqual(client.calls[0]["url"], "http://127.0.0.1:11434/api/chat")
         self.assertEqual(client.calls[0]["payload"]["format"]["type"], "object")
+        self.assertFalse(client.calls[0]["payload"]["think"])
 
     def test_invalid_provider_shape_is_rejected(self):
         broken = dict(SUMMARY)

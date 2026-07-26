@@ -276,6 +276,47 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(controller.list_trash(), [])
             self.assertEqual(len(controller.analysis_queue()), 2)
 
+    def test_new_pdf_can_be_discarded_and_ignored_until_restored(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "discard.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+
+            operation = controller.trash_confirmed_duplicate(item)
+            manifest = json.loads(operation.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["kind"], "discarded_new_pdf")
+            self.assertFalse(source.exists())
+
+            restored = controller.restore_trash(controller.list_trash()[0])
+            self.assertTrue(restored.exists())
+            self.assertEqual(len(self._scan_twice(controller).items), 1)
+
+    def test_changing_library_root_moves_database_and_state_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            marker = library / "index" / "search.sqlite"
+            marker.parent.mkdir(parents=True)
+            marker.write_bytes(b"database")
+            state = library / "state" / "analysis-queue.json"
+            state.parent.mkdir(parents=True)
+            state.write_text('{"schema_version":1,"items":[]}', encoding="utf-8")
+            destination = root / "moved-library"
+
+            controller.save_paths(
+                input_dir,
+                destination,
+                auto_enabled=False,
+            )
+
+            self.assertFalse(marker.exists())
+            self.assertEqual(
+                (destination / "index" / "search.sqlite").read_bytes(), b"database"
+            )
+            self.assertTrue((destination / "state" / "analysis-queue.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

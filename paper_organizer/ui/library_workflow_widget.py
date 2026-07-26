@@ -119,8 +119,7 @@ class MetadataForm(QGroupBox):
         self.subcategory_edit = QLineEdit("General")
         self.tags_edit = QLineEdit()
         self.tags_edit.setPlaceholderText("쉼표로 구분")
-        self.summary_edit = QTextEdit()
-        self.summary_edit.setMaximumHeight(105)
+        self._summary_ko = ""
         form.addRow("제목", self.title_edit)
         form.addRow("저자", self.authors_edit)
         form.addRow("연도", self.year_edit)
@@ -128,7 +127,6 @@ class MetadataForm(QGroupBox):
         form.addRow("분야", self.category_edit)
         form.addRow("세부분야", self.subcategory_edit)
         form.addRow("태그", self.tags_edit)
-        form.addRow("한국어 설명", self.summary_edit)
 
     def set_metadata(self, metadata: EditablePaperMetadata | None) -> None:
         value = metadata or EditablePaperMetadata()
@@ -139,7 +137,7 @@ class MetadataForm(QGroupBox):
         self.category_edit.setText(value.category)
         self.subcategory_edit.setText(value.subcategory)
         self.tags_edit.setText(", ".join(value.tags))
-        self.summary_edit.setPlainText(value.summary_ko)
+        self._summary_ko = value.summary_ko
         self.setEnabled(metadata is not None)
 
     def metadata(self) -> EditablePaperMetadata:
@@ -155,7 +153,7 @@ class MetadataForm(QGroupBox):
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
             tags=split_values(self.tags_edit.text()),
-            summary_ko=self.summary_edit.toPlainText().strip(),
+            summary_ko=self._summary_ko,
         )
 
 
@@ -205,7 +203,7 @@ class CollectionReviewWidget(QWidget):
         review_actions = QHBoxLayout()
         self.open_button = QPushButton("sPDF로 열기")
         self.organize_button = QPushButton("승인 후 paperpack으로 보관")
-        self.trash_button = QPushButton("확인된 중복을 앱 휴지통으로 이동")
+        self.trash_button = QPushButton("새 PDF 삭제 (앱 휴지통)")
         self.restore_button = QPushButton("앱 휴지통에서 복원…")
         self.open_button.clicked.connect(self._open_selected)
         self.organize_button.clicked.connect(self._organize_selected)
@@ -299,8 +297,7 @@ class CollectionReviewWidget(QWidget):
         enabled = item is not None
         self.open_button.setEnabled(enabled)
         self.organize_button.setEnabled(enabled)
-        confirmed = bool(item and item.duplicate and item.duplicate.confirmed)
-        self.trash_button.setEnabled(confirmed)
+        self.trash_button.setEnabled(enabled)
         if not item:
             self.detail_label.setText("검토할 PDF를 선택하세요.")
             return
@@ -348,12 +345,13 @@ class CollectionReviewWidget(QWidget):
 
     def _trash_selected(self) -> None:
         item = self._selected()
-        if item is None or item.duplicate is None or not item.duplicate.confirmed:
+        if item is None:
             return
         if QMessageBox.question(
             self,
-            "중복 파일 이동",
-            "이 파일은 자동 영구 삭제되지 않습니다. 복구 가능한 앱 휴지통으로 이동할까요?",
+            "새 PDF 삭제",
+            "파일을 복구 가능한 앱 휴지통으로 옮기고 파일 ID를 보관해 다시 감지되지 "
+            "않도록 합니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
         try:
@@ -427,10 +425,12 @@ class AnalysisQueueWidget(QWidget):
         )
         note.setWordWrap(True)
         root.addWidget(note)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["우선순위", "상태", "제목", "파일"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["우선순위", "상태", "제목", "실패 사유", "파일"]
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
@@ -438,21 +438,27 @@ class AnalysisQueueWidget(QWidget):
         root.addWidget(self.table, 1)
         actions = QHBoxLayout()
         refresh_button = QPushButton("새로고침")
+        select_all_button = QPushButton("전체 선택")
         self.priority_button = QPushButton("최우선으로 표시")
         self.summary_button = QPushButton("즉시 요약으로 보내기")
         self.remove_button = QPushButton("큐에서만 제거")
+        self.retry_button = QPushButton("실패 항목 다시 분석")
         self.run_now_button = QPushButton("선택 항목 지금 분석")
         self.background_button = QPushButton("백그라운드 분석 시작")
         refresh_button.clicked.connect(self.refresh)
+        select_all_button.clicked.connect(self.table.selectAll)
         self.priority_button.clicked.connect(self._toggle_priority)
         self.summary_button.clicked.connect(self._send_to_summary)
         self.remove_button.clicked.connect(self._remove_selected)
+        self.retry_button.clicked.connect(self._retry_selected)
         self.run_now_button.clicked.connect(self._run_selected_now)
         self.background_button.clicked.connect(self._toggle_background)
         actions.addWidget(refresh_button)
+        actions.addWidget(select_all_button)
         actions.addWidget(self.priority_button)
         actions.addWidget(self.summary_button)
         actions.addWidget(self.remove_button)
+        actions.addWidget(self.retry_button)
         actions.addWidget(self.run_now_button)
         actions.addWidget(self.background_button)
         actions.addStretch(1)
@@ -488,9 +494,10 @@ class AnalysisQueueWidget(QWidget):
                 "높음" if item.priority else "보통",
                 status_labels.get(item.status, item.status),
                 item.title,
+                item.last_error if item.status == "failed" else "",
                 item.path,
             ]
-            sort_keys = [1 - int(bool(item.priority)), None, None, None]
+            sort_keys = [1 - int(bool(item.priority)), None, None, None, None]
             analyzing = item.status == "analyzing"
             for column, value in enumerate(values):
                 cell = _SortableQueueItem(value)
@@ -552,6 +559,9 @@ class AnalysisQueueWidget(QWidget):
         self.priority_button.setEnabled(mutable)
         self.summary_button.setEnabled(bool(item and Path(item.path).is_file()))
         self.remove_button.setEnabled(mutable)
+        self.retry_button.setEnabled(
+            any(item.status == "failed" for item in self._selected_items())
+        )
         self.run_now_button.setEnabled(
             bool(
                 item
@@ -565,6 +575,29 @@ class AnalysisQueueWidget(QWidget):
             self.priority_button.setText(
                 "보통 우선순위로 변경" if item.priority else "최우선으로 표시"
             )
+
+    def _selected_items(self) -> list[AnalysisQueueItem]:
+        queue_ids = {
+            cell.data(Qt.UserRole)
+            for cell in self.table.selectedItems()
+            if cell.column() == 0
+        }
+        return [item for item in self._items if item.queue_id in queue_ids]
+
+    def _retry_selected(self) -> None:
+        failed = [item for item in self._selected_items() if item.status == "failed"]
+        if not failed:
+            return
+        try:
+            for item in failed:
+                self._controller.retry_queue_item(item.queue_id, high=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "재분석 요청 실패", str(exc))
+            return
+        self.start_background_analysis()
+        if self._analysis_worker is not None:
+            self._analysis_worker.request_wake()
+        self.refresh()
 
     def _toggle_priority(self) -> None:
         item = self._selected()
@@ -711,6 +744,23 @@ class AnalysisQueueWidget(QWidget):
             and self._analysis_worker.is_processing()
         )
 
+    def is_background_running(self) -> bool:
+        return bool(
+            self._analysis_worker is not None and self._analysis_worker.isRunning()
+        )
+
+    def pause_background_analysis(self) -> bool:
+        """Stop an idle worker before foreground AI work; never create overlap."""
+
+        worker = self._analysis_worker
+        if worker is None or not worker.isRunning():
+            return True
+        if worker.is_processing():
+            worker.request_stop()
+            return False
+        worker.request_stop()
+        return worker.wait(3000)
+
     def shutdown_background_analysis(self) -> None:
         worker = self._analysis_worker
         if worker is None:
@@ -740,7 +790,7 @@ class LibraryWidget(QWidget):
         root.addLayout(search_row)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["제목", "저널/학회", "저자", "연도", "분야", "판본"]
+            ["제목", "저널/학회", "저자", "연도", "분야", "분석 상태"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -807,15 +857,27 @@ class LibraryWidget(QWidget):
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
         self.table.setRowCount(len(self._entries))
+        queue_by_path = {
+            str(Path(item.path).resolve()): item
+            for item in self._controller.analysis_queue()
+        }
+        status_labels = {
+            "pending_review": "검토 대기",
+            "organized_pending_analysis": "분석 대기",
+            "analyzing": "분석 중",
+            "completed": "분석 완료",
+            "failed": "분석 실패",
+        }
         for row, entry in enumerate(self._entries):
             metadata = entry.metadata
+            queue_item = queue_by_path.get(str(entry.sidecar_path.resolve()))
             values = [
                 metadata.title,
                 metadata.venue,
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",
-                entry.source_variant,
+                status_labels.get(queue_item.status, "미등록") if queue_item else "미등록",
             ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))

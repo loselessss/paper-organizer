@@ -88,6 +88,16 @@ class ImmediateSummaryController:
     ) -> PreparedSummary:
         return prepare_summary(pdf_path, load_settings(self._settings_path), mode)
 
+    def prepare_text(
+        self,
+        source_path: Path,
+        page_texts: list[str],
+        mode: SummaryMode | str = SummaryMode.QUICK,
+    ) -> PreparedSummary:
+        return prepare_text_summary(
+            source_path, page_texts, load_settings(self._settings_path), mode
+        )
+
     def run(
         self, prepared: PreparedSummary, *, allow_cloud_once: bool = False
     ) -> SummaryExecution:
@@ -131,6 +141,41 @@ def prepare_summary(
         ]
     finally:
         document.close()
+    return _prepared_from_chunks(path, page_count, page_indexes, chunks, settings, selected_mode)
+
+
+def prepare_text_summary(
+    source_path: Path,
+    page_texts: list[str],
+    settings: AppSettings,
+    mode: SummaryMode | str = SummaryMode.QUICK,
+) -> PreparedSummary:
+    """Prepare a summary from previously OCRed PaperPack page text."""
+
+    settings.validate()
+    selected_mode = SummaryMode(mode)
+    path = Path(source_path).expanduser().resolve()
+    page_indexes = _selected_page_indexes(len(page_texts), selected_mode)
+    chunks = [
+        f"[PDF PAGE {index + 1}]\n{page_texts[index]}" for index in page_indexes
+    ]
+    return _prepared_from_chunks(
+        path, len(page_texts), page_indexes, chunks, settings, selected_mode
+    )
+
+
+def _prepared_from_chunks(
+    path: Path,
+    page_count: int,
+    page_indexes: tuple[int, ...],
+    chunks: list[str],
+    settings: AppSettings,
+    selected_mode: SummaryMode,
+) -> PreparedSummary:
+    provider = settings.summary_provider
+    model = _selected_model(settings)
+    if not model:
+        raise SummaryPreparationError("요약 AI 모델을 먼저 선택하세요.")
     text = _clean_text("\n\n".join(chunks))
     if len(text) < MINIMUM_TEXT_CHARS:
         raise SummaryPreparationError(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -65,6 +65,10 @@ class _SummaryWorker(QThread):
             )
         except Exception as exc:
             self.failed.emit(str(exc))
+        finally:
+            from paper_organizer.infra.ollama_installer import stop_managed_runtime
+
+            stop_managed_runtime()
 
 
 class ImmediateSummaryWidget(QWidget):
@@ -128,6 +132,8 @@ class ImmediateSummaryWidget(QWidget):
         )
         if path:
             self.path_edit.setText(path)
+            QTimer.singleShot(0, self._prepare)
+            QTimer.singleShot(0, self._prepare)
 
     def _invalidate_preview(self) -> None:
         self._prepared = None
@@ -166,6 +172,7 @@ class ImmediateSummaryWidget(QWidget):
         self.consent_check.setEnabled(preview.requires_cloud_consent)
         self.consent_check.setChecked(not preview.requires_cloud_consent)
         self.run_button.setEnabled(True)
+        self.preview_button.hide()
         self.status_label.setText("미리보기 완료 · 실행 전까지 전송되지 않습니다.")
 
     def _run(self) -> None:
@@ -234,12 +241,13 @@ class ImmediateSummaryWidget(QWidget):
         return self._worker is not None and self._worker.isRunning()
 
     def select_pdf(self, path: str | Path) -> None:
-        """Load a queued paper without starting or transmitting an AI request."""
+        """Load a queued paper and prepare its non-transmitting preview."""
         self.path_edit.setText(str(path))
         quick_index = self.mode_combo.findData(SummaryMode.QUICK.value)
         if quick_index >= 0:
             self.mode_combo.setCurrentIndex(quick_index)
         self.setFocus()
+        QTimer.singleShot(0, self._prepare)
 
 
 class ImmediateSummaryDialog(QDialog):

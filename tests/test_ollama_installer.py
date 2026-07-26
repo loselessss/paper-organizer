@@ -11,6 +11,7 @@ from paper_organizer.infra.ollama_installer import (
     ensure_runtime,
     find_winget_executable,
     inspect_runtime,
+    stop_managed_runtime,
 )
 from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
 
@@ -100,6 +101,18 @@ class FindWingetTests(unittest.TestCase):
             side_effect=OSError("access denied"),
         ):
             self.assertEqual(find_winget_executable(), "")
+
+
+class ManagedRuntimeTests(unittest.TestCase):
+    def test_only_tracked_runtime_process_is_stopped(self):
+        process = mock.Mock()
+        process.poll.return_value = None
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer._managed_process", process
+        ):
+            self.assertTrue(stop_managed_runtime())
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=10)
 
 
 class EnsureRuntimeTests(unittest.TestCase):

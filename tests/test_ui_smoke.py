@@ -111,7 +111,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 1.0.0", splash_labels)
+            self.assertIn("Version 1.1.0", splash_labels)
             self.assertEqual(
                 window.queue_widget.background_button.text(),
                 "백그라운드 분석 시작",
