@@ -178,6 +178,28 @@ class OllamaModelClientTests(unittest.TestCase):
 
 
 class OllamaModelManagerTests(unittest.TestCase):
+    def test_installed_12b_or_larger_model_is_inventory_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            large = InstalledOllamaModel(
+                "gemma3:12b",
+                8.1,
+                "12.2B",
+                "Q4_K_M",
+                "today",
+            )
+            service = OllamaModelManagerService(
+                Path(temp) / "settings.json",
+                hardware=FakeHardware(profile()),
+                runtime=FakeRuntime(large),
+                client=FakeClient(),
+            )
+
+            snapshot = service.snapshot()
+
+        entry = next(item for item in snapshot.entries if item.model_id == "gemma3:12b")
+        self.assertTrue(entry.installed)
+        self.assertFalse(entry.selectable)
+
     def test_install_checks_disk_then_tracks_only_verified_model(self):
         with tempfile.TemporaryDirectory() as temp:
             settings_path = Path(temp) / "settings.json"

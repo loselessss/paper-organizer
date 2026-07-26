@@ -21,6 +21,7 @@ OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
 WINGET_PACKAGE_ID = "Ollama.Ollama"
 _INSTALL_TIMEOUT_SECONDS = 180
 _START_TIMEOUT_SECONDS = 60
+_OLLAMA_LOOPBACK_HOST = "127.0.0.1:11434"
 
 CommandRunner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 _managed_process: subprocess.Popen | None = None
@@ -147,10 +148,15 @@ def start_runtime(
         return False
     global _managed_process
     try:
+        environment = os.environ.copy()
+        # The application always inspects the loopback endpoint. Do not inherit a
+        # user-level OLLAMA_HOST that would make the managed server listen elsewhere.
+        environment["OLLAMA_HOST"] = _OLLAMA_LOOPBACK_HOST
         _managed_process = subprocess.Popen(
             [executable, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=environment,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError:
@@ -159,6 +165,9 @@ def start_runtime(
     while deadline > 0:
         if probe.inspect().reachable:
             return True
+        if _managed_process.poll() is not None:
+            _managed_process = None
+            return False
         sleep(1.0)
         deadline -= 1
     stop_managed_runtime()

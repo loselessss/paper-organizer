@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Callable
 
 import fitz
 
@@ -87,10 +88,12 @@ class ImmediateSummaryController:
         secret_store: SecretStore,
         settings_path: Path | None = None,
         http_client: JsonHttpClient | None = None,
+        ollama_starter: Callable[[], bool] | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._http_client = http_client
+        self._ollama_starter = ollama_starter
 
     def prepare(
         self, pdf_path: Path, mode: SummaryMode | str = SummaryMode.QUICK
@@ -110,9 +113,21 @@ class ImmediateSummaryController:
     def run(
         self, prepared: PreparedSummary, *, allow_cloud_once: bool = False
     ) -> SummaryExecution:
+        settings = load_settings(self._settings_path)
+        if settings.summary_provider == "ollama":
+            starter = self._ollama_starter
+            if starter is None:
+                from paper_organizer.infra.ollama_installer import start_runtime
+
+                starter = start_runtime
+            if not starter():
+                raise SummaryPreparationError(
+                    "Ollama 서버를 시작할 수 없습니다. "
+                    "AI 설정에서 Ollama 설치 상태를 확인하세요."
+                )
         return run_prepared_summary(
             prepared,
-            load_settings(self._settings_path),
+            settings,
             self._secret_store,
             allow_cloud_once=allow_cloud_once,
             http_client=self._http_client,

@@ -377,6 +377,8 @@ class OllamaModelDialog(QDialog):
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         for entry in snapshot.entries:
+            if not entry.selectable:
+                continue
             state = "설치됨" if entry.installed else "미설치"
             size = (
                 f"실제 {entry.installed_size_gb:g}GB"
@@ -412,12 +414,13 @@ class OllamaModelDialog(QDialog):
             if not entry.installed:
                 continue
             owner = " · 앱에서 받은 모델" if entry.managed_by_app else " · 공유/기존 모델"
+            selection = " · 12B 이상 선택 제외" if not entry.selectable else ""
             details = " ".join(
                 value for value in (entry.parameter_size, entry.quantization) if value
             )
             installed_lines.append(
                 f"{entry.model_id} — {entry.installed_size_gb:g}GB"
-                f"{f' · {details}' if details else ''}{owner}"
+                f"{f' · {details}' if details else ''}{owner}{selection}"
             )
         self.installed_models.setPlainText("\n".join(installed_lines))
         self._selection_changed()

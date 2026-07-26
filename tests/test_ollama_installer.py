@@ -11,6 +11,7 @@ from paper_organizer.infra.ollama_installer import (
     ensure_runtime,
     find_winget_executable,
     inspect_runtime,
+    start_runtime,
     stop_managed_runtime,
 )
 from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
@@ -104,6 +105,41 @@ class FindWingetTests(unittest.TestCase):
 
 
 class ManagedRuntimeTests(unittest.TestCase):
+    def test_stopped_runtime_starts_on_the_loopback_endpoint(self):
+        process = mock.Mock()
+        process.poll.return_value = None
+        inspector = FakeInspector(stopped(), running())
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.find_ollama_executable",
+            return_value="C:/ollama.exe",
+        ), mock.patch(
+            "paper_organizer.infra.ollama_installer.subprocess.Popen",
+            return_value=process,
+        ) as popen:
+            self.assertTrue(start_runtime(inspector=inspector, sleep=lambda _: None))
+
+        command = popen.call_args.args[0]
+        environment = popen.call_args.kwargs["env"]
+        self.assertEqual(command, ["C:/ollama.exe", "serve"])
+        self.assertEqual(environment["OLLAMA_HOST"], "127.0.0.1:11434")
+
+    def test_runtime_that_exits_during_startup_fails_immediately(self):
+        process = mock.Mock()
+        process.poll.return_value = 1
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.find_ollama_executable",
+            return_value="C:/ollama.exe",
+        ), mock.patch(
+            "paper_organizer.infra.ollama_installer.subprocess.Popen",
+            return_value=process,
+        ):
+            self.assertFalse(
+                start_runtime(
+                    inspector=FakeInspector(stopped()),
+                    sleep=lambda _: None,
+                )
+            )
+
     def test_only_tracked_runtime_process_is_stopped(self):
         process = mock.Mock()
         process.poll.return_value = None

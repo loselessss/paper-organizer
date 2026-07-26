@@ -77,6 +77,7 @@ class UiSmokeTests(unittest.TestCase):
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
+            self.assertTrue(dialog.model_edit.isReadOnly())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
                 dialog.use_recommendation_button.text(),
@@ -299,12 +300,25 @@ class UiSmokeTests(unittest.TestCase):
                         "",
                         False,
                     ),
+                    OllamaModelEntry(
+                        "gemma3:12b",
+                        "Gemma 3 12B",
+                        None,
+                        True,
+                        8.1,
+                        "12.2B",
+                        "Q4_K_M",
+                        False,
+                        False,
+                    ),
                 ),
             )
 
             dialog._apply_snapshot(snapshot)
 
             self.assertEqual(dialog.model_combo.currentData(), "qwen3:8b")
+            self.assertEqual(dialog.model_combo.findData("gemma3:12b"), -1)
+            self.assertIn("12B 이상 선택 제외", dialog.installed_models.toPlainText())
             self.assertEqual(dialog.install_button.text(), "다운로드 후 선택")
             dialog.close()
 

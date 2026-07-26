@@ -134,7 +134,7 @@ def recommend_models(
         recommended = _highest_stable(fast, hardware.memory_total_gb) or _smallest(eligible)
     elif profile == "balanced":
         balanced = [
-            candidate for candidate in eligible if candidate.spec.parameters_b <= 12
+            candidate for candidate in eligible if candidate.spec.parameters_b <= 8
         ]
         recommended = _highest_stable(
             balanced, hardware.memory_total_gb

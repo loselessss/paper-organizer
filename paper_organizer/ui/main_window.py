@@ -319,10 +319,11 @@ class PaperOrganizerWindow(QMainWindow):
         QMessageBox.information(
             self,
             "AI 분석 설정",
-            "Paper Organizer의 자동 분석을 사용하려면 AI 제공자와 모델을 준비해야 "
-            "합니다.\n\n로컬 처리를 권장하며, Ollama를 선택하면 다음 화면에서 "
-            "런타임과 모델을 설치할 수 있습니다. OpenAI 또는 Anthropic을 선택하면 "
-            "API 키와 클라우드 전송 동의를 설정하세요.",
+            "Paper Organizer는 기본 요약 AI로 Ollama를 이용하기 때문에 먼저 "
+            "Ollama와 요약 모델을 설치해야 합니다.\n\n다음 설정 화면에서 "
+            "로컬 Ollama를 선택한 뒤 추천 모델의 설치·검증을 진행하세요. "
+            "OpenAI 또는 Anthropic을 대신 사용하려면 API 키와 클라우드 전송 "
+            "동의를 설정할 수 있습니다.",
         )
         AiSettingsDialog(self._ai_settings, self).exec_()
         self._sync_provider_actions()

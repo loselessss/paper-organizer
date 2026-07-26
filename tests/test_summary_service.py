@@ -8,13 +8,14 @@ from unittest.mock import patch
 import fitz
 
 from paper_organizer.application.summary_service import (
+    ImmediateSummaryController,
     SummaryMode,
     SummaryPreparationError,
     prepare_summary,
     prepare_text_summary,
     run_prepared_summary,
 )
-from paper_organizer.infra.settings import AppSettings
+from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError
 
 
@@ -80,6 +81,64 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_immediate_local_summary_starts_ollama_before_request(self):
+        with tempfile.TemporaryDirectory() as temp:
+            settings_path = Path(temp) / "settings.json"
+            settings = AppSettings(
+                summary_provider="ollama",
+                selected_model="qwen3:4b",
+            )
+            save_settings(settings, settings_path)
+            prepared = prepare_text_summary(
+                Path("paper.paperpack"),
+                ["Main academic content and evidence. " * 30],
+                settings,
+            )
+            starts = []
+            controller = ImmediateSummaryController(
+                MemorySecretStore(),
+                settings_path,
+                ollama_starter=lambda: bool(starts.append(True) or True),
+            )
+            expected = object()
+            with patch(
+                "paper_organizer.application.summary_service.run_prepared_summary",
+                return_value=expected,
+            ) as run:
+                result = controller.run(prepared)
+
+        self.assertIs(result, expected)
+        self.assertEqual(starts, [True])
+        run.assert_called_once()
+
+    def test_immediate_local_summary_reports_ollama_restart_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            settings_path = Path(temp) / "settings.json"
+            settings = AppSettings(
+                summary_provider="ollama",
+                selected_model="qwen3:4b",
+            )
+            save_settings(settings, settings_path)
+            prepared = prepare_text_summary(
+                Path("paper.paperpack"),
+                ["Main academic content and evidence. " * 30],
+                settings,
+            )
+            controller = ImmediateSummaryController(
+                MemorySecretStore(),
+                settings_path,
+                ollama_starter=lambda: False,
+            )
+            with patch(
+                "paper_organizer.application.summary_service.run_prepared_summary"
+            ) as run:
+                with self.assertRaisesRegex(
+                    SummaryPreparationError, "Ollama 서버를 시작할 수 없습니다"
+                ):
+                    controller.run(prepared)
+
+        run.assert_not_called()
+
     def test_quick_preview_shows_exact_transmission_scope(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.pdf"

@@ -130,23 +130,18 @@ class LocalAiTests(unittest.TestCase):
             profile="auto",
         )
         self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:1.7b")
-        large = next(
-            item
-            for item in recommendation.candidates
-            if item.spec.model_id == "qwen3:14b"
+        self.assertTrue(
+            all(item.spec.parameters_b <= 8 for item in recommendation.candidates)
         )
-        self.assertEqual(large.rating, "비권장")
 
-    def test_manual_profile_preserves_selected_model_and_shows_warning(self):
+    def test_manual_profile_does_not_offer_removed_large_model(self):
         recommendation = recommend_models(
             hardware(total_ram=8, available_ram=6),
             ollama(),
             profile="manual",
             selected_model="qwen3:14b",
         )
-        self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:14b")
-        self.assertEqual(recommendation.recommended.rating, "비권장")
-        self.assertTrue(recommendation.recommended.warnings)
+        self.assertIsNone(recommendation.recommended)
 
     def test_scan_persists_snapshot_but_does_not_change_selected_model(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -167,7 +162,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "qwen3:8b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.22")
+            self.assertEqual(saved.model_catalog_version, "2026.07.26")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

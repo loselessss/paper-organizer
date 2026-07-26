@@ -201,6 +201,7 @@ class AiSettingsDialog(QDialog):
             self.use_recommendation_button.setText(
                 "추천 모델 선택 → 설치/검증"
             )
+        self._update_model_edit_state()
         self._refresh_key_status()
         self._profile_changed()
 
@@ -208,9 +209,24 @@ class AiSettingsDialog(QDialog):
         provider = self.provider_combo.currentData()
         if provider:
             self.model_edit.setText(self._controller.model_for_provider(provider))
+        self._update_model_edit_state()
         self.key_edit.clear()
         self._refresh_key_status()
         self._profile_changed()
+
+    def _update_model_edit_state(self) -> None:
+        is_ollama = self.provider_combo.currentData() == "ollama"
+        self.model_edit.setReadOnly(is_ollama)
+        self.model_edit.setPlaceholderText(
+            "아래 모델 관리에서 선택"
+            if is_ollama
+            else "클라우드 모델 ID"
+        )
+        self.model_edit.setToolTip(
+            "Ollama 모델은 검증을 마친 뒤 모델 관리 창에서 선택합니다."
+            if is_ollama
+            else ""
+        )
 
     def _refresh_key_status(self) -> None:
         provider = self.provider_combo.currentData()

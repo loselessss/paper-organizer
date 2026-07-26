@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -35,6 +36,7 @@ class OllamaModelEntry:
     parameter_size: str
     quantization: str
     managed_by_app: bool
+    selectable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,7 @@ class OllamaModelManagerService:
                     parameter_size=actual.parameter_size,
                     quantization=actual.quantization,
                     managed_by_app=key in managed,
+                    selectable=_installed_model_is_selectable(actual),
                 )
             )
         return OllamaModelSnapshot(
@@ -248,3 +251,11 @@ def _entry_from_spec(
 def _model_key(value: str) -> str:
     key = value.strip().casefold()
     return key.removesuffix(":latest")
+
+
+def _installed_model_is_selectable(model: InstalledOllamaModel) -> bool:
+    """Keep already-installed 12B+ models visible for inventory, not selection."""
+
+    description = f"{model.parameter_size} {model.name}".casefold()
+    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", description)
+    return match is None or float(match.group(1)) < 12
