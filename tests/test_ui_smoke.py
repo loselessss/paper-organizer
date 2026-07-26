@@ -252,6 +252,46 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(controller.settings().first_run_completed)
             self.assertEqual(controller.settings().close_behavior, "background")
 
+    def test_selecting_same_library_path_renders_analysis_immediately(self):
+        from paper_organizer.application.library_workflow import (
+            EditablePaperMetadata,
+            LibraryEntry,
+        )
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+
+        with tempfile.TemporaryDirectory() as temp:
+            paperpack = Path(temp) / "paper.paperpack"
+            paperpack.write_bytes(b"placeholder")
+            entry = LibraryEntry(
+                pdf_path=paperpack,
+                sidecar_path=paperpack,
+                metadata=EditablePaperMetadata(title="Original English Title"),
+                work_id="work:test",
+                source_variant="publisher",
+                record={
+                    "description": {"summary_ko": "분석 요약"},
+                    "analysis": {"status": "completed"},
+                },
+            )
+
+            class FakeLibraryController:
+                def invalidate_library_cache(self):
+                    pass
+
+                def list_library(self):
+                    return [entry]
+
+                def analysis_queue(self):
+                    return []
+
+                def paperpack_working_copy(self, _path):
+                    return None
+
+            widget = LibraryWidget(FakeLibraryController())
+            self.assertTrue(widget.select_path(paperpack))
+            self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.close()
+
     def test_background_close_hides_window_and_quit_setting_closes_it(self):
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer.application.library_workflow import LibraryWorkflowController

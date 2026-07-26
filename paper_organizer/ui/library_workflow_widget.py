@@ -954,6 +954,7 @@ class LibraryWidget(QWidget):
             if entry.sidecar_path.resolve() == target:
                 self.table.selectRow(row)
                 self.table.scrollToItem(self.table.item(row, 0))
+                self._selection_changed()
                 return True
         return False
 
