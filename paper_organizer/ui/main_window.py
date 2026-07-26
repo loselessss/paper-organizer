@@ -88,6 +88,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget = LibraryWidget(library_workflow, self)
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
+            self.queue_widget.review_items_dropped.connect(
+                self.collection_widget.organize_dropped
+            )
             self.collection_widget.papers_auto_organized.connect(
                 self._papers_auto_organized
             )
@@ -131,7 +134,7 @@ class PaperOrganizerWindow(QMainWindow):
             reindex_action = QAction("검색 색인 재구축", self)
             reindex_action.triggered.connect(self.rebuild_search_index)
             tools_menu.addAction(reindex_action)
-        self._create_ai_menu()
+        self._create_ai_menu(settings_menu)
         self._create_shortcuts()
         self._create_help_menu()
         if self._lifecycle is not None:
@@ -172,8 +175,8 @@ class PaperOrganizerWindow(QMainWindow):
                 "Paper Organizer", message, QSystemTrayIcon.Information, 5000
             )
 
-    def _create_ai_menu(self) -> None:
-        menu = self.menuBar().addMenu("AI")
+    def _create_ai_menu(self, settings_menu: QMenu) -> None:
+        menu = settings_menu.addMenu("AI")
         self._provider_group = QActionGroup(self)
         self._provider_group.setExclusive(True)
         self._provider_actions: dict[str, QAction] = {}

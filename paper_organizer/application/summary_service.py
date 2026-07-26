@@ -242,7 +242,7 @@ def run_prepared_summary(
         SummaryRequest(
             document_text=prepared.document_text,
             cloud_consent=consent,
-            prompt_version="paper-summary-v3",
+            prompt_version="paper-summary-v4",
             allowed_categories=_allowed_categories(settings),
         )
     )

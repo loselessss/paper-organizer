@@ -67,6 +67,17 @@ class AnalysisQueueTests(unittest.TestCase):
             completed = store.mark_completed(store.claim_next().queue_id)
             self.assertEqual(completed.status, "completed")
             self.assertTrue(completed.completed_at)
+            pending = store.enqueue(
+                path=root / "next.paperpack",
+                file_sha256="d" * 64,
+                title="Next",
+                status="organized_pending_analysis",
+            )
+            self.assertEqual(store.remove_completed(), 1)
+            self.assertEqual(
+                [item.queue_id for item in store.load()],
+                [pending.queue_id],
+            )
 
 
 if __name__ == "__main__":

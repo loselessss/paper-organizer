@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 from threading import Event
 
-from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import QMimeData, Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QDrag
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -43,6 +44,67 @@ from paper_organizer.application.background_analysis import (
     BackgroundAnalysisService,
 )
 from paper_organizer.integrations.spdf_bridge import open_pdf
+
+
+_REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
+
+
+class _ReviewQueueTable(QTableWidget):
+    """Drag selected review rows to the analysis queue by stable file ID."""
+
+    def startDrag(self, _supported_actions) -> None:
+        file_ids = []
+        for row in sorted({index.row() for index in self.selectedIndexes()}):
+            cell = self.item(row, 0)
+            file_id = cell.data(Qt.UserRole) if cell is not None else None
+            if file_id:
+                file_ids.append(str(file_id))
+        if not file_ids:
+            return
+        mime = QMimeData()
+        mime.setData(
+            _REVIEW_DRAG_MIME,
+            json.dumps(file_ids).encode("utf-8"),
+        )
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec_(Qt.CopyAction)
+
+
+class _AnalysisQueueDropTable(QTableWidget):
+    """Accept review rows as an explicit request to store and analyze them."""
+
+    review_items_dropped = pyqtSignal(list)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(_REVIEW_DRAG_MIME):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(_REVIEW_DRAG_MIME):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if not event.mimeData().hasFormat(_REVIEW_DRAG_MIME):
+            super().dropEvent(event)
+            return
+        try:
+            file_ids = json.loads(
+                bytes(event.mimeData().data(_REVIEW_DRAG_MIME)).decode("utf-8")
+            )
+            if not isinstance(file_ids, list) or not all(
+                isinstance(value, str) and value for value in file_ids
+            ):
+                raise ValueError
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            event.ignore()
+            return
+        self.review_items_dropped.emit(list(dict.fromkeys(file_ids)))
+        event.acceptProposedAction()
 
 
 _DETECTION_LABELS = {
@@ -194,12 +256,19 @@ class _BackgroundAnalysisWorker(QThread):
         self._stop = Event()
         self._wake = Event()
         self._processing = False
+        self._immediate_remaining = 0
 
     def request_stop(self) -> None:
         self._stop.set()
         self._wake.set()
 
     def request_wake(self) -> None:
+        self._wake.set()
+
+    def request_immediate(self, count: int) -> None:
+        """Process explicitly requested items back-to-back without eco waits."""
+
+        self._immediate_remaining += max(0, int(count))
         self._wake.set()
 
     def is_processing(self) -> bool:
@@ -214,8 +283,11 @@ class _BackgroundAnalysisWorker(QThread):
             self.event.emit(AnalysisRunEvent("failed", str(exc)))
             return
         while not self._stop.is_set():
+            immediate_this_run = self._immediate_remaining > 0
             self._processing = True
             result = self._service.run_next(
+                keep_runtime=lambda: self._immediate_remaining
+                > (1 if immediate_this_run else 0),
                 on_start=self._notify_started,
                 on_progress=self.event.emit,
             )
@@ -225,7 +297,18 @@ class _BackgroundAnalysisWorker(QThread):
                 self.queue_changed.emit()
             if result.state == "disabled":
                 break
+            if (
+                result.state in {"completed", "failed"}
+                and immediate_this_run
+                and self._immediate_remaining
+            ):
+                self._immediate_remaining -= 1
+            if result.state in {"completed", "failed"} and self._immediate_remaining:
+                continue
             if result.state == "ocr_completed":
+                # OCR is only a preparation stage for the same item.
+                if self._immediate_remaining:
+                    continue
                 self._wake.set()
             self._wake.wait(self._service.poll_interval())
             self._wake.clear()
@@ -356,11 +439,14 @@ class CollectionReviewWidget(QWidget):
         action_row.addWidget(self.status_label, 1)
         root.addLayout(action_row)
 
-        self.table = QTableWidget(0, 4)
+        self.table = _ReviewQueueTable(0, 4)
         self.table.setHorizontalHeaderLabels(["파일", "판정", "중복", "추정 제목"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setDragEnabled(True)
+        self.table.setDragDropMode(QAbstractItemView.DragOnly)
+        self.table.setDefaultDropAction(Qt.CopyAction)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(
@@ -441,7 +527,9 @@ class CollectionReviewWidget(QWidget):
                 item.metadata.title,
             ]
             for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.UserRole, item.identity.file_sha256)
+                self.table.setItem(row, column, cell)
         problem_text = f" · 오류 {len(result.problems)}개" if result.problems else ""
         auto_text = (
             f" · 자동 보관 {len(result.auto_organized)}개" if result.auto_organized else ""
@@ -533,6 +621,28 @@ class CollectionReviewWidget(QWidget):
         items = self._selected_items()
         if not items:
             return
+        self._organize_items(items, ask_confirmation=True)
+
+    def organize_dropped(self, file_ids: list[str]) -> None:
+        if self.is_busy():
+            self.status_label.setText(
+                "PDF 검색이 끝난 뒤 분석 큐로 다시 끌어다 놓으세요."
+            )
+            return
+        wanted = set(file_ids)
+        items = [
+            item for item in self._items if item.identity.file_sha256 in wanted
+        ]
+        if not items:
+            self.status_label.setText(
+                "드롭한 검토 항목을 찾지 못했습니다. 새 PDF 검색 후 다시 시도하세요."
+            )
+            return
+        self._organize_items(items, ask_confirmation=False)
+
+    def _organize_items(
+        self, items: list[ReviewItem], *, ask_confirmation: bool
+    ) -> None:
         uncertain = sum(
             item.detection_status not in {"academic_likely", "patent_likely"}
             for item in items
@@ -549,7 +659,7 @@ class CollectionReviewWidget(QWidget):
                 "학술 논문이나 특허로 확실히 판정되지 않았습니다. "
                 "그래도 승인하여 보관할까요?"
             )
-        if (len(items) > 1 or uncertain) and QMessageBox.question(
+        if ask_confirmation and (len(items) > 1 or uncertain) and QMessageBox.question(
             self, "수동 승인 확인", message
         ) != QMessageBox.Yes:
             return
@@ -675,6 +785,7 @@ class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
     summaries_requested = pyqtSignal(list)
     library_requested = pyqtSignal(str)
+    review_items_dropped = pyqtSignal(list)
     library_changed = pyqtSignal()
     analysis_progress = pyqtSignal(str, bool)
 
@@ -698,17 +809,21 @@ class AnalysisQueueWidget(QWidget):
         )
         note.setWordWrap(True)
         root.addWidget(note)
-        self.table = QTableWidget(0, 5)
+        self.table = _AnalysisQueueDropTable(0, 5)
         self.table.setHorizontalHeaderLabels(
             ["우선순위", "상태", "제목", "실패 사유", "파일"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAcceptDrops(True)
+        self.table.viewport().setAcceptDrops(True)
+        self.table.setDragDropMode(QAbstractItemView.DropOnly)
+        self.table.setDropIndicatorShown(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
-        self.table.cellDoubleClicked.connect(self._open_completed_in_library)
+        self.table.review_items_dropped.connect(self.review_items_dropped.emit)
         root.addWidget(self.table, 1)
         actions = QHBoxLayout()
         refresh_button = QPushButton("새로고침")
@@ -749,15 +864,18 @@ class AnalysisQueueWidget(QWidget):
 
     def refresh(self) -> None:
         try:
-            self._items = self._controller.analysis_queue()
+            loaded = self._controller.analysis_queue()
+            self._items = [
+                item
+                for item in loaded
+                if item.status not in {"pending_review", "completed"}
+            ]
         except Exception as exc:
             self._items = []
             self.status_label.setText(f"분석 큐 읽기 실패: {exc}")
         status_labels = {
-            "pending_review": "검토 대기",
             "organized_pending_analysis": "정리됨 · 분석 대기",
             "analyzing": "분석 중",
-            "completed": "완료",
             "failed": "실패",
         }
         selected_id = self._selected_queue_id()
@@ -794,10 +912,9 @@ class AnalysisQueueWidget(QWidget):
             1 for item in self._items if item.status == "organized_pending_analysis"
         )
         analyzing = sum(1 for item in self._items if item.status == "analyzing")
-        done = sum(1 for item in self._items if item.status == "completed")
         failed = sum(1 for item in self._items if item.status == "failed")
         busy = self._analysis_running or analyzing > 0
-        counts = f"대기 {waiting} · 완료 {done} · 실패 {failed}"
+        counts = f"대기 {waiting} · 실패 {failed}"
         if busy and self._current_analysis_title:
             message = f"분석 중: {self._current_analysis_title} ({counts})"
         elif busy:
@@ -844,7 +961,7 @@ class AnalysisQueueWidget(QWidget):
                 self._background_analysis is not None
                 and any(
                     value.status
-                    in {"organized_pending_analysis", "failed", "completed"}
+                    in {"organized_pending_analysis", "failed"}
                     and Path(value.path).is_file()
                     for value in selected
                 )
@@ -912,11 +1029,6 @@ class AnalysisQueueWidget(QWidget):
         if paths:
             self.summaries_requested.emit(paths)
 
-    def _open_completed_in_library(self, _row: int, _column: int) -> None:
-        item = self._selected()
-        if item is not None and item.status == "completed":
-            self.library_requested.emit(item.path)
-
     def _remove_selected(self) -> None:
         items = [
             item for item in self._selected_items() if item.status != "analyzing"
@@ -950,14 +1062,14 @@ class AnalysisQueueWidget(QWidget):
         items = [
             item
             for item in self._selected_items()
-            if item.status in {"organized_pending_analysis", "failed", "completed"}
+            if item.status in {"organized_pending_analysis", "failed"}
             and Path(item.path).is_file()
         ]
         if not items or self._background_analysis is None:
             return
         try:
             for item in items:
-                if item.status in {"failed", "completed"}:
+                if item.status == "failed":
                     self._controller.retry_queue_item(item.queue_id, high=True)
                 else:
                     self._controller.set_queue_priority(item.queue_id, True)
@@ -965,9 +1077,7 @@ class AnalysisQueueWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "수동 분석 요청 실패", str(exc))
             return
-        self.start_background_analysis()
-        if self._analysis_worker is not None:
-            self._analysis_worker.request_wake()
+        self.start_background_analysis(immediate_count=len(items))
         self.status_label.setText(
             f"선택한 {len(items)}건을 최우선 분석 대기열에 넣었습니다."
         )
@@ -984,18 +1094,23 @@ class AnalysisQueueWidget(QWidget):
                 return
             self.start_background_analysis()
 
-    def start_background_analysis(self) -> None:
+    def start_background_analysis(self, *, immediate_count: int = 0) -> None:
         if self._background_analysis is None:
             self.status_label.setText("백그라운드 분석 서비스가 연결되지 않았습니다.")
             return
         if self._analysis_worker is not None and self._analysis_worker.isRunning():
-            self._analysis_worker.request_wake()
+            if immediate_count:
+                self._analysis_worker.request_immediate(immediate_count)
+            else:
+                self._analysis_worker.request_wake()
             return
         worker = _BackgroundAnalysisWorker(self._background_analysis, self)
         worker.event.connect(self._analysis_event)
         worker.queue_changed.connect(self.refresh)
         worker.finished.connect(self._analysis_worker_finished)
         self._analysis_worker = worker
+        if immediate_count:
+            worker.request_immediate(immediate_count)
         self.status_label.setText("백그라운드 분석을 시작합니다…")
         worker.start()
         self._update_background_button()
@@ -1111,11 +1226,13 @@ class LibraryWidget(QWidget):
             ["제목", "유형/출처", "저자/발명자", "연도", "분야", "분석 상태"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
-        self.table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
+        self.table.cellDoubleClicked.connect(
+            lambda row, _column: self._open_row(row)
+        )
 
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
@@ -1230,6 +1347,12 @@ class LibraryWidget(QWidget):
         row = self.table.currentRow()
         return self._entries[row] if 0 <= row < len(self._entries) else None
 
+    def _selected_entries(self) -> list[LibraryEntry]:
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        return [
+            self._entries[row] for row in rows if 0 <= row < len(self._entries)
+        ]
+
     def select_path(self, path: str | Path) -> bool:
         target = Path(path).expanduser().resolve()
         if self.search_edit.text():
@@ -1246,12 +1369,16 @@ class LibraryWidget(QWidget):
         return False
 
     def _selection_changed(self) -> None:
-        entry = self._selected()
+        entries = self._selected_entries()
+        entry = entries[0] if len(entries) == 1 else None
         self.form.set_metadata(entry.metadata if entry else None)
+        self.form.setEnabled(entry is not None)
         self.save_button.setEnabled(entry is not None)
-        self.open_button.setEnabled(bool(entry and entry.pdf_path.is_file()))
+        self.open_button.setEnabled(
+            any(value.pdf_path.is_file() for value in entries)
+        )
         self._render_analysis(entry)
-        self._refresh_pdf_edit_actions(entry)
+        self._refresh_pdf_edit_actions(entries)
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
@@ -1302,18 +1429,27 @@ class LibraryWidget(QWidget):
             )
         self.analysis_view.setHtml("".join(sections))
 
-    def _refresh_pdf_edit_actions(self, entry: LibraryEntry | None) -> None:
-        is_pack = bool(entry and entry.pdf_path.suffix.casefold() == ".paperpack")
-        self.apply_pdf_button.setEnabled(is_pack)
-        if not is_pack:
-            self.discard_pdf_button.setEnabled(False)
-            return
-        try:
-            self.discard_pdf_button.setEnabled(
-                self._controller.paperpack_working_copy(entry.pdf_path) is not None
-            )
-        except Exception:
-            self.discard_pdf_button.setEnabled(True)
+    def _refresh_pdf_edit_actions(
+        self, entries: list[LibraryEntry] | LibraryEntry | None
+    ) -> None:
+        if isinstance(entries, LibraryEntry):
+            entries = [entries]
+        packs = [
+            entry
+            for entry in (entries or [])
+            if entry.pdf_path.suffix.casefold() == ".paperpack"
+        ]
+        self.apply_pdf_button.setEnabled(bool(packs))
+        has_working_copy = False
+        for entry in packs:
+            try:
+                if self._controller.paperpack_working_copy(entry.pdf_path) is not None:
+                    has_working_copy = True
+                    break
+            except Exception:
+                has_working_copy = True
+                break
+        self.discard_pdf_button.setEnabled(has_working_copy)
 
     def _save_selected(self) -> None:
         entry = self._selected()
@@ -1331,54 +1467,99 @@ class LibraryWidget(QWidget):
         self.metadata_changed.emit()
 
     def _open_selected(self) -> None:
-        entry = self._selected()
-        if entry:
+        failures: list[str] = []
+        for entry in self._selected_entries():
             try:
                 editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
                 open_pdf(editable_pdf, self)
-                self._refresh_pdf_edit_actions(entry)
             except Exception as exc:
-                QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+                failures.append(f"{entry.metadata.title}: {exc}")
+        self._refresh_pdf_edit_actions(self._selected_entries())
+        if failures:
+            QMessageBox.warning(self, "일부 sPDF 열기 실패", "\n".join(failures[:10]))
+
+    def _open_row(self, row: int) -> None:
+        if not 0 <= row < len(self._entries):
+            return
+        entry = self._entries[row]
+        try:
+            editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
+            open_pdf(editable_pdf, self)
+            self._refresh_pdf_edit_actions(self._selected_entries())
+        except Exception as exc:
+            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
 
     def _apply_pdf_edit(self) -> None:
-        entry = self._selected()
-        if entry is None:
+        entries = [
+            entry
+            for entry in self._selected_entries()
+            if entry.pdf_path.suffix.casefold() == ".paperpack"
+        ]
+        if not entries:
             return
         if QMessageBox.question(
             self,
             "PaperPack에 편집본 적용",
-            "sPDF에서 먼저 저장한 변경만 적용됩니다. 저장된 편집본으로 "
-            "PaperPack의 PDF를 교체할까요?",
+            f"선택한 PaperPack {len(entries)}개의 sPDF 저장본을 적용합니다. "
+            "sPDF에서 먼저 저장한 변경만 반영됩니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
-        try:
-            result = self._controller.apply_paperpack_working_copy(entry.pdf_path)
-        except Exception as exc:
-            QMessageBox.warning(self, "편집본 적용 실패", str(exc))
-            return
-        message = f"편집된 PDF를 PaperPack 리비전 {result.revision}로 저장했습니다."
-        if result.warning:
-            message += f" 경고: {result.warning}"
+        applied = 0
+        failures: list[str] = []
+        warnings: list[str] = []
+        for entry in entries:
+            try:
+                result = self._controller.apply_paperpack_working_copy(entry.pdf_path)
+                applied += 1
+                if result.warning:
+                    warnings.append(f"{entry.metadata.title}: {result.warning}")
+            except Exception as exc:
+                failures.append(f"{entry.metadata.title}: {exc}")
         self.refresh(True)
-        self.status_label.setText(message)
-        self.metadata_changed.emit()
+        self.status_label.setText(
+            f"편집본 {applied}개를 PaperPack에 적용했습니다."
+            + (f" · 실패 {len(failures)}개" if failures else "")
+        )
+        if warnings or failures:
+            QMessageBox.warning(
+                self,
+                "일부 편집본 적용 확인 필요",
+                "\n".join((warnings + failures)[:10]),
+            )
+        if applied:
+            self.metadata_changed.emit()
 
     def _discard_pdf_edit(self) -> None:
-        entry = self._selected()
-        if entry is None:
+        entries = [
+            entry
+            for entry in self._selected_entries()
+            if entry.pdf_path.suffix.casefold() == ".paperpack"
+        ]
+        if not entries:
             return
         if QMessageBox.question(
             self,
             "편집본 폐기",
-            "PaperPack 원본은 유지하고 sPDF 작업 복사본만 삭제할까요?",
+            f"선택한 PaperPack {len(entries)}개의 원본은 유지하고 "
+            "sPDF 작업 복사본만 삭제할까요?",
         ) != QMessageBox.Yes:
             return
-        try:
-            removed = self._controller.discard_paperpack_working_copy(entry.pdf_path)
-        except Exception as exc:
-            QMessageBox.warning(self, "편집본 폐기 실패", str(exc))
-            return
-        self._refresh_pdf_edit_actions(entry)
+        removed = 0
+        failures: list[str] = []
+        for entry in entries:
+            try:
+                removed += int(
+                    self._controller.discard_paperpack_working_copy(entry.pdf_path)
+                )
+            except Exception as exc:
+                failures.append(f"{entry.metadata.title}: {exc}")
+        self._refresh_pdf_edit_actions(self._selected_entries())
         self.status_label.setText(
-            "sPDF 편집본을 폐기했습니다." if removed else "폐기할 편집본이 없습니다."
+            f"sPDF 편집본 {removed}개를 폐기했습니다."
+            if removed
+            else "폐기할 편집본이 없습니다."
         )
+        if failures:
+            QMessageBox.warning(
+                self, "일부 편집본 폐기 실패", "\n".join(failures[:10])
+            )

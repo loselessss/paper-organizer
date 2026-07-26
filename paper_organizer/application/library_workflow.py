@@ -1489,7 +1489,7 @@ class LibraryWorkflowController:
         for target, field, key, value in candidates:
             if not value:
                 continue
-            if key in {"title", "authors", "venue"} and target.get(key):
+            if key in {"authors", "venue"} and target.get(key):
                 continue
             if not replaceable(field, target.get(key)):
                 continue
@@ -1937,6 +1937,9 @@ class LibraryWorkflowController:
     def remove_from_queue(self, queue_id: str) -> None:
         self._queue().remove(queue_id)
 
+    def remove_completed_from_queue(self) -> int:
+        return self._queue().remove_completed()
+
     def _queue(self) -> AnalysisQueueStore:
         _input_dir, root = self.configured_paths()
         return AnalysisQueueStore(root)
@@ -2281,4 +2284,12 @@ def _new_sidecar(
             "description.summary_ko",
         )
     }
+    if (
+        field_source == "user"
+        and metadata.title.strip() == item.metadata.title.strip()
+    ):
+        # Clicking “store” does not mean the regex/PDF title was hand-curated.
+        # Keep it replaceable so AI can correct it while preserving a genuinely
+        # edited title as a user-owned field.
+        record["curation"]["field_sources"]["bibliography.title"] = "auto:regex"
     return record

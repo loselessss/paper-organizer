@@ -285,6 +285,16 @@ class AnalysisQueueStore:
             raise AnalysisQueueError("분석 큐 항목을 찾을 수 없습니다.")
         self._save(remaining)
 
+    def remove_completed(self) -> int:
+        """Remove legacy success rows with a single atomic queue rewrite."""
+
+        items = self.load()
+        remaining = [item for item in items if item.status != "completed"]
+        removed = len(items) - len(remaining)
+        if removed:
+            self._save(remaining)
+        return removed
+
     def _replace(
         self, items: list[AnalysisQueueItem], updated: AnalysisQueueItem
     ) -> None:

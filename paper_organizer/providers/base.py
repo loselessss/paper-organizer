@@ -48,9 +48,12 @@ SYSTEM_INSTRUCTIONS = (
     "If evidence is missing, use an empty string or empty list instead of guessing. "
     "Also correct the bibliography from the document: title is the paper's own "
     "title, authors are the listed authors, year is the four-digit publication "
-    "year as a string, and venue is the journal or conference name. Never "
-    "translate, romanize, summarize, or rewrite the title, author names, or "
-    "venue; copy those fields verbatim in the source document's original language. "
+    "year as a string, and venue is the journal or conference name. The extracted "
+    "title may be inaccurate, so independently identify the exact title printed "
+    "in the document. Return that title in its original language: an English paper "
+    "must keep its English title. Never translate, romanize, summarize, or rewrite "
+    "the title, author names, or venue; copy those fields verbatim from the source "
+    "document, preserving spelling, word order, and punctuation. "
     "Every article type, including narrative reviews, systematic reviews, and "
     "meta-analyses, has a byline: extract all authors shown in that byline. Never "
     "treat a review article as authorless and never copy cited-reference authors. "
@@ -86,7 +89,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v3"
+    prompt_version: str = "paper-summary-v4"
     allowed_categories: tuple[str, ...] = ()
 
     def validate(self) -> None:

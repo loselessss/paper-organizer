@@ -101,6 +101,8 @@ class SystemInstructionTests(unittest.TestCase):
     def test_instructions_stay_unchanged_without_a_category_list(self):
         plain = system_instructions(SummaryRequest(document_text="text"))
         self.assertNotIn("Choose category from", plain)
+        self.assertIn("an English paper must keep its English title", plain)
+        self.assertIn("independently identify the exact title", plain)
 
 
 class AiClassificationTests(unittest.TestCase):
@@ -157,7 +159,7 @@ class AiClassificationTests(unittest.TestCase):
             )
             self.assertEqual(
                 record["bibliography"]["title"],
-                "Directed evolution of a thermostable enzyme scaffold",
+                "Directed Evolution of a Thermostable Enzyme Scaffold",
             )
             self.assertEqual(record["bibliography"]["year"], 2019)
             self.assertEqual(record["file"]["relative_path"], moved.relative_to(library).as_posix())

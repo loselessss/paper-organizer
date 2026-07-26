@@ -103,6 +103,7 @@ class FakeWorkflow:
         )
         self.claimed = False
         self.completed = []
+        self.removed = []
         self.failed = []
         self.applied = []
         self.needs_ocr = False
@@ -134,6 +135,9 @@ class FakeWorkflow:
 
     def complete_analysis(self, queue_id):
         self.completed.append(queue_id)
+
+    def remove_from_queue(self, queue_id):
+        self.removed.append(queue_id)
 
     def fail_analysis(self, queue_id, message):
         self.failed.append((queue_id, message))
@@ -193,7 +197,8 @@ class BackgroundAnalysisTests(unittest.TestCase):
 
         self.assertEqual(event.state, "completed")
         self.assertEqual(summary.modes, [SummaryMode.QUICK])
-        self.assertEqual(workflow.completed, [workflow.item.queue_id])
+        self.assertEqual(workflow.removed, [workflow.item.queue_id])
+        self.assertEqual(workflow.completed, [])
         self.assertFalse(workflow.failed)
 
     def test_full_ocr_runs_before_ai_readiness_and_reports_each_page(self):

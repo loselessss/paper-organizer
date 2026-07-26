@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -123,7 +124,13 @@ class UiSmokeTests(unittest.TestCase):
                 action.text() for action in window.menuBar().actions()
             ]
             self.assertIn("도구", menu_titles)
-            self.assertIn("AI", menu_titles)
+            self.assertNotIn("AI", menu_titles)
+            settings_menu = next(
+                action.menu()
+                for action in window.menuBar().actions()
+                if action.text() == "설정"
+            )
+            self.assertIn("AI", [action.text() for action in settings_menu.actions()])
             checked = [
                 action.text()
                 for action in window._provider_group.actions()
@@ -164,6 +171,7 @@ class UiSmokeTests(unittest.TestCase):
                 window.queue_widget.run_now_button.text(),
                 "선택 항목 지금 분석",
             )
+            self.assertTrue(window.queue_widget.table.acceptDrops())
             self.assertEqual(
                 window.collection_widget.trash_button.text(),
                 "제외 목록으로 보내기",
@@ -312,6 +320,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(
             widget.table.selectionMode(), QAbstractItemView.ExtendedSelection
         )
+        self.assertTrue(widget.table.dragEnabled())
         self.assertEqual(len(widget._selected_items()), 2)
         self.assertFalse(widget.form.isEnabled())
 
@@ -328,6 +337,20 @@ class UiSmokeTests(unittest.TestCase):
         information.assert_not_called()
         self.assertIn("2개를 보관", widget.status_label.text())
 
+        controller.organized.clear()
+        with (
+            mock.patch.object(QMessageBox, "question") as question,
+            mock.patch.object(QMessageBox, "information") as information,
+            mock.patch.object(widget, "scan_now"),
+        ):
+            widget.organize_dropped(
+                [item.identity.file_sha256 for item in widget._items]
+            )
+
+        self.assertEqual(len(controller.organized), 2)
+        question.assert_not_called()
+        information.assert_not_called()
+
         with (
             mock.patch.object(
                 QMessageBox, "question", return_value=QMessageBox.Yes
@@ -341,6 +364,53 @@ class UiSmokeTests(unittest.TestCase):
         information.assert_not_called()
         self.assertIn("2개를 제외 목록", widget.status_label.text())
         widget.close()
+
+    def test_immediate_analysis_runs_selected_items_without_polling_gap(self):
+        from paper_organizer.application.background_analysis import AnalysisRunEvent
+        from paper_organizer.ui.library_workflow_widget import (
+            _BackgroundAnalysisWorker,
+        )
+
+        class FakeService:
+            def __init__(self):
+                self.calls = []
+
+            def recover_interrupted(self):
+                return 0
+
+            def run_next(self, **kwargs):
+                keep_runtime = kwargs["keep_runtime"]
+                self.calls.append(
+                    (
+                        time.monotonic(),
+                        keep_runtime() if callable(keep_runtime) else keep_runtime,
+                    )
+                )
+                return AnalysisRunEvent(
+                    "completed",
+                    "완료",
+                    f"queue-{len(self.calls)}",
+                    f"Paper {len(self.calls)}",
+                )
+
+            def poll_interval(self):
+                return 10
+
+        service = FakeService()
+        worker = _BackgroundAnalysisWorker(service)
+        worker.request_immediate(2)
+        worker.start()
+        deadline = time.monotonic() + 2
+        while len(service.calls) < 2 and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+        worker.request_stop()
+        self.assertTrue(worker.wait(2000))
+        self.assertEqual(
+            [keep_runtime for _when, keep_runtime in service.calls[:2]],
+            [True, False],
+        )
+        self.assertLess(service.calls[1][0] - service.calls[0][0], 1)
 
     def test_analysis_queue_sorting_keeps_selection_mapping(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
@@ -382,6 +452,14 @@ class UiSmokeTests(unittest.TestCase):
             queue_item("c", "Gamma", 0, "failed"),
         ]
         widget = AnalysisQueueWidget(FakeController(items))
+        self.assertEqual(widget.table.rowCount(), 2)
+        self.assertNotIn(
+            "Alpha",
+            {
+                widget.table.item(row, 2).text()
+                for row in range(widget.table.rowCount())
+            },
+        )
 
         widget.table.sortItems(2, Qt.DescendingOrder)
         widget.table.selectRow(0)
@@ -402,7 +480,7 @@ class UiSmokeTests(unittest.TestCase):
         )
         self.assertEqual(library_events, [True])
         selection = widget.table.selectionModel()
-        for row in (0, 1):
+        for row in range(widget.table.rowCount()):
             selection.select(
                 widget.table.model().index(row, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows,
@@ -444,6 +522,9 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(controller.settings().close_behavior, "background")
 
     def test_selecting_same_library_path_renders_analysis_immediately(self):
+        from PyQt5.QtCore import QItemSelectionModel
+        from PyQt5.QtWidgets import QAbstractItemView
+
         from paper_organizer.application.library_workflow import (
             EditablePaperMetadata,
             LibraryEntry,
@@ -464,13 +545,23 @@ class UiSmokeTests(unittest.TestCase):
                     "analysis": {"status": "completed"},
                 },
             )
+            second_pack = Path(temp) / "paper-two.paperpack"
+            second_pack.write_bytes(b"placeholder")
+            second = LibraryEntry(
+                pdf_path=second_pack,
+                sidecar_path=second_pack,
+                metadata=EditablePaperMetadata(title="Second English Title"),
+                work_id="work:second",
+                source_variant="publisher",
+                record={"description": {}, "analysis": {}},
+            )
 
             class FakeLibraryController:
                 def invalidate_library_cache(self):
                     pass
 
                 def list_library(self):
-                    return [entry]
+                    return [entry, second]
 
                 def analysis_queue(self):
                     return []
@@ -479,8 +570,20 @@ class UiSmokeTests(unittest.TestCase):
                     return None
 
             widget = LibraryWidget(FakeLibraryController())
+            self.assertEqual(
+                widget.table.selectionMode(),
+                QAbstractItemView.ExtendedSelection,
+            )
             self.assertTrue(widget.search_edit.isClearButtonEnabled())
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.table.selectionModel().select(
+                widget.table.model().index(1, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+            )
+            self.assertEqual(len(widget._selected_entries()), 2)
+            self.assertFalse(widget.form.isEnabled())
+            widget.table.clearSelection()
+            widget.table.selectRow(0)
             widget.search_edit.setText("다른 검색어")
             self.assertTrue(widget.select_path(paperpack))
             self.assertEqual(widget.search_edit.text(), "")

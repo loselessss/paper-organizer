@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import (
@@ -55,7 +56,10 @@ class BackgroundAnalysisService:
         self._ollama = ollama or OllamaRuntimeInspector()
 
     def recover_interrupted(self) -> int:
-        return self._workflow.recover_interrupted_analysis()
+        recovered = self._workflow.recover_interrupted_analysis()
+        cleanup = getattr(self._workflow, "remove_completed_from_queue", None)
+        removed = cleanup() if cleanup is not None else 0
+        return recovered + removed
 
     def poll_interval(self) -> int:
         return poll_interval_seconds(load_settings(self._settings_path).resource_profile)
@@ -86,6 +90,7 @@ class BackgroundAnalysisService:
         self,
         *,
         force: bool = False,
+        keep_runtime: bool | Callable[[], bool] = False,
         on_start=None,
         on_progress=None,
     ) -> AnalysisRunEvent:
@@ -183,7 +188,7 @@ class BackgroundAnalysisService:
                 prepared = self._summary.prepare(pdf, mode)
             execution = self._summary.run(prepared)
             self._workflow.apply_analysis_result(Path(item.path), execution)
-            self._workflow.complete_analysis(item.queue_id)
+            self._workflow.remove_from_queue(item.queue_id)
             return AnalysisRunEvent(
                 "completed",
                 f"{item.title} 분석과 PaperPack 저장을 완료했습니다.",
@@ -203,7 +208,10 @@ class BackgroundAnalysisService:
                 item.title,
             )
         finally:
-            if settings.summary_provider == "ollama":
+            should_keep_runtime = (
+                keep_runtime() if callable(keep_runtime) else keep_runtime
+            )
+            if settings.summary_provider == "ollama" and not should_keep_runtime:
                 from paper_organizer.infra.ollama_installer import stop_managed_runtime
 
                 stop_managed_runtime()
