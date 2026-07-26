@@ -75,6 +75,10 @@ class AiSettingsController:
             self._settings_path
         )
 
+    @property
+    def settings_path(self) -> Path:
+        return self._settings_path
+
     def view(self) -> AiSettingsView:
         settings = self.settings()
         provider = settings.summary_provider

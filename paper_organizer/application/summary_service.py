@@ -21,6 +21,12 @@ from paper_organizer.providers.registry import build_provider
 QUICK_MAX_CHARS = 30_000
 FULL_MAX_CHARS = 120_000
 MINIMUM_TEXT_CHARS = 500
+_REFERENCE_HEADING_RE = re.compile(
+    r"(?im)^[ \t]*(?:(?:\d+(?:\.\d+)*)[.)]?[ \t]+)?"
+    r"(?:references?(?:[ \t]+(?:and[ \t]+notes|and[ \t]+further[ \t]+reading|cited))?|bibliography|"
+    r"works[ \t]+cited|literature[ \t]+cited|참고문헌)"
+    r"[ \t]*$"
+)
 
 
 class SummaryPreparationError(RuntimeError):
@@ -197,7 +203,7 @@ def _prepared_from_chunks(
     model = _selected_model(settings)
     if not model:
         raise SummaryPreparationError("요약 AI 모델을 먼저 선택하세요.")
-    text = _clean_text("\n\n".join(chunks))
+    text = _strip_reference_section(_clean_text("\n\n".join(chunks)))
     if len(text) < MINIMUM_TEXT_CHARS:
         raise SummaryPreparationError(
             "내장 OCR을 실행했지만 인식된 본문이 너무 적습니다."
@@ -242,7 +248,7 @@ def run_prepared_summary(
         SummaryRequest(
             document_text=prepared.document_text,
             cloud_consent=consent,
-            prompt_version="paper-summary-v4",
+            prompt_version="paper-summary-v5",
             allowed_categories=_allowed_categories(settings),
         )
     )
@@ -253,9 +259,10 @@ def _allowed_categories(settings: AppSettings) -> tuple[str, ...]:
     """Limit AI classification to the bundled taxonomy, narrowed by preference."""
 
     try:
-        names = taxonomy_category_names()
+        bundled_names = taxonomy_category_names()
     except TaxonomyError:
-        return ()
+        bundled_names = ()
+    names = tuple(settings.research_categories) or bundled_names
     focus = [name.strip() for name in settings.focus_categories if name.strip()]
     if focus:
         chosen = {name for name in focus if name in names}
@@ -284,6 +291,26 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _strip_reference_section(text: str) -> str:
+    """Exclude end references from AI input while PaperPack text stays intact."""
+
+    matches = list(_REFERENCE_HEADING_RE.finditer(text))
+    if not matches:
+        return text
+    minimum_offset = max(MINIMUM_TEXT_CHARS, int(len(text) * 0.35))
+    candidates = [match for match in matches if match.start() >= minimum_offset]
+    if not candidates:
+        return text
+    cut_at = candidates[-1].start()
+    page_marker = text.rfind("[PDF PAGE ", 0, cut_at)
+    if page_marker >= 0 and re.fullmatch(
+        r"\[PDF PAGE \d+\]\s*",
+        text[page_marker:cut_at],
+    ):
+        cut_at = page_marker
+    return text[:cut_at].rstrip()
 
 
 def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:

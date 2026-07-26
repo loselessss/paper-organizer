@@ -146,6 +146,26 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(folder_dialog.interval_spin.value(), 300)
             self.assertFalse(folder_dialog.remove_source_check.isChecked())
+            initial_categories = folder_dialog.focus_list.count()
+            with mock.patch(
+                "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
+                return_value=("사용자 정의 분야", True),
+            ):
+                folder_dialog._add_focus_category()
+            self.assertEqual(
+                folder_dialog.focus_list.count(),
+                initial_categories + 1,
+            )
+            custom_item = folder_dialog.focus_list.currentItem()
+            self.assertEqual(custom_item.text(), "사용자 정의 분야")
+            with mock.patch(
+                "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
+                return_value=("수정된 연구분야", True),
+            ):
+                folder_dialog._edit_focus_category()
+            self.assertEqual(custom_item.text(), "수정된 연구분야")
+            folder_dialog._remove_focus_categories()
+            self.assertEqual(folder_dialog.focus_list.count(), initial_categories)
             folder_dialog.close()
             self.assertEqual(
                 window.library_widget.apply_pdf_button.text(),

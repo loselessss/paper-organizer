@@ -31,6 +31,7 @@ from paper_organizer.application.update_service import (
     AvailableUpdate,
     GitHubUpdateService,
 )
+from paper_organizer.application.update_schedule import UpdateCheckSchedule
 
 from .ai_settings_dialog import AiSettingsDialog
 from .immediate_summary_widget import ImmediateSummaryDialog
@@ -66,6 +67,7 @@ class PaperOrganizerWindow(QMainWindow):
         self._tray_message_shown = False
         self._tray: QSystemTrayIcon | None = None
         self._update_service = GitHubUpdateService(__version__)
+        self._update_schedule = UpdateCheckSchedule(ai_settings.settings_path)
         self._update_worker: UpdateCheckWorker | None = None
         self._available_update: AvailableUpdate | None = None
         self._pending_installer: Path | None = None
@@ -119,7 +121,7 @@ class PaperOrganizerWindow(QMainWindow):
 
         settings_menu = self.menuBar().addMenu("설정")
         if self._library_workflow is not None:
-            folder_action = QAction("폴더 및 감시 설정...", self)
+            folder_action = QAction("폴더·감시·연구분야 설정...", self)
             folder_action.triggered.connect(self.show_folder_settings)
             settings_menu.addAction(folder_action)
         if self._library_workflow is not None:
@@ -404,6 +406,8 @@ class PaperOrganizerWindow(QMainWindow):
         if self._pending_installer is not None and self._pending_installer.is_file():
             self._prompt_install_when_idle()
             return
+        if not manual and not self._update_schedule.is_due():
+            return
         if self._update_worker is not None and self._update_worker.isRunning():
             if manual:
                 self.statusBar().showMessage("업데이트를 확인하고 있습니다…", 4000)
@@ -450,6 +454,10 @@ class PaperOrganizerWindow(QMainWindow):
             QMessageBox.warning(self, "업데이트 확인 실패", message)
 
     def _update_check_finished(self) -> None:
+        try:
+            self._update_schedule.mark_checked()
+        except Exception:
+            pass
         worker = self._update_worker
         self._update_worker = None
         if worker is not None:

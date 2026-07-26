@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -37,7 +38,7 @@ class FolderSettingsDialog(QDialog):
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setWindowTitle("폴더 및 감시 설정")
+        self.setWindowTitle("폴더·감시·연구분야 설정")
         self.setMinimumWidth(560)
 
         root = QVBoxLayout(self)
@@ -90,17 +91,33 @@ class FolderSettingsDialog(QDialog):
         form.addRow("입력 PDF", self.remove_source_check)
         root.addLayout(form)
 
-        focus_group = QGroupBox("주력 분야 (선택한 분야로만 자동 분류)")
+        focus_group = QGroupBox("연구분야 관리")
         focus_layout = QVBoxLayout(focus_group)
         focus_note = QLabel(
-            "아무것도 선택하지 않으면 전체 분류 체계를 사용합니다."
+            "분야를 추가·수정·삭제할 수 있습니다. 체크한 분야가 있으면 그 "
+            "분야로만 자동 분류하고, 아무것도 체크하지 않으면 목록 전체를 사용합니다."
         )
         focus_note.setWordWrap(True)
         focus_layout.addWidget(focus_note)
         self.focus_list = QListWidget()
-        self.focus_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.focus_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.focus_list.setMaximumHeight(180)
         focus_layout.addWidget(self.focus_list)
+        focus_actions = QHBoxLayout()
+        self.add_category_button = QPushButton("분야 추가")
+        self.edit_category_button = QPushButton("이름 수정")
+        self.remove_category_button = QPushButton("선택 삭제")
+        self.add_category_button.clicked.connect(self._add_focus_category)
+        self.edit_category_button.clicked.connect(self._edit_focus_category)
+        self.remove_category_button.clicked.connect(self._remove_focus_categories)
+        focus_actions.addWidget(self.add_category_button)
+        focus_actions.addWidget(self.edit_category_button)
+        focus_actions.addWidget(self.remove_category_button)
+        focus_actions.addStretch(1)
+        focus_layout.addLayout(focus_actions)
+        self.focus_list.itemDoubleClicked.connect(
+            lambda _item: self._edit_focus_category()
+        )
         root.addWidget(focus_group)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -135,13 +152,20 @@ class FolderSettingsDialog(QDialog):
         self.auto_check.setChecked(settings.auto_enabled)
         self.remove_source_check.setChecked(settings.remove_source_after_import)
         self.auto_organize_check.setChecked(settings.auto_organize_academic)
-        self._load_focus_categories(settings.focus_categories)
+        self._load_focus_categories(
+            settings.focus_categories,
+            settings.research_categories,
+        )
 
-    def _load_focus_categories(self, selected: list[str]) -> None:
-        try:
-            names = taxonomy_category_names()
-        except TaxonomyError:
-            names = []
+    def _load_focus_categories(
+        self, selected: list[str], configured: list[str]
+    ) -> None:
+        names = list(configured)
+        if not names:
+            try:
+                names = taxonomy_category_names()
+            except TaxonomyError:
+                names = []
         chosen = {name.strip() for name in selected}
         self.focus_list.clear()
         for name in names:
@@ -156,6 +180,82 @@ class FolderSettingsDialog(QDialog):
             for row in range(self.focus_list.count())
             if self.focus_list.item(row).checkState() == Qt.Checked
         ]
+
+    def _research_categories(self) -> list[str]:
+        return [
+            self.focus_list.item(row).text().strip()
+            for row in range(self.focus_list.count())
+        ]
+
+    def _category_name(self, title: str, value: str = "") -> str | None:
+        name, accepted = QInputDialog.getText(
+            self,
+            title,
+            "연구분야 이름",
+            text=value,
+        )
+        if not accepted:
+            return None
+        normalized = " ".join(name.split())
+        if not normalized:
+            QMessageBox.warning(self, "연구분야 이름 필요", "이름을 입력하세요.")
+            return None
+        if len(normalized) > 80 or "," in normalized:
+            QMessageBox.warning(
+                self,
+                "연구분야 이름 확인",
+                "이름은 80자 이하로 입력하고 쉼표는 사용하지 마세요.",
+            )
+            return None
+        return normalized
+
+    def _add_focus_category(self) -> None:
+        name = self._category_name("연구분야 추가")
+        if name is None:
+            return
+        if name.casefold() in {
+            value.casefold() for value in self._research_categories()
+        }:
+            QMessageBox.warning(self, "중복 연구분야", "이미 같은 분야가 있습니다.")
+            return
+        entry = QListWidgetItem(name)
+        entry.setFlags(entry.flags() | Qt.ItemIsUserCheckable)
+        entry.setCheckState(Qt.Checked)
+        self.focus_list.addItem(entry)
+        self.focus_list.setCurrentItem(entry)
+
+    def _edit_focus_category(self) -> None:
+        selected = self.focus_list.selectedItems()
+        if len(selected) != 1:
+            QMessageBox.information(
+                self, "연구분야 선택", "이름을 수정할 분야 하나를 선택하세요."
+            )
+            return
+        item = selected[0]
+        name = self._category_name("연구분야 이름 수정", item.text())
+        if name is None or name == item.text():
+            return
+        others = {
+            self.focus_list.item(row).text().casefold()
+            for row in range(self.focus_list.count())
+            if self.focus_list.item(row) is not item
+        }
+        if name.casefold() in others:
+            QMessageBox.warning(self, "중복 연구분야", "이미 같은 분야가 있습니다.")
+            return
+        item.setText(name)
+
+    def _remove_focus_categories(self) -> None:
+        selected = self.focus_list.selectedItems()
+        if not selected:
+            return
+        if self.focus_list.count() - len(selected) < 1:
+            QMessageBox.warning(
+                self, "연구분야 필요", "연구분야를 하나 이상 남겨야 합니다."
+            )
+            return
+        for item in selected:
+            self.focus_list.takeItem(self.focus_list.row(item))
 
     def _add_watch_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -221,6 +321,7 @@ class FolderSettingsDialog(QDialog):
                 scan_interval_seconds=self.interval_spin.value(),
                 remove_source_after_import=self.remove_source_check.isChecked(),
                 auto_organize_academic=self.auto_organize_check.isChecked(),
+                research_categories=self._research_categories(),
                 focus_categories=self._checked_focus_categories(),
                 watch_folders=watch_folders,
             )

@@ -11,6 +11,7 @@ from paper_organizer.application.summary_service import (
     SummaryMode,
     SummaryPreparationError,
     prepare_summary,
+    prepare_text_summary,
     run_prepared_summary,
 )
 from paper_organizer.infra.settings import AppSettings
@@ -106,6 +107,49 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertFalse(prepared.preview.sends_to_cloud)
         self.assertFalse(prepared.preview.requires_cloud_consent)
 
+    def test_reference_section_is_kept_out_of_ai_input(self):
+        settings = AppSettings(
+            summary_provider="ollama", selected_model="qwen-test"
+        )
+        pages = [
+            "Title and authors\n" + "Main study evidence and methods. " * 30,
+            "Results and conclusion. " * 35,
+            "References\n[1] Unrelated Author. Cited Work. 2020.\n"
+            "[2] Another Author. Another Work. 2021.",
+        ]
+
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            pages,
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertIn("Results and conclusion", prepared.document_text)
+        self.assertNotIn("Unrelated Author", prepared.document_text)
+        self.assertNotIn("\nReferences", prepared.document_text)
+        self.assertNotIn("[PDF PAGE 3]", prepared.document_text)
+
+    def test_early_table_of_contents_reference_line_is_not_cut(self):
+        settings = AppSettings(
+            summary_provider="ollama", selected_model="qwen-test"
+        )
+        pages = [
+            "Contents\nIntroduction\nMethods\nReferences\n"
+            + "Opening context. " * 20,
+            "Methods and results remain available. " * 40,
+            "Conclusion without a trailing bibliography heading. " * 20,
+        ]
+
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            pages,
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertIn("Methods and results remain available", prepared.document_text)
+
     def test_cloud_summary_requires_consent_and_does_not_move_pdf(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.pdf"
@@ -130,6 +174,33 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertTrue(still_exists)
         self.assertEqual(execution.result.data.summary_ko, "시험용 요약")
         self.assertEqual(execution.provenance["analysis_level"], "quick")
+
+    def test_custom_research_categories_are_sent_to_ai(self):
+        settings = AppSettings(
+            summary_provider="openai",
+            openai_model="gpt-test",
+            cloud_processing_consent=True,
+            research_categories=["균류생태학", "고문서과학"],
+            focus_categories=["고문서과학"],
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Main academic content and evidence. " * 30],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = FakeHttpClient()
+
+        run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        instructions = client.calls[0]["payload"]["instructions"]
+        self.assertIn("Choose category from exactly this list: 고문서과학", instructions)
+        self.assertNotIn("균류생태학, 고문서과학", instructions)
 
     def test_provider_change_requires_new_preview(self):
         with tempfile.TemporaryDirectory() as temp:

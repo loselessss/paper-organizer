@@ -54,6 +54,8 @@ SYSTEM_INSTRUCTIONS = (
     "must keep its English title. Never translate, romanize, summarize, or rewrite "
     "the title, author names, or venue; copy those fields verbatim from the source "
     "document, preserving spelling, word order, and punctuation. "
+    "Do not summarize or analyze reference, bibliography, or works-cited entries, "
+    "and never use them as evidence for the paper's findings or authorship. "
     "Every article type, including narrative reviews, systematic reviews, and "
     "meta-analyses, has a byline: extract all authors shown in that byline. Never "
     "treat a review article as authorless and never copy cited-reference authors. "
@@ -89,7 +91,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v4"
+    prompt_version: str = "paper-summary-v5"
     allowed_categories: tuple[str, ...] = ()
 
     def validate(self) -> None:

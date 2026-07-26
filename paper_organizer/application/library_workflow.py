@@ -807,6 +807,7 @@ class LibraryWorkflowController:
         scan_interval_seconds: int | None = None,
         remove_source_after_import: bool | None = None,
         auto_organize_academic: bool | None = None,
+        research_categories: list[str] | None = None,
         focus_categories: list[str] | None = None,
         watch_folders: list[Path] | None = None,
     ) -> AppSettings:
@@ -866,6 +867,10 @@ class LibraryWorkflowController:
             settings.remove_source_after_import = bool(remove_source_after_import)
         if auto_organize_academic is not None:
             settings.auto_organize_academic = bool(auto_organize_academic)
+        if research_categories is not None:
+            settings.research_categories = [
+                name.strip() for name in research_categories if name.strip()
+            ]
         if focus_categories is not None:
             settings.focus_categories = [
                 name.strip() for name in focus_categories if name.strip()
@@ -1084,7 +1089,11 @@ class LibraryWorkflowController:
             result = classify_text(
                 metadata.title,
                 page_texts,
-                allowed_categories=settings.focus_categories or None,
+                allowed_categories=(
+                    settings.focus_categories
+                    or settings.research_categories
+                    or None
+                ),
             )
         except TaxonomyError:
             result = None

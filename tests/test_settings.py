@@ -99,6 +99,21 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             settings.validate()
 
+    def test_research_categories_are_editable_unique_names(self):
+        AppSettings(
+            research_categories=["생명과학", "사용자 정의 분야"],
+            focus_categories=["사용자 정의 분야"],
+        ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(
+                research_categories=["생명과학", "생명과학"],
+            ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(
+                research_categories=["생명과학"],
+                focus_categories=["삭제된 분야"],
+            ).validate()
+
 
 if __name__ == "__main__":
     unittest.main()

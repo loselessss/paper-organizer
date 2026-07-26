@@ -30,6 +30,7 @@ class AppSettings:
     remove_source_after_import: bool = False
     auto_enabled: bool = False
     auto_organize_academic: bool = True
+    research_categories: list[str] = field(default_factory=list)
     focus_categories: list[str] = field(default_factory=list)
     resource_profile: str = "eco"
     background_analysis_enabled: bool = True
@@ -47,6 +48,7 @@ class AppSettings:
     cloud_request_profile: str = "conservative"
     cloud_max_parallel_requests: int = 1
     cloud_monthly_budget_usd: float = 0.0
+    last_update_check_at: str = ""
     minimum_age_seconds: int = 30
     scan_interval_seconds: int = 300
 
@@ -79,6 +81,27 @@ class AppSettings:
             for name in self.focus_categories
         ):
             raise ValueError("focus_categories must contain non-empty names")
+        if (
+            not isinstance(self.research_categories, list)
+            or any(
+                not isinstance(name, str)
+                or not name.strip()
+                or len(name.strip()) > 80
+                or "," in name
+                for name in self.research_categories
+            )
+            or len({name.strip().casefold() for name in self.research_categories})
+            != len(self.research_categories)
+        ):
+            raise ValueError(
+                "research_categories must contain unique names without commas"
+            )
+        if self.research_categories and not {
+            name.strip().casefold() for name in self.focus_categories
+        }.issubset(
+            {name.strip().casefold() for name in self.research_categories}
+        ):
+            raise ValueError("focus_categories must be selected research categories")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
         if not isinstance(self.hardware_profile, dict):
@@ -97,6 +120,8 @@ class AppSettings:
             raise ValueError("summary_provider must be ollama, openai or anthropic")
         if not isinstance(self.cloud_processing_consent, bool):
             raise ValueError("cloud_processing_consent must be a boolean")
+        if not isinstance(self.last_update_check_at, str):
+            raise ValueError("last_update_check_at must be a string")
         if self.cloud_request_profile not in {
             "conservative",
             "standard",
