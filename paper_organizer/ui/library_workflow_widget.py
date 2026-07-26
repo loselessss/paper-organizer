@@ -197,6 +197,9 @@ class CollectionReviewWidget(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.cellDoubleClicked.connect(
+            lambda _row, _column: self._open_selected()
+        )
         root.addWidget(self.table, 1)
 
         self.detail_label = QLabel("검토할 PDF를 선택하세요.")

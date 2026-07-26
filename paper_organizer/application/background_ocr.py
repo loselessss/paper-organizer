@@ -95,7 +95,7 @@ def _run_ocr_page_texts(
         command = [str(Path(sys.executable).parent / "ocr" / "spdf-ocr.exe")]
         environment = dict(os.environ)
     else:
-        command = [sys.executable, "-m", "pdfeditor.ocr_subprocess"]
+        command = [sys.executable, "-m", "paper_organizer.ocr_worker_main"]
         environment = dict(os.environ)
         existing = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = os.pathsep.join(
@@ -108,10 +108,18 @@ def _run_ocr_page_texts(
                 "OMP_WAIT_POLICY": "PASSIVE",
                 "MKL_NUM_THREADS": "1",
                 "OPENBLAS_NUM_THREADS": "1",
+                "PAPER_ORGANIZER_OCR_BACKGROUND": "1",
             }
         )
+    else:
+        environment.pop("PAPER_ORGANIZER_OCR_BACKGROUND", None)
     request = json.dumps(
-        {"path": str(source), "password": "", "pages": pages, "zoom": None},
+        {
+            "path": str(source),
+            "password": "",
+            "pages": pages,
+            "zoom": 3.0 if background else None,
+        },
         ensure_ascii=False,
     )
     process: subprocess.Popen[str] | None = None

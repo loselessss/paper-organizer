@@ -36,7 +36,7 @@ ocr_datas = [entry for entry in ocr_datas if keep_ocr_entry(entry)]
 ocr_bins = [entry for entry in ocr_bins if keep_ocr_entry(entry)]
 
 a_ocr = Analysis(
-    ["vendor/spdf/ocr_worker_main.py"],
+    ["paper_organizer/ocr_worker_main.py"],
     pathex=["vendor/spdf"],
     binaries=ocr_bins,
     datas=ocr_datas,
