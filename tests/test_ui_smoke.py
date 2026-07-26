@@ -140,6 +140,10 @@ class UiSmokeTests(unittest.TestCase):
                 window.queue_widget.run_now_button.text(),
                 "선택 항목 지금 분석",
             )
+            self.assertEqual(
+                window.collection_widget.trash_button.text(),
+                "제외 목록으로 보내기",
+            )
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
             splash.close()
             model_dialog.close()

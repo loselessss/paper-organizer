@@ -973,7 +973,7 @@ class LibraryWorkflowController:
         except Exception as exc:
             if moved and destination.exists() and not source.exists():
                 shutil.move(str(destination), str(source))
-            raise LibraryWorkflowError(f"휴지통 이동을 완료하지 못했습니다: {exc}") from None
+            raise LibraryWorkflowError(f"제외 목록 이동을 완료하지 못했습니다: {exc}") from None
         self._forget_discovery(source)
         self._cache.pop(source, None)
         _record_ignored_file_id(library_root, item.identity.file_sha256)
@@ -1015,13 +1015,13 @@ class LibraryWorkflowController:
         input_dir, root = self.configured_paths()
         manifest = entry.manifest_path.resolve()
         if not _inside((root / "trash").resolve(), manifest):
-            raise LibraryWorkflowError("앱 휴지통 밖의 작업은 복원할 수 없습니다.")
+            raise LibraryWorkflowError("제외 목록 밖의 작업은 복원할 수 없습니다.")
         data = json.loads(manifest.read_text(encoding="utf-8"))
         if data.get("restored_at"):
             raise LibraryWorkflowError("이미 복원된 작업입니다.")
         trashed = manifest.parent / str(data["trashed_name"])
         if not trashed.is_file() or sha256_file(trashed) != str(data["sha256"]):
-            raise LibraryWorkflowError("휴지통 파일이 없거나 내용이 바뀌었습니다.")
+            raise LibraryWorkflowError("제외 파일이 없거나 내용이 바뀌었습니다.")
         requested = Path(str(data["original_path"]))
         requested_is_in_input = _inside(input_dir, requested.parent)
         destination_dir = requested.parent if requested_is_in_input else input_dir

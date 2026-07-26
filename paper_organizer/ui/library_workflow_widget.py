@@ -203,8 +203,8 @@ class CollectionReviewWidget(QWidget):
         review_actions = QHBoxLayout()
         self.open_button = QPushButton("sPDF로 열기")
         self.organize_button = QPushButton("승인 후 paperpack으로 보관")
-        self.trash_button = QPushButton("새 PDF 삭제 (앱 휴지통)")
-        self.restore_button = QPushButton("앱 휴지통에서 복원…")
+        self.trash_button = QPushButton("제외 목록으로 보내기")
+        self.restore_button = QPushButton("제외 목록에서 복원…")
         self.open_button.clicked.connect(self._open_selected)
         self.organize_button.clicked.connect(self._organize_selected)
         self.trash_button.clicked.connect(self._trash_selected)
@@ -360,8 +360,8 @@ class CollectionReviewWidget(QWidget):
             return
         if QMessageBox.question(
             self,
-            "새 PDF 삭제",
-            "파일을 복구 가능한 앱 휴지통으로 옮기고 파일 ID를 보관해 다시 감지되지 "
+            "제외 목록으로 보내기",
+            "파일을 복구 가능한 제외 목록으로 옮기고 파일 ID를 보관해 다시 감지되지 "
             "않도록 합니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
@@ -371,7 +371,7 @@ class CollectionReviewWidget(QWidget):
             QMessageBox.warning(self, "중복 이동 실패", str(exc))
             return
         QMessageBox.information(
-            self, "앱 휴지통 이동 완료", f"작업 ID: {operation.operation_id}"
+            self, "제외 목록 등록 완료", f"작업 ID: {operation.operation_id}"
         )
         self.queue_changed.emit()
         self.scan_now(False)
@@ -379,11 +379,11 @@ class CollectionReviewWidget(QWidget):
     def _restore_trash(self) -> None:
         entries = self._controller.list_trash()
         if not entries:
-            QMessageBox.information(self, "앱 휴지통", "복원할 중복 파일이 없습니다.")
+            QMessageBox.information(self, "제외 목록", "복원할 제외 파일이 없습니다.")
             return
         labels = [f"{entry.operation_id} · {entry.original_path.name}" for entry in entries]
         selected, accepted = QInputDialog.getItem(
-            self, "중복 파일 복원", "복원할 작업", labels, 0, False
+            self, "제외 파일 복원", "복원할 작업", labels, 0, False
         )
         if not accepted:
             return
