@@ -1202,6 +1202,8 @@ class LibraryWorkflowController:
         for target, field, key, value in candidates:
             if not value:
                 continue
+            if key in {"title", "authors", "venue"} and target.get(key):
+                continue
             if not replaceable(field, target.get(key)):
                 continue
             target[key] = value

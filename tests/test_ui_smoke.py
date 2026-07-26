@@ -41,7 +41,8 @@ class UiSmokeTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_ai_settings_and_summary_shell_construct(self):
-        from PyQt5.QtCore import Qt
+        from PyQt5.QtCore import QItemSelectionModel, Qt
+        from PyQt5.QtWidgets import QMessageBox
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -151,7 +152,8 @@ class UiSmokeTests(unittest.TestCase):
             window.close()
 
     def test_analysis_queue_sorting_keeps_selection_mapping(self):
-        from PyQt5.QtCore import Qt
+        from PyQt5.QtCore import QItemSelectionModel, Qt
+        from PyQt5.QtWidgets import QMessageBox
 
         from paper_organizer.application.analysis_queue import AnalysisQueueItem
         from paper_organizer.application.background_analysis import AnalysisRunEvent
@@ -172,9 +174,16 @@ class UiSmokeTests(unittest.TestCase):
         class FakeController:
             def __init__(self, items):
                 self._items = items
+                self.removed = []
 
             def analysis_queue(self):
                 return self._items
+
+            def remove_from_queue(self, queue_id):
+                self.removed.append(queue_id)
+                self._items = [
+                    item for item in self._items if item.queue_id != queue_id
+                ]
 
         items = [
             queue_item("a", "Alpha", 0, "completed"),
@@ -201,6 +210,17 @@ class UiSmokeTests(unittest.TestCase):
             AnalysisRunEvent("completed", "저장 완료", "sha256:a", "Alpha")
         )
         self.assertEqual(library_events, [True])
+        selection = widget.table.selectionModel()
+        for row in (0, 1):
+            selection.select(
+                widget.table.model().index(row, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+            )
+        with mock.patch.object(
+            QMessageBox, "question", return_value=QMessageBox.Yes
+        ):
+            widget._remove_selected()
+        self.assertEqual(len(widget._controller.removed), 2)
         widget.close()
 
     def test_first_run_requires_an_explicit_close_choice(self):

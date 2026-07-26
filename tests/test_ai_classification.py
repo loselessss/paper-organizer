@@ -141,7 +141,7 @@ class AiClassificationTests(unittest.TestCase):
             )
             self.assertEqual(
                 record["bibliography"]["title"],
-                "Directed Evolution of a Thermostable Enzyme Scaffold",
+                "Directed evolution of a thermostable enzyme scaffold",
             )
             self.assertEqual(record["bibliography"]["year"], 2019)
             self.assertEqual(record["file"]["relative_path"], moved.relative_to(library).as_posix())

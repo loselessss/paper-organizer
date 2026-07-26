@@ -48,7 +48,9 @@ SYSTEM_INSTRUCTIONS = (
     "If evidence is missing, use an empty string or empty list instead of guessing. "
     "Also correct the bibliography from the document: title is the paper's own "
     "title, authors are the listed authors, year is the four-digit publication "
-    "year as a string, and venue is the journal or conference name. "
+    "year as a string, and venue is the journal or conference name. Never "
+    "translate, romanize, summarize, or rewrite the title, author names, or "
+    "venue; copy those fields verbatim in the source document's original language. "
     "Classify the paper into one university department-level category and a "
     "narrower subcategory, both written in Korean."
 )

@@ -414,6 +414,7 @@ class _SortableQueueItem(QTableWidgetItem):
 
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
+    summaries_requested = pyqtSignal(list)
     library_requested = pyqtSignal(str)
     library_changed = pyqtSignal()
     analysis_progress = pyqtSignal(str, bool)
@@ -455,7 +456,7 @@ class AnalysisQueueWidget(QWidget):
         select_all_button = QPushButton("전체 선택")
         self.priority_button = QPushButton("최우선으로 표시")
         self.summary_button = QPushButton("즉시 요약으로 보내기")
-        self.remove_button = QPushButton("큐에서만 제거")
+        self.remove_button = QPushButton("선택 항목 큐에서 제외")
         self.retry_button = QPushButton("실패 항목 다시 분석")
         self.run_now_button = QPushButton("선택 항목 지금 분석")
         self.background_button = QPushButton("백그라운드 분석 시작")
@@ -568,26 +569,32 @@ class AnalysisQueueWidget(QWidget):
 
     def _selection_changed(self) -> None:
         item = self._selected()
-        enabled = item is not None
-        mutable = bool(item and item.status != "analyzing")
+        selected = self._selected_items()
+        mutable_items = [value for value in selected if value.status != "analyzing"]
+        mutable = bool(mutable_items)
         self.priority_button.setEnabled(mutable)
-        self.summary_button.setEnabled(bool(item and Path(item.path).is_file()))
+        self.summary_button.setEnabled(
+            any(Path(value.path).is_file() for value in selected)
+        )
         self.remove_button.setEnabled(mutable)
         self.retry_button.setEnabled(
             any(item.status == "failed" for item in self._selected_items())
         )
         self.run_now_button.setEnabled(
             bool(
-                item
-                and item.status
-                in {"organized_pending_analysis", "failed", "completed"}
-                and Path(item.path).is_file()
-                and self._background_analysis is not None
+                self._background_analysis is not None
+                and any(
+                    value.status
+                    in {"organized_pending_analysis", "failed", "completed"}
+                    and Path(value.path).is_file()
+                    for value in selected
+                )
             )
         )
-        if item:
+        if mutable_items:
+            all_high = all(value.priority for value in mutable_items)
             self.priority_button.setText(
-                "보통 우선순위로 변경" if item.priority else "최우선으로 표시"
+                "보통 우선순위로 변경" if all_high else "최우선으로 표시"
             )
 
     def _selected_items(self) -> list[AnalysisQueueItem]:
@@ -614,29 +621,37 @@ class AnalysisQueueWidget(QWidget):
         self.refresh()
 
     def _toggle_priority(self) -> None:
-        item = self._selected()
-        if item is None:
+        items = [
+            item for item in self._selected_items() if item.status != "analyzing"
+        ]
+        if not items:
             return
+        high = not all(item.priority for item in items)
         try:
-            self._controller.set_queue_priority(item.queue_id, not bool(item.priority))
+            for item in items:
+                self._controller.set_queue_priority(item.queue_id, high)
         except Exception as exc:
             QMessageBox.warning(self, "우선순위 변경 실패", str(exc))
             return
         self.refresh()
 
     def _send_to_summary(self) -> None:
-        item = self._selected()
-        if item is None:
-            return
-        if not Path(item.path).is_file():
-            QMessageBox.warning(self, "파일 없음", "큐에 기록된 PDF를 찾을 수 없습니다.")
-            return
-        try:
-            pdf = self._controller.materialize_pdf(Path(item.path))
-        except Exception as exc:
-            QMessageBox.warning(self, "PDF 준비 실패", str(exc))
-            return
-        self.summary_requested.emit(str(pdf))
+        paths: list[str] = []
+        failures: list[str] = []
+        for item in self._selected_items():
+            if not Path(item.path).is_file():
+                failures.append(f"{item.title}: 파일 없음")
+                continue
+            try:
+                paths.append(
+                    str(self._controller.materialize_pdf(Path(item.path)))
+                )
+            except Exception as exc:
+                failures.append(f"{item.title}: {exc}")
+        if failures:
+            QMessageBox.warning(self, "일부 PDF 준비 실패", "\n".join(failures[:10]))
+        if paths:
+            self.summaries_requested.emit(paths)
 
     def _open_completed_in_library(self, _row: int, _column: int) -> None:
         item = self._selected()
@@ -644,33 +659,49 @@ class AnalysisQueueWidget(QWidget):
             self.library_requested.emit(item.path)
 
     def _remove_selected(self) -> None:
-        item = self._selected()
-        if item is None:
+        items = [
+            item for item in self._selected_items() if item.status != "analyzing"
+        ]
+        if not items:
             return
         if QMessageBox.question(
             self,
-            "큐 항목 제거",
-            "분석 큐 기록만 제거합니다. PDF와 paperpack은 삭제되지 않습니다. 계속할까요?",
+            "큐 항목 제외",
+            f"선택한 {len(items)}건을 분석 큐에서 제외합니다. "
+            "PDF와 paperpack은 삭제되지 않습니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
+        failures: list[str] = []
         try:
-            self._controller.remove_from_queue(item.queue_id)
-        except Exception as exc:
-            QMessageBox.warning(self, "큐 제거 실패", str(exc))
-            return
-        self.refresh()
+            for item in items:
+                try:
+                    self._controller.remove_from_queue(item.queue_id)
+                except Exception as exc:
+                    failures.append(f"{item.title}: {exc}")
+        finally:
+            self.refresh()
+        if failures:
+            QMessageBox.warning(
+                self,
+                "일부 큐 제외 실패",
+                "\n".join(failures[:10]),
+            )
 
     def _run_selected_now(self) -> None:
-        item = self._selected()
-        if item is None or self._background_analysis is None:
+        items = [
+            item
+            for item in self._selected_items()
+            if item.status in {"organized_pending_analysis", "failed", "completed"}
+            and Path(item.path).is_file()
+        ]
+        if not items or self._background_analysis is None:
             return
         try:
-            if item.status in {"failed", "completed"}:
-                self._controller.retry_queue_item(item.queue_id, high=True)
-            elif item.status == "organized_pending_analysis":
-                self._controller.set_queue_priority(item.queue_id, True)
-            else:
-                return
+            for item in items:
+                if item.status in {"failed", "completed"}:
+                    self._controller.retry_queue_item(item.queue_id, high=True)
+                else:
+                    self._controller.set_queue_priority(item.queue_id, True)
             self._controller.set_background_analysis_enabled(True)
         except Exception as exc:
             QMessageBox.warning(self, "수동 분석 요청 실패", str(exc))
@@ -678,7 +709,9 @@ class AnalysisQueueWidget(QWidget):
         self.start_background_analysis()
         if self._analysis_worker is not None:
             self._analysis_worker.request_wake()
-        self.status_label.setText(f"최우선 분석 요청: {item.title}")
+        self.status_label.setText(
+            f"선택한 {len(items)}건을 최우선 분석 대기열에 넣었습니다."
+        )
         self.refresh()
 
     def _toggle_background(self) -> None:

@@ -88,6 +88,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.tabs.addTab(self.library_widget, "라이브러리")
         if self.queue_widget is not None:
             self.queue_widget.summary_requested.connect(self._open_queue_in_summary)
+            self.queue_widget.summaries_requested.connect(
+                self._open_queue_batch_in_summary
+            )
             self.queue_widget.library_requested.connect(
                 self._open_queue_item_in_library
             )
@@ -400,6 +403,10 @@ class PaperOrganizerWindow(QMainWindow):
             "분석 큐의 PDF를 빠른 요약에 넣었습니다. 미리보기 전에는 전송되지 않습니다."
         )
         self.show_immediate_summary(path)
+
+    def _open_queue_batch_in_summary(self, paths: list[str]) -> None:
+        for path in paths:
+            self._open_queue_in_summary(path)
 
     def _open_queue_item_in_library(self, path: str) -> None:
         if self.library_widget is None:

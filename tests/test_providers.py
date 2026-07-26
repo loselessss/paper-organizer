@@ -131,6 +131,10 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["url"], "http://127.0.0.1:11434/api/chat")
         self.assertEqual(client.calls[0]["payload"]["format"]["type"], "object")
         self.assertFalse(client.calls[0]["payload"]["think"])
+        self.assertIn(
+            "copy those fields verbatim",
+            client.calls[0]["payload"]["messages"][0]["content"],
+        )
 
     def test_invalid_provider_shape_is_rejected(self):
         broken = dict(SUMMARY)
