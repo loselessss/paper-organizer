@@ -155,7 +155,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(CREATOR, "SANGKYU SHIN, Ph.D.")
             splash_labels = {label.text() for label in splash.findChildren(QLabel)}
             self.assertIn("Paper Organizer", splash_labels)
-            self.assertIn("Version 1.1.0", splash_labels)
+            self.assertIn(f"Version {__version__}", splash_labels)
             self.assertEqual(
                 window.queue_widget.background_button.text(),
                 "백그라운드 분석 시작",
@@ -236,6 +236,111 @@ class UiSmokeTests(unittest.TestCase):
             ["one", "two"],
         )
         dialog.close()
+
+    def test_collection_review_supports_batch_store_without_success_popup(self):
+        from PyQt5.QtCore import QItemSelectionModel
+        from PyQt5.QtWidgets import QAbstractItemView, QMessageBox, QTableWidgetItem
+
+        from paper_organizer.application.library_workflow import (
+            EditablePaperMetadata,
+            OrganizedPaper,
+            ReviewItem,
+            TrashOperation,
+        )
+        from paper_organizer.models.paper import DocumentIdentity
+        from paper_organizer.ui.library_workflow_widget import CollectionReviewWidget
+
+        class FakeController:
+            def __init__(self):
+                self.organized = []
+                self.trashed = []
+
+            def settings(self):
+                return type(
+                    "Settings",
+                    (),
+                    {"scan_interval_seconds": 300, "auto_enabled": False},
+                )()
+
+            def suggest_metadata(self, item):
+                return item.metadata
+
+            def organize(self, item, metadata):
+                self.organized.append((item, metadata))
+                return OrganizedPaper(item.path, item.path)
+
+            def trash_confirmed_duplicate(self, item):
+                self.trashed.append(item)
+                return TrashOperation("operation", item.path, item.path)
+
+        def review_item(number):
+            key = str(number) * 64
+            identity = DocumentIdentity(
+                file_id=f"sha256:{key}",
+                edition_id=f"sha256:{key}",
+                work_id=f"work:{number}",
+                file_sha256=key,
+                content_fingerprint=f"content:{number}",
+                segment_fingerprints=(),
+                fingerprint_version="v1",
+                doi=None,
+                source_variant="publisher",
+                wrapper_pages=(),
+                content_start_pdf_page=1,
+                page_count=3,
+            )
+            return ReviewItem(
+                path=Path(f"C:/papers/paper-{number}.pdf"),
+                identity=identity,
+                metadata=EditablePaperMetadata(title=f"Paper {number}"),
+                detection_status="academic_likely",
+                detection_reason="학술 문서 특징을 찾았습니다.",
+            )
+
+        controller = FakeController()
+        widget = CollectionReviewWidget(controller)
+        widget._items = [review_item(1), review_item(2)]
+        widget.table.setRowCount(2)
+        for row, item in enumerate(widget._items):
+            widget.table.setItem(row, 0, QTableWidgetItem(item.path.name))
+        widget.table.selectRow(0)
+        widget.table.selectionModel().select(
+            widget.table.model().index(1, 0),
+            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+        )
+
+        self.assertEqual(
+            widget.table.selectionMode(), QAbstractItemView.ExtendedSelection
+        )
+        self.assertEqual(len(widget._selected_items()), 2)
+        self.assertFalse(widget.form.isEnabled())
+
+        with (
+            mock.patch.object(
+                QMessageBox, "question", return_value=QMessageBox.Yes
+            ),
+            mock.patch.object(QMessageBox, "information") as information,
+            mock.patch.object(widget, "scan_now"),
+        ):
+            widget._organize_selected()
+
+        self.assertEqual(len(controller.organized), 2)
+        information.assert_not_called()
+        self.assertIn("2개를 보관", widget.status_label.text())
+
+        with (
+            mock.patch.object(
+                QMessageBox, "question", return_value=QMessageBox.Yes
+            ),
+            mock.patch.object(QMessageBox, "information") as information,
+            mock.patch.object(widget, "scan_now"),
+        ):
+            widget._trash_selected()
+
+        self.assertEqual(len(controller.trashed), 2)
+        information.assert_not_called()
+        self.assertIn("2개를 제외 목록", widget.status_label.text())
+        widget.close()
 
     def test_analysis_queue_sorting_keeps_selection_mapping(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt

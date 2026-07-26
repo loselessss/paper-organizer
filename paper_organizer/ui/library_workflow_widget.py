@@ -359,12 +359,12 @@ class CollectionReviewWidget(QWidget):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["파일", "판정", "중복", "추정 제목"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(
-            lambda _row, _column: self._open_selected()
+            lambda row, _column: self._open_row(row)
         )
         root.addWidget(self.table, 1)
 
@@ -376,14 +376,17 @@ class CollectionReviewWidget(QWidget):
         root.addWidget(self.form)
 
         review_actions = QHBoxLayout()
+        self.select_all_button = QPushButton("전체 선택")
         self.open_button = QPushButton("sPDF로 열기")
         self.organize_button = QPushButton("승인 후 paperpack으로 보관")
         self.trash_button = QPushButton("제외 목록으로 보내기")
         self.restore_button = QPushButton("제외 목록에서 복원…")
+        self.select_all_button.clicked.connect(self.table.selectAll)
         self.open_button.clicked.connect(self._open_selected)
         self.organize_button.clicked.connect(self._organize_selected)
         self.trash_button.clicked.connect(self._trash_selected)
         self.restore_button.clicked.connect(self._restore_trash)
+        review_actions.addWidget(self.select_all_button)
         for button in (self.open_button, self.organize_button, self.trash_button):
             button.setEnabled(False)
             review_actions.addWidget(button)
@@ -470,16 +473,28 @@ class CollectionReviewWidget(QWidget):
         row = self.table.currentRow()
         return self._items[row] if 0 <= row < len(self._items) else None
 
+    def _selected_items(self) -> list[ReviewItem]:
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        return [self._items[row] for row in rows if 0 <= row < len(self._items)]
+
     def _selection_changed(self) -> None:
-        item = self._selected()
+        selected = self._selected_items()
+        item = selected[0] if len(selected) == 1 else None
         self.form.set_metadata(
             self._controller.suggest_metadata(item) if item else None
         )
-        enabled = item is not None
+        self.form.setEnabled(item is not None)
+        enabled = bool(selected)
         self.open_button.setEnabled(enabled)
         self.organize_button.setEnabled(enabled)
         self.trash_button.setEnabled(enabled)
-        if not item:
+        if len(selected) > 1:
+            self.detail_label.setText(
+                f"{len(selected)}개 PDF를 선택했습니다. 일괄 보관할 때는 각 PDF의 "
+                "추정 메타데이터를 개별 적용합니다."
+            )
+            return
+        if item is None:
             self.detail_label.setText("검토할 PDF를 선택하세요.")
             return
         detail = f"{item.detection_reason}\nwork_id: {item.identity.work_id}"
@@ -494,55 +509,114 @@ class CollectionReviewWidget(QWidget):
         self.detail_label.setText(detail)
 
     def _open_selected(self) -> None:
-        item = self._selected()
-        if item:
+        failures: list[str] = []
+        for item in self._selected_items():
             try:
                 open_pdf(item.path, self)
             except Exception as exc:
-                QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+                failures.append(f"{item.path.name}: {exc}")
+        if failures:
+            QMessageBox.warning(
+                self, "일부 PDF 열기 실패", "\n".join(failures[:10])
+            )
+
+    def _open_row(self, row: int) -> None:
+        if not 0 <= row < len(self._items):
+            return
+        item = self._items[row]
+        try:
+            open_pdf(item.path, self)
+        except Exception as exc:
+            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
 
     def _organize_selected(self) -> None:
-        item = self._selected()
-        if item is None:
+        items = self._selected_items()
+        if not items:
             return
-        if item.detection_status not in {"academic_likely", "patent_likely"} and QMessageBox.question(
-            self,
-            "수동 승인 확인",
-            "학술 논문으로 확실히 판정되지 않았습니다. 그래도 승인하여 이동할까요?",
+        uncertain = sum(
+            item.detection_status not in {"academic_likely", "patent_likely"}
+            for item in items
+        )
+        if len(items) > 1:
+            message = (
+                f"선택한 {len(items)}개 PDF를 각각의 추정 메타데이터로 보관합니다."
+            )
+            if uncertain:
+                message += f"\n이 중 {uncertain}개는 논문·특허 판정이 불확실합니다."
+            message += "\n계속할까요?"
+        else:
+            message = (
+                "학술 논문이나 특허로 확실히 판정되지 않았습니다. "
+                "그래도 승인하여 보관할까요?"
+            )
+        if (len(items) > 1 or uncertain) and QMessageBox.question(
+            self, "수동 승인 확인", message
         ) != QMessageBox.Yes:
             return
-        try:
-            result = self._controller.organize(item, self.form.metadata())
-        except Exception as exc:
-            QMessageBox.warning(self, "논문 이동 실패", str(exc))
+        organized = 0
+        warnings: list[str] = []
+        failures: list[str] = []
+        for item in items:
+            try:
+                metadata = (
+                    self.form.metadata()
+                    if len(items) == 1
+                    else self._controller.suggest_metadata(item)
+                )
+                result = self._controller.organize(item, metadata)
+                organized += 1
+                if result.warning:
+                    warnings.append(f"{item.path.name}: {result.warning}")
+            except Exception as exc:
+                failures.append(f"{item.path.name}: {exc}")
+        self.status_label.setText(
+            f"선택한 PDF {organized}개를 보관했습니다."
+            + (f" · 실패 {len(failures)}개" if failures else "")
+        )
+        if warnings or failures:
+            parts = []
+            if warnings:
+                parts.append("주의:\n" + "\n".join(warnings[:10]))
+            if failures:
+                parts.append("실패:\n" + "\n".join(failures[:10]))
+            QMessageBox.warning(
+                self, "일부 PDF 보관 확인 필요", "\n\n".join(parts)
+            )
+        if not organized:
             return
-        message = f"PaperPack 보관 완료: {result.pdf_path}"
-        if result.warning:
-            message += f"\n경고: {result.warning}"
-        QMessageBox.information(self, "논문 정리 완료", message)
         self.library_changed.emit()
         self.queue_changed.emit()
         self.scan_now(False)
 
     def _trash_selected(self) -> None:
-        item = self._selected()
-        if item is None:
+        items = self._selected_items()
+        if not items:
             return
         if QMessageBox.question(
             self,
             "제외 목록으로 보내기",
-            "파일을 복구 가능한 제외 목록으로 옮기고 파일 ID를 보관해 다시 감지되지 "
-            "않도록 합니다. 계속할까요?",
+            f"선택한 파일 {len(items)}개를 복구 가능한 제외 목록으로 옮기고 "
+            "파일 ID를 보관해 다시 감지되지 않도록 합니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
-        try:
-            operation = self._controller.trash_confirmed_duplicate(item)
-        except Exception as exc:
-            QMessageBox.warning(self, "중복 이동 실패", str(exc))
-            return
-        QMessageBox.information(
-            self, "제외 목록 등록 완료", f"작업 ID: {operation.operation_id}"
+        moved = 0
+        failures: list[str] = []
+        for item in items:
+            try:
+                self._controller.trash_confirmed_duplicate(item)
+                moved += 1
+            except Exception as exc:
+                failures.append(f"{item.path.name}: {exc}")
+        self.status_label.setText(
+            f"선택한 PDF {moved}개를 제외 목록으로 보냈습니다."
+            + (f" · 실패 {len(failures)}개" if failures else "")
         )
+        if failures:
+            QMessageBox.warning(
+                self, "일부 제외 실패", "\n".join(failures[:10])
+            )
+        if not moved:
+            return
         self.queue_changed.emit()
         self.scan_now(False)
 
