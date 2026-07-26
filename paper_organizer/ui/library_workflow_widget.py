@@ -255,7 +255,18 @@ class CollectionReviewWidget(QWidget):
             duplicate_text = "없음"
             if duplicate:
                 duplicate_text = f"{duplicate.match.kind.value} ({duplicate.match.score:.2f})"
-            values = [item.path.name, item.detection_status, duplicate_text, item.metadata.title]
+            detection_labels = {
+                "academic_likely": "학술 논문",
+                "patent_likely": "특허",
+                "needs_ocr": "OCR 필요",
+                "needs_review": "검토 필요",
+            }
+            values = [
+                item.path.name,
+                detection_labels.get(item.detection_status, item.detection_status),
+                duplicate_text,
+                item.metadata.title,
+            ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         problem_text = f" · 오류 {len(result.problems)}개" if result.problems else ""
@@ -324,7 +335,7 @@ class CollectionReviewWidget(QWidget):
         item = self._selected()
         if item is None:
             return
-        if item.detection_status != "academic_likely" and QMessageBox.question(
+        if item.detection_status not in {"academic_likely", "patent_likely"} and QMessageBox.question(
             self,
             "수동 승인 확인",
             "학술 논문으로 확실히 판정되지 않았습니다. 그래도 승인하여 이동할까요?",
@@ -403,6 +414,7 @@ class _SortableQueueItem(QTableWidgetItem):
 
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
+    library_requested = pyqtSignal(str)
     analysis_progress = pyqtSignal(str, bool)
 
     def __init__(
@@ -435,6 +447,7 @@ class AnalysisQueueWidget(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.cellDoubleClicked.connect(self._open_completed_in_library)
         root.addWidget(self.table, 1)
         actions = QHBoxLayout()
         refresh_button = QPushButton("새로고침")
@@ -623,6 +636,11 @@ class AnalysisQueueWidget(QWidget):
             QMessageBox.warning(self, "PDF 준비 실패", str(exc))
             return
         self.summary_requested.emit(str(pdf))
+
+    def _open_completed_in_library(self, _row: int, _column: int) -> None:
+        item = self._selected()
+        if item is not None and item.status == "completed":
+            self.library_requested.emit(item.path)
 
     def _remove_selected(self) -> None:
         item = self._selected()
@@ -892,6 +910,16 @@ class LibraryWidget(QWidget):
     def _selected(self) -> LibraryEntry | None:
         row = self.table.currentRow()
         return self._entries[row] if 0 <= row < len(self._entries) else None
+
+    def select_path(self, path: str | Path) -> bool:
+        target = Path(path).expanduser().resolve()
+        self.refresh(True)
+        for row, entry in enumerate(self._entries):
+            if entry.sidecar_path.resolve() == target:
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                return True
+        return False
 
     def _selection_changed(self) -> None:
         entry = self._selected()

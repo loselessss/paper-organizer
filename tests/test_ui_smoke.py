@@ -52,6 +52,7 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
+        from paper_organizer.ui.ollama_model_dialog import _download_detail
         from paper_organizer.ui.immediate_summary_widget import ImmediateSummaryDialog
         from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
@@ -80,6 +81,13 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
+            download_text = _download_detail(
+                512 * 1024 * 1024,
+                1024 * 1024 * 1024,
+                16 * 1024 * 1024,
+            )
+            self.assertIn("16.0MB/s", download_text)
+            self.assertIn("남음", download_text)
             self.assertFalse(
                 bool(model_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
             )
@@ -103,7 +111,10 @@ class UiSmokeTests(unittest.TestCase):
             from paper_organizer.ui.folder_settings_dialog import FolderSettingsDialog
 
             folder_dialog = FolderSettingsDialog(workflow_controller)
-            self.assertTrue(folder_dialog.input_edit.text().endswith("Downloads"))
+            self.assertEqual(folder_dialog.watch_list.count(), 1)
+            self.assertTrue(
+                folder_dialog.watch_list.item(0).text().endswith("Downloads")
+            )
             self.assertEqual(folder_dialog.interval_spin.value(), 300)
             self.assertFalse(folder_dialog.remove_source_check.isChecked())
             folder_dialog.close()

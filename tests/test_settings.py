@@ -82,6 +82,23 @@ class SettingsTests(unittest.TestCase):
     def test_background_analysis_is_enabled_by_default(self):
         self.assertTrue(AppSettings().background_analysis_enabled)
 
+    def test_watch_folders_round_trip_and_legacy_input_remains_supported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            first = str(Path(temp) / "downloads")
+            second = str(Path(temp) / "scanner")
+            settings = AppSettings(
+                input_dir=first,
+                watch_folders=[first, second],
+            )
+            save_settings(settings, path)
+            self.assertEqual(load_settings(path).watch_folders, [first, second])
+
+    def test_duplicate_watch_folders_are_rejected(self):
+        settings = AppSettings(watch_folders=["C:/papers", "c:/PAPERS"])
+        with self.assertRaises(ValueError):
+            settings.validate()
+
 
 if __name__ == "__main__":
     unittest.main()

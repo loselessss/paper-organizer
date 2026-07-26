@@ -25,6 +25,7 @@ class AppSettings:
     start_with_windows: bool = False
     close_behavior: str = "quit"
     input_dir: str = ""
+    watch_folders: list[str] = field(default_factory=list)
     library_root: str = ""
     remove_source_after_import: bool = False
     auto_enabled: bool = False
@@ -66,6 +67,13 @@ class AppSettings:
             raise ValueError("background_analysis_enabled must be a boolean")
         if not isinstance(self.auto_organize_academic, bool):
             raise ValueError("auto_organize_academic must be a boolean")
+        if (
+            not isinstance(self.watch_folders, list)
+            or any(not isinstance(path, str) or not path.strip() for path in self.watch_folders)
+            or len({os.path.normcase(str(Path(path).expanduser().resolve())) for path in self.watch_folders})
+            != len(self.watch_folders)
+        ):
+            raise ValueError("watch_folders must contain unique non-empty paths")
         if not isinstance(self.focus_categories, list) or any(
             not isinstance(name, str) or not name.strip()
             for name in self.focus_categories
@@ -115,6 +123,13 @@ class AppSettings:
             library_path = Path(self.library_root).expanduser().resolve()
             if os.path.normcase(str(input_path)) == os.path.normcase(str(library_path)):
                 raise ValueError("input_dir and library_root must be different")
+        if self.library_root:
+            library_path = Path(self.library_root).expanduser().resolve()
+            for folder in self.watch_folders:
+                if os.path.normcase(str(Path(folder).expanduser().resolve())) == os.path.normcase(
+                    str(library_path)
+                ):
+                    raise ValueError("watch folders and library_root must be different")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

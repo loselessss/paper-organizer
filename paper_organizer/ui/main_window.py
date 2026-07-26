@@ -88,6 +88,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.tabs.addTab(self.library_widget, "라이브러리")
         if self.queue_widget is not None:
             self.queue_widget.summary_requested.connect(self._open_queue_in_summary)
+            self.queue_widget.library_requested.connect(
+                self._open_queue_item_in_library
+            )
         self.setCentralWidget(self.tabs)
 
         settings_menu = self.menuBar().addMenu("설정")
@@ -392,6 +395,17 @@ class PaperOrganizerWindow(QMainWindow):
             "분석 큐의 PDF를 빠른 요약에 넣었습니다. 미리보기 전에는 전송되지 않습니다."
         )
         self.show_immediate_summary(path)
+
+    def _open_queue_item_in_library(self, path: str) -> None:
+        if self.library_widget is None:
+            return
+        self.tabs.setCurrentWidget(self.library_widget)
+        if not self.library_widget.select_path(path):
+            QMessageBox.information(
+                self,
+                "라이브러리 항목 없음",
+                "완료된 분석 항목에 해당하는 라이브러리 파일을 찾지 못했습니다.",
+            )
 
     def closeEvent(self, event) -> None:
         if self.collection_widget and self.collection_widget.is_busy():

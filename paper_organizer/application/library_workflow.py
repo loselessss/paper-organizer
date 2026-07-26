@@ -489,10 +489,32 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
     text = " ".join(page_texts).casefold()
     if len(text.strip()) < 500:
         return "needs_ocr", "추출된 본문이 너무 적어 OCR 또는 수동 확인이 필요합니다."
+    patent_markers = [
+        marker
+        for marker in (
+            "patent",
+            "publication number",
+            "application number",
+            "inventor",
+            "applicant",
+            "claims",
+            "청구항",
+            "발명자",
+            "출원번호",
+            "공개번호",
+        )
+        if marker in text
+    ]
+    if len(patent_markers) >= 2:
+        return "patent_likely", f"특허 문서 표식 확인: {', '.join(patent_markers)}"
     markers = [marker for marker in ("abstract", "introduction", "references", "doi") if marker in text]
     if len(markers) >= 2:
         return "academic_likely", f"학술 문서 표식 확인: {', '.join(markers)}"
     return "needs_review", "학술 논문 구조가 충분히 확인되지 않아 사용자 검토가 필요합니다."
+
+
+def _is_supported_document(status: str) -> bool:
+    return status in {"academic_likely", "patent_likely"}
 
 
 def _library_references(root: Path) -> Iterable[tuple[dict[str, Any], Path, Path, DocumentIdentity]]:
@@ -557,7 +579,7 @@ class LibraryWorkflowController:
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._settings_path = settings_path or default_settings_path()
-        self._tracker = DiscoveryTracker()
+        self._trackers: dict[Path, DiscoveryTracker] = {}
         self._cache: dict[Path, tuple[int, int, ReviewItem]] = {}
         self._short_documents: dict[Path, tuple[int, int]] = {}
         self._library_cache: list[LibraryEntry] | None = None
@@ -567,10 +589,18 @@ class LibraryWorkflowController:
 
     def configured_paths(self) -> tuple[Path, Path]:
         settings = self.settings()
+        inputs = self.configured_input_dirs()
         return (
-            Path(settings.input_dir) if settings.input_dir else default_input_dir(),
+            inputs[0],
             Path(settings.library_root) if settings.library_root else default_library_root(),
         )
+
+    def configured_input_dirs(self) -> tuple[Path, ...]:
+        settings = self.settings()
+        raw = settings.watch_folders or (
+            [settings.input_dir] if settings.input_dir else [str(default_input_dir())]
+        )
+        return tuple(Path(value).expanduser().resolve() for value in raw)
 
     def save_paths(
         self,
@@ -583,13 +613,27 @@ class LibraryWorkflowController:
         remove_source_after_import: bool | None = None,
         auto_organize_academic: bool | None = None,
         focus_categories: list[str] | None = None,
+        watch_folders: list[Path] | None = None,
     ) -> AppSettings:
-        input_path = input_dir.expanduser().resolve()
+        requested_inputs = watch_folders if watch_folders is not None else [input_dir]
+        input_paths: list[Path] = []
+        seen_inputs: set[str] = set()
+        for value in requested_inputs:
+            path = value.expanduser().resolve()
+            key = os.path.normcase(str(path))
+            if key in seen_inputs:
+                continue
+            seen_inputs.add(key)
+            input_paths.append(path)
+        if not input_paths:
+            raise LibraryWorkflowError("감시 폴더를 하나 이상 지정하세요.")
+        input_path = input_paths[0]
         library_path = library_root.expanduser().resolve()
-        if not input_path.is_dir():
-            raise LibraryWorkflowError("입력 폴더가 존재하지 않습니다.")
-        if input_path == library_path:
-            raise LibraryWorkflowError("입력 폴더와 라이브러리 폴더는 달라야 합니다.")
+        missing = [path for path in input_paths if not path.is_dir()]
+        if missing:
+            raise LibraryWorkflowError(f"감시 폴더가 존재하지 않습니다: {missing[0]}")
+        if any(path == library_path for path in input_paths):
+            raise LibraryWorkflowError("감시 폴더와 라이브러리 폴더는 달라야 합니다.")
         settings = self.settings()
         previous_library = (
             Path(settings.library_root).expanduser().resolve()
@@ -616,6 +660,7 @@ class LibraryWorkflowController:
         else:
             library_path.mkdir(parents=True, exist_ok=True)
         settings.input_dir = str(input_path)
+        settings.watch_folders = [str(path) for path in input_paths]
         settings.library_root = str(library_path)
         settings.auto_enabled = bool(auto_enabled)
         if resource_profile is not None:
@@ -636,11 +681,26 @@ class LibraryWorkflowController:
 
     def scan(self) -> ReviewScan:
         settings = self.settings()
-        input_dir, library_root = self.configured_paths()
-        if not input_dir.is_dir():
-            raise LibraryWorkflowError("입력 폴더가 존재하지 않습니다. 설정에서 지정하세요.")
+        input_dirs = self.configured_input_dirs()
+        library_root = self.configured_paths()[1]
         receipts = _load_import_receipts(library_root)
-        candidates = list(iter_pdf_candidates(input_dir))
+        problems: list[ScanProblem] = []
+        candidates: list[Path] = []
+        stable = []
+        for input_dir in input_dirs:
+            if not input_dir.is_dir():
+                problems.append(
+                    ScanProblem(input_dir, "감시 폴더가 없거나 접근할 수 없습니다.")
+                )
+                continue
+            candidates.extend(iter_pdf_candidates(input_dir))
+            tracker = self._trackers.setdefault(input_dir, DiscoveryTracker())
+            stable.extend(
+                tracker.scan(
+                    input_dir,
+                    minimum_age_seconds=settings.minimum_age_seconds,
+                )
+            )
         active_candidates: list[Path] = []
         for path in candidates:
             try:
@@ -656,18 +716,12 @@ class LibraryWorkflowController:
                 path, stat.st_size, stat.st_mtime_ns, library_root, receipts
             ):
                 active_candidates.append(path)
-        stable = [
-            found
-            for found in self._tracker.scan(
-                input_dir,
-                minimum_age_seconds=settings.minimum_age_seconds,
-            )
-            if found.path in active_candidates
-        ]
+        active_set = set(active_candidates)
+        stable = [found for found in stable if found.path in active_set]
         references = tuple(_library_references(library_root)) if library_root.is_dir() else ()
         ignored_file_ids = _load_ignored_file_ids(library_root)
         items: list[ReviewItem] = []
-        problems: list[ScanProblem] = []
+        seen_file_ids: set[str] = set()
         for found in stable:
             cached = self._cache.get(found.path)
             key = (found.observation.size, found.observation.modified_ns)
@@ -678,7 +732,7 @@ class LibraryWorkflowController:
                 page_texts = extract_page_texts(found.path)
                 if len(page_texts) < 3:
                     self._short_documents[found.path] = key
-                    self._tracker.forget(found.path)
+                    self._forget_discovery(found.path)
                     self._cache.pop(found.path, None)
                     continue
                 ocr_used = False
@@ -696,8 +750,12 @@ class LibraryWorkflowController:
                         pass
                 identity = build_identity_from_pages(sha256_file(found.path), page_texts)
                 if identity.file_sha256 in ignored_file_ids:
-                    self._tracker.forget(found.path)
+                    self._forget_discovery(found.path)
                     continue
+                if identity.file_sha256 in seen_file_ids:
+                    self._forget_discovery(found.path)
+                    continue
+                seen_file_ids.add(identity.file_sha256)
                 status, reason = _detection(page_texts)
                 item = ReviewItem(
                     path=found.path,
@@ -735,6 +793,10 @@ class LibraryWorkflowController:
             auto_organized=tuple(auto_organized),
         )
 
+    def _forget_discovery(self, path: Path) -> None:
+        for tracker in self._trackers.values():
+            tracker.forget(path)
+
     def _auto_organize(
         self, items: list[ReviewItem], problems: list[ScanProblem]
     ) -> tuple[list[ReviewItem], list[str]]:
@@ -747,7 +809,7 @@ class LibraryWorkflowController:
         remaining: list[ReviewItem] = []
         organized_titles: list[str] = []
         for item in items:
-            if item.detection_status != "academic_likely" or item.duplicate is not None:
+            if not _is_supported_document(item.detection_status) or item.duplicate is not None:
                 remaining.append(item)
                 continue
             try:
@@ -845,7 +907,7 @@ class LibraryWorkflowController:
             except Exception:
                 pass
             raise LibraryWorkflowError(f"논문 이동을 완료하지 못했습니다: {exc}") from None
-        self._tracker.forget(source)
+        self._forget_discovery(source)
         self._cache.pop(source, None)
         self._library_cache = None
         warnings: list[str] = []
@@ -912,7 +974,7 @@ class LibraryWorkflowController:
             if moved and destination.exists() and not source.exists():
                 shutil.move(str(destination), str(source))
             raise LibraryWorkflowError(f"휴지통 이동을 완료하지 못했습니다: {exc}") from None
-        self._tracker.forget(source)
+        self._forget_discovery(source)
         self._cache.pop(source, None)
         _record_ignored_file_id(library_root, item.identity.file_sha256)
         try:
@@ -980,7 +1042,7 @@ class LibraryWorkflowController:
             if destination.exists() and not trashed.exists():
                 shutil.move(str(destination), str(trashed))
             raise LibraryWorkflowError(f"복원 기록을 저장하지 못했습니다: {exc}") from None
-        self._tracker.forget(destination)
+        self._forget_discovery(destination)
         try:
             self._queue().enqueue(
                 path=destination,
@@ -1780,13 +1842,17 @@ def _new_sidecar(
         },
         "detection": {
             "is_academic_paper": item.detection_status == "academic_likely",
-            "confidence": 0.85 if item.detection_status == "academic_likely" else 0.0,
+            "is_patent": item.detection_status == "patent_likely",
+            "document_type": (
+                "patent" if item.detection_status == "patent_likely" else "paper"
+            ),
+            "confidence": 0.85 if _is_supported_document(item.detection_status) else 0.0,
             "reason": item.detection_reason,
         },
         "workflow": {
             "status": "organized",
-            "needs_review": item.detection_status != "academic_likely",
-            "review_reason": "" if item.detection_status == "academic_likely" else item.detection_reason,
+            "needs_review": not _is_supported_document(item.detection_status),
+            "review_reason": "" if _is_supported_document(item.detection_status) else item.detection_reason,
             "processed_at": now,
             "updated_at": now,
         },

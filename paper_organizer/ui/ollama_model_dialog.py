@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from threading import Event
+import time
 
 from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt5.QtGui import QDesktopServices
@@ -115,6 +116,9 @@ class OllamaModelDialog(QDialog):
         self._snapshot = None
         self._refresh_after_operation = False
         self._runtime_worker: _RuntimeSetupWorker | None = None
+        self._download_last_at = 0.0
+        self._download_last_bytes = 0
+        self._download_speed_bps = 0.0
         self._runtime_elapsed_seconds = 0
         self._runtime_installing = False
         self._runtime_timer = QTimer(self)
@@ -465,6 +469,9 @@ class OllamaModelDialog(QDialog):
             return
         self.progress.setRange(0, 0)
         self.progress.setFormat("다운로드 준비 중…")
+        self._download_last_at = time.monotonic()
+        self._download_last_bytes = 0
+        self._download_speed_bps = 0.0
         self._start_worker("install", entry.model_id)
 
     def _delete(self) -> None:
@@ -492,13 +499,35 @@ class OllamaModelDialog(QDialog):
             self._worker.request_cancel()
 
     def _progress_changed(self, progress) -> None:
+        now = time.monotonic()
+        if progress.completed_bytes < self._download_last_bytes:
+            self._download_last_bytes = 0
+            self._download_last_at = now
+        elapsed = now - self._download_last_at
+        transferred = progress.completed_bytes - self._download_last_bytes
+        if elapsed > 0.2 and transferred >= 0:
+            current_speed = transferred / elapsed
+            self._download_speed_bps = (
+                current_speed
+                if self._download_speed_bps <= 0
+                else self._download_speed_bps * 0.7 + current_speed * 0.3
+            )
+            self._download_last_at = now
+            self._download_last_bytes = progress.completed_bytes
+        detail = _download_detail(
+            progress.completed_bytes,
+            progress.total_bytes,
+            self._download_speed_bps,
+        )
         if progress.percent is None:
             self.progress.setRange(0, 0)
-            self.progress.setFormat(progress.status)
+            self.progress.setFormat(f"{progress.status}{detail}")
         else:
             self.progress.setRange(0, 100)
             self.progress.setValue(progress.percent)
-            self.progress.setFormat(f"{progress.status} — {progress.percent}%")
+            self.progress.setFormat(
+                f"{progress.status} — {progress.percent}%{detail}"
+            )
 
     def _selected_entry(self):
         if self._snapshot is None:
@@ -508,7 +537,6 @@ class OllamaModelDialog(QDialog):
             (entry for entry in self._snapshot.entries if entry.model_id == model),
             None,
         )
-
     def _busy(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
 
@@ -543,3 +571,18 @@ class OllamaModelDialog(QDialog):
             )
             return
         super().reject()
+
+
+def _download_detail(completed: int, total: int, speed_bps: float) -> str:
+    parts: list[str] = []
+    if completed > 0:
+        transferred = f"{completed / (1024 ** 2):.1f}MB"
+        if total > 0:
+            transferred += f"/{total / (1024 ** 3):.2f}GB"
+        parts.append(transferred)
+    if speed_bps > 0:
+        parts.append(f"{speed_bps / (1024 ** 2):.1f}MB/s")
+        if total > completed:
+            eta = max(0, round((total - completed) / speed_bps))
+            parts.append(f"약 {eta // 60}분 {eta % 60}초 남음")
+    return f" · {' · '.join(parts)}" if parts else ""

@@ -89,6 +89,34 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(controller.scan().items, ())
             self.assertEqual(controller.analysis_queue(), [])
 
+    def test_multiple_watch_folders_are_scanned_and_duplicate_bytes_are_seen_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, first, library = self._controller(root)
+            second = root / "scanner"
+            second.mkdir()
+            controller.save_paths(
+                first,
+                library,
+                auto_enabled=False,
+                auto_organize_academic=False,
+                watch_folders=[first, second],
+            )
+            first_pdf = first / "paper.pdf"
+            write_pdf(first_pdf, academic_pages())
+            (second / "same-paper.pdf").write_bytes(first_pdf.read_bytes())
+            old = time.time() - 120
+            os.utime(second / "same-paper.pdf", (old, old))
+            write_pdf(second / "other.pdf", [*academic_pages(), "Additional appendix"])
+
+            controller.scan()
+            result = controller.scan()
+
+            self.assertEqual(len(result.items), 2)
+            self.assertEqual(
+                controller.configured_input_dirs(), (first.resolve(), second.resolve())
+            )
+
     def test_organize_writes_paperpack_and_rebuilds_index(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

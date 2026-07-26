@@ -42,8 +42,23 @@ class FolderSettingsDialog(QDialog):
 
         root = QVBoxLayout(self)
         form = QFormLayout()
-        input_row, self.input_edit = self._path_row(self._browse_input)
         library_row, self.library_edit = self._path_row(self._browse_library)
+
+        watch_group = QGroupBox("논문·특허 감시 폴더")
+        watch_layout = QVBoxLayout(watch_group)
+        self.watch_list = QListWidget()
+        self.watch_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        watch_layout.addWidget(self.watch_list)
+        watch_actions = QHBoxLayout()
+        add_watch_button = QPushButton("폴더 추가…")
+        remove_watch_button = QPushButton("선택 제거")
+        add_watch_button.clicked.connect(self._add_watch_folder)
+        remove_watch_button.clicked.connect(self._remove_watch_folders)
+        watch_actions.addWidget(add_watch_button)
+        watch_actions.addWidget(remove_watch_button)
+        watch_actions.addStretch(1)
+        watch_layout.addLayout(watch_actions)
+        root.addWidget(watch_group)
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("저사양/절전", "eco")
         self.profile_combo.addItem("균형", "balanced")
@@ -67,7 +82,6 @@ class FolderSettingsDialog(QDialog):
             "중복 후보가 있거나 판정이 불확실한 PDF는 자동 보관하지 않고 "
             "수집 화면에 남겨 사람이 검토합니다."
         )
-        form.addRow("입력 폴더", input_row)
         form.addRow("PaperPack 라이브러리", library_row)
         form.addRow("시스템 부하", self.profile_combo)
         form.addRow("스캔 주기", self.interval_spin)
@@ -109,9 +123,11 @@ class FolderSettingsDialog(QDialog):
         return container, edit
 
     def _load_settings(self) -> None:
-        input_dir, library_root = self._controller.configured_paths()
+        _input_dir, library_root = self._controller.configured_paths()
         settings = self._controller.settings()
-        self.input_edit.setText(str(input_dir))
+        self.watch_list.clear()
+        for folder in self._controller.configured_input_dirs():
+            self.watch_list.addItem(str(folder))
         self.library_edit.setText(str(library_root))
         profile_index = self.profile_combo.findData(settings.resource_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
@@ -141,12 +157,29 @@ class FolderSettingsDialog(QDialog):
             if self.focus_list.item(row).checkState() == Qt.Checked
         ]
 
-    def _browse_input(self) -> None:
+    def _add_watch_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "입력 폴더 선택", self.input_edit.text()
+            self, "감시 폴더 추가", str(Path.home())
         )
-        if path:
-            self.input_edit.setText(path)
+        if not path:
+            return
+        normalized = str(Path(path).expanduser().resolve())
+        existing = {
+            self.watch_list.item(row).text().casefold()
+            for row in range(self.watch_list.count())
+        }
+        if normalized.casefold() not in existing:
+            self.watch_list.addItem(normalized)
+
+    def _remove_watch_folders(self) -> None:
+        for item in self.watch_list.selectedItems():
+            self.watch_list.takeItem(self.watch_list.row(item))
+
+    def _watch_folders(self) -> list[Path]:
+        return [
+            Path(self.watch_list.item(row).text())
+            for row in range(self.watch_list.count())
+        ]
 
     def _browse_library(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -162,6 +195,12 @@ class FolderSettingsDialog(QDialog):
             self.interval_spin.setValue(defaults[profile])
 
     def _save(self) -> None:
+        watch_folders = self._watch_folders()
+        if not watch_folders:
+            QMessageBox.warning(
+                self, "감시 폴더 필요", "감시 폴더를 하나 이상 추가하세요."
+            )
+            return
         _old_input, old_library = self._controller.configured_paths()
         new_library = Path(self.library_edit.text().strip()).expanduser().resolve()
         if old_library.resolve() != new_library and old_library.exists():
@@ -175,7 +214,7 @@ class FolderSettingsDialog(QDialog):
                 return
         try:
             self._controller.save_paths(
-                Path(self.input_edit.text().strip()),
+                watch_folders[0],
                 Path(self.library_edit.text().strip()),
                 auto_enabled=self.auto_check.isChecked(),
                 resource_profile=self.profile_combo.currentData(),
@@ -183,6 +222,7 @@ class FolderSettingsDialog(QDialog):
                 remove_source_after_import=self.remove_source_check.isChecked(),
                 auto_organize_academic=self.auto_organize_check.isChecked(),
                 focus_categories=self._checked_focus_categories(),
+                watch_folders=watch_folders,
             )
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))

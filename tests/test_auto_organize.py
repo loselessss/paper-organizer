@@ -44,7 +44,31 @@ def write_pdf(path: Path, pages: list[str]) -> None:
     os.utime(path, (old, old))
 
 
+def patent_pages() -> list[str]:
+    return [
+        "US Patent Application\nPublication Number US20260000001\n"
+        "Inventor: Example Inventor\nApplicant: Example Labs\n"
+        + "A system and method for organizing technical documents. " * 20,
+        "Detailed Description\n" + "The disclosed system processes documents. " * 25,
+        "Claims\n1. A method comprising receiving and classifying a document. " * 20,
+    ]
+
+
 class AutoOrganizeTests(unittest.TestCase):
+    def test_patent_is_included_in_automatic_collection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            write_pdf(input_dir / "patent.pdf", patent_pages())
+
+            controller.scan()
+            result = controller.scan()
+
+            self.assertEqual(len(result.auto_organized), 1)
+            pack = next((library / "papers").rglob("*.paperpack"))
+            record = load_paperpack_metadata(pack)
+            self.assertTrue(record["detection"]["is_patent"])
+            self.assertEqual(record["detection"]["document_type"], "patent")
     def _controller(self, root: Path, *, auto_organize: bool = True):
         input_dir = root / "downloads"
         library = root / "library"
