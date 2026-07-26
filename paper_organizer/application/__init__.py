@@ -44,6 +44,15 @@ from .background_analysis import (
     BackgroundAnalysisService,
     poll_interval_seconds,
 )
+from .conversational_search import (
+    ConversationalSearchController,
+    ConversationalSearchError,
+    ConversationalSearchResult,
+    PreparedSearch,
+    SearchCandidate,
+    SearchProviderView,
+    requires_ai_search,
+)
 
 __all__ = [
     "AiSettingsController",
@@ -53,6 +62,9 @@ __all__ = [
     "AnalysisReadiness",
     "AnalysisRunEvent",
     "BackgroundAnalysisService",
+    "ConversationalSearchController",
+    "ConversationalSearchError",
+    "ConversationalSearchResult",
     "poll_interval_seconds",
     "EditablePaperMetadata",
     "LibraryEntry",
@@ -75,6 +87,10 @@ __all__ = [
     "OllamaModelManagerService",
     "OllamaModelSnapshot",
     "PreparedSummary",
+    "PreparedSearch",
+    "SearchCandidate",
+    "SearchProviderView",
+    "requires_ai_search",
     "ImmediateSummaryController",
     "SummaryExecution",
     "SummaryMode",

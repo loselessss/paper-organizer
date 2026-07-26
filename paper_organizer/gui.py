@@ -11,6 +11,9 @@ def main() -> int:
 
     from paper_organizer.application.ai_settings import AiSettingsController
     from paper_organizer.application.background_analysis import BackgroundAnalysisService
+    from paper_organizer.application.conversational_search import (
+        ConversationalSearchController,
+    )
     from paper_organizer.application.lifecycle import LifecycleSettingsController
     from paper_organizer.application.library_workflow import LibraryWorkflowController
     from paper_organizer.application.summary_service import ImmediateSummaryController
@@ -40,6 +43,10 @@ def main() -> int:
         summary,
         secret_store,
     )
+    conversational_search = ConversationalSearchController(
+        workflow,
+        secret_store,
+    )
     splash = create_splash()
     splash.show()
     app.processEvents()
@@ -54,6 +61,7 @@ def main() -> int:
             workflow,
             lifecycle=lifecycle,
             background_analysis=background_analysis,
+            conversational_search=conversational_search,
         )
         if snapshot is not None:
             window.statusBar().showMessage(

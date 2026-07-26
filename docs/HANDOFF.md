@@ -3,9 +3,9 @@
 이 문서 하나만 읽으면 작업을 이어받을 수 있도록 정리했습니다. 사람이 읽어도
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
-- 대상 브랜치: `feature/auto-pipeline-and-ui-overhaul`
-- 상태: 테스트 160개 전부 통과, GUI 실행 확인 완료
-- 이번 회차 범위: 자동 분류 파이프라인 완성, 화면 재편, 전문 검색 도입
+- 대상 브랜치: `main`
+- 상태: v1.3.0 자연어 검색 구현, 테스트 210개 전부 통과
+- 이번 회차 범위: 전문 검색 기반 자연어 질의 해석과 근거 답변 도입
 
 ---
 
@@ -157,17 +157,7 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 - **방향**: 깨짐 감지(U+FFFD·제어문자·사설영역 비율) → cp1252↔UTF-8 재해석 복원 시도 → 본문 첫 줄 → 파일명 순으로 fallback.
 - **참고**: AI 분석이 이미 제목을 정정하므로, 자동 분석을 켜 두면 상당수는 사후 보정됩니다. 급하지 않습니다.
 
-### (2) 대화형 논문 찾기 — 설계 완료, 구현 남음
-
-자연어로 물어보면 색인된 논문을 찾아 근거와 함께 답하는 기능입니다.
-설계는 [conversational-search-design.md](conversational-search-design.md)에
-정리돼 있습니다. FTS로 후보를 좁힌 뒤 AI가 답하는 구조이고, 임베딩 없이 시작합니다.
-
-- **신규 파일**: `application/conversational_search.py`, `ui/search_chat_dialog.py`
-- **재사용**: `core/search_index.search()`, `providers/registry.build_provider()`
-- **주의**: 컨텍스트로 준 `file_id` 외의 값이 답변에 오면 버려야 합니다. 그래야 없는 논문을 지어내지 않습니다. 클라우드 제공자일 때는 전송 동의 흐름을 즉시 요약과 동일하게 적용하세요.
-
-### (3) 분류 체계 다듬기
+### (2) 분류 체계 다듬기
 
 `paper_organizer/models/taxonomy.json`에 학과 20개와 세부 전공이 들어 있습니다.
 실제로 쓰다 보면 본인 분야가 잘 안 잡히는 경우가 나올 텐데, 그때는 해당 분야의

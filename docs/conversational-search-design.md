@@ -1,9 +1,8 @@
 # 대화형 논문 찾기 설계 (RAG-lite)
 
-이 문서는 아직 **구현하지 않은** 기능의 설계다. "색인된 논문을 대화형으로
-찾아준다"는 요구를 현재 구조 위에서 어떻게 얹을지 정리한다. 지금 단계에서
-전문 검색(`index/search.sqlite`)까지는 동작하므로, 이 문서는 그 위에 대화
-계층을 붙이는 방법만 다룬다.
+이 문서는 v1.3.0에서 **구현된** 대화형 검색의 설계와 검증 기준을 정리한다.
+`index/search.sqlite`의 전문 검색 위에 질의 해석과 근거 답변 계층을 얹되,
+`.paperpack`이 원본이고 SQLite는 재생성 가능한 캐시라는 원칙은 유지한다.
 
 ## 목표와 비목표
 
@@ -23,22 +22,22 @@
 ```
 사용자 질문
   → ① 질의 해석: AI가 질문에서 검색 키워드와 필터(연도·분야·저널)를 추출
-  → ② FTS 검색: core/search_index.search()로 상위 k편(기본 5) + 페이지 스니펫
-  → ③ 컨텍스트 구성: 각 논문의 제목·저널·연도·분야·요약 + 매칭 페이지 스니펫
+  → ② FTS 검색: core/search_index.search()로 상위 k편(기본 5) + 매칭 페이지
+  → ③ 컨텍스트 구성: 각 논문의 제목·저널·연도·분야 + 매칭 페이지 본문
   → ④ AI 답변: 위 컨텍스트만 근거로 "어떤 논문인지 + 왜 그렇게 판단했는지"
   → ⑤ 결과 표시: 답변 + 논문 카드(클릭하면 라이브러리에서 해당 항목 선택)
 ```
 
-①은 생략 가능하다. 질문을 그대로 FTS에 넣어도 상당수는 찾아진다. 다만 한국어
-질문에 영어 본문이라 매칭이 어긋나므로, ①에서 영어 키워드로 바꿔주는 편이
-결과가 낫다. ①이 실패하면 원문 질의로 폴백한다.
+짧은 제목·저자·DOI·기술명은 이 흐름을 거치지 않고 기존 FTS로 즉시 검색한다.
+물음표나 비교·이유·설명 표현이 있는 질문만 ①로 보낸다. 한국어 질문과 영어
+본문의 매칭이 어긋나지 않도록 ①에서 짧은 영어 검색어도 함께 만든다.
 
 ## 구성 요소
 
-| 계층 | 파일(예정) | 역할 |
+| 계층 | 파일 | 역할 |
 |---|---|---|
 | application | `application/conversational_search.py` | 질의 해석 → 검색 → 답변 생성 오케스트레이션 |
-| providers | `providers/base.py` 확장 | `SearchQueryRequest`/`AnswerRequest`와 각각의 JSON 스키마 |
+| providers | `providers/base.py` 확장 | `SearchPlanRequest`/`SearchAnswerRequest`와 각각의 JSON 스키마 |
 | ui | `ui/search_chat_dialog.py` | 질문 입력, 답변, 근거 카드 목록 |
 
 기존 자산을 그대로 쓴다.
@@ -46,8 +45,8 @@
 - 검색: `core/search_index.search()` — 이미 페이지 단위 스니펫을 준다.
 - 라이브러리 항목 매핑: `LibraryWorkflowController.search_library()`가 쓰는
   `relative_path → LibraryEntry` 변환을 재사용한다.
-- 제공자 추상화: `providers/registry.build_provider()`가 Ollama/OpenAI/Anthropic을
-  이미 감춰 준다. 새 provider 코드를 쓰지 않는다.
+- 제공자 선택: `providers/registry.build_provider()`를 재사용하고
+  Ollama/OpenAI/Anthropic 각각에 구조화된 검색 계획·답변 메서드를 추가한다.
 
 ## 전송 동의
 
@@ -58,13 +57,17 @@
   이번 질문에 한해 사용자가 동의해야 실행한다. 동의 전에 "논문 n편의 본문 약
   m자를 전송합니다"를 먼저 보여준다(즉시 요약의 전송 미리보기와 동일한 방식).
 
-## 응답 스키마 초안
+## 응답 스키마
 
 ```json
 {
   "answer_ko": "찾으시는 건 ... 논문으로 보입니다.",
   "papers": [
-    {"file_id": "sha256:...", "why": "3쪽에 단백질 안정성 스크리닝 결과가 있습니다."}
+    {
+      "file_id": "sha256:...",
+      "pages": [3],
+      "why": "3쪽에 단백질 안정성 스크리닝 결과가 있습니다."
+    }
   ],
   "confidence": "high | medium | low"
 }

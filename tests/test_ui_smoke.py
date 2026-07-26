@@ -206,6 +206,41 @@ class UiSmokeTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_natural_search_dialog_constructs_and_releases_runtime(self):
+        from PyQt5.QtCore import Qt
+
+        from paper_organizer.application.conversational_search import (
+            SearchProviderView,
+        )
+        from paper_organizer.ui.search_chat_dialog import SearchChatDialog
+
+        class FakeSearchController:
+            def __init__(self):
+                self.stop_calls = 0
+
+            def provider_view(self):
+                return SearchProviderView(
+                    provider="ollama",
+                    model="qwen3:4b",
+                    sends_to_cloud=False,
+                    requires_cloud_consent=False,
+                )
+
+            def stop_local_runtime(self):
+                self.stop_calls += 1
+
+        controller = FakeSearchController()
+        dialog = SearchChatDialog(controller)
+
+        self.assertEqual(dialog.windowTitle(), "자연어로 논문 찾기")
+        self.assertFalse(
+            bool(dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+        )
+        self.assertIn("ollama", dialog.provider_label.text())
+        self.assertFalse(dialog.answer_button.isEnabled())
+        dialog.reject()
+        self.assertEqual(controller.stop_calls, 1)
+
     def test_excluded_file_restore_dialog_uses_wide_multi_select_table(self):
         from PyQt5.QtCore import QItemSelectionModel
 
@@ -577,10 +612,17 @@ class UiSmokeTests(unittest.TestCase):
             )
 
             class FakeLibraryController:
+                def __init__(self):
+                    self.search_queries = []
+
                 def invalidate_library_cache(self):
                     pass
 
                 def list_library(self):
+                    return [entry, second]
+
+                def search_library(self, query):
+                    self.search_queries.append(query)
                     return [entry, second]
 
                 def analysis_queue(self):
@@ -589,12 +631,22 @@ class UiSmokeTests(unittest.TestCase):
                 def paperpack_working_copy(self, _path):
                     return None
 
-            widget = LibraryWidget(FakeLibraryController())
+            controller = FakeLibraryController()
+            widget = LibraryWidget(controller)
             self.assertEqual(
                 widget.table.selectionMode(),
                 QAbstractItemView.ExtendedSelection,
             )
             self.assertTrue(widget.search_edit.isClearButtonEnabled())
+            routed_queries = []
+            widget.natural_search_requested.connect(routed_queries.append)
+            widget.search_edit.setText("열에 강한 효소를 만든 논문은?")
+            widget._submit_search()
+            self.assertEqual(routed_queries, ["열에 강한 효소를 만든 논문은?"])
+            self.assertEqual(controller.search_queries, [])
+            widget.search_edit.setText("thermostable enzyme")
+            widget._submit_search()
+            self.assertEqual(controller.search_queries, ["thermostable enzyme"])
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
             self.assertEqual(widget.table.item(0, 5).text(), "분석 완료")
             widget.table.selectionModel().select(

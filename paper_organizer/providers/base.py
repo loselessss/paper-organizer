@@ -46,6 +46,44 @@ SUMMARY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+SEARCH_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "search_queries": {"type": "array", "items": {"type": "string"}},
+        "category": {"type": "string"},
+        "year_from": {"type": "string"},
+        "year_to": {"type": "string"},
+    },
+    "required": ["search_queries", "category", "year_from", "year_to"],
+    "additionalProperties": False,
+}
+
+SEARCH_ANSWER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "answer_ko": {"type": "string"},
+        "papers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "pages": {"type": "array", "items": {"type": "integer"}},
+                    "why": {"type": "string"},
+                },
+                "required": ["file_id", "pages", "why"],
+                "additionalProperties": False,
+            },
+        },
+        "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+        },
+    },
+    "required": ["answer_ko", "papers", "confidence"],
+    "additionalProperties": False,
+}
+
 SYSTEM_INSTRUCTIONS = (
     "You analyze academic papers. Use only the supplied document text. "
     "Return Korean prose for summary_ko and preserve technical names accurately. "
@@ -70,6 +108,26 @@ SYSTEM_INSTRUCTIONS = (
     "searchable meta_tags that describe the paper's topic, method, material, or "
     "application. Preserve established technical terms and do not use cited "
     "authors or reference titles as tags."
+)
+
+SEARCH_PLAN_INSTRUCTIONS = (
+    "You prepare literal full-text searches for an academic paper library. "
+    "Do not answer the question. Return 3 to 8 short search_queries, each one "
+    "to four words, that are likely to occur verbatim in relevant papers. "
+    "Preserve technical names and include useful English equivalents when the "
+    "question is Korean. Avoid generic words such as paper, study, result, or "
+    "method. Extract a category or four-digit year bounds only when explicitly "
+    "stated; otherwise return empty strings."
+)
+
+SEARCH_ANSWER_INSTRUCTIONS = (
+    "Answer the user's question in Korean using only the supplied candidate "
+    "paper context. Do not use outside knowledge. Every cited file_id must be "
+    "copied exactly from the context and pages must be physical PDF page "
+    "numbers shown there. If the evidence is insufficient, say so directly and "
+    "use low confidence. Select only papers that materially support the answer. "
+    "Reference, bibliography, and works-cited passages are discovery-only: never "
+    "treat them as evidence for the candidate paper's findings."
 )
 
 ApiKeySource = str | None | Callable[[], str | None]
@@ -112,6 +170,165 @@ class SummaryRequest:
             and not 4_096 <= self.context_window <= 262_144
         ):
             raise ValueError("context_window must be between 4096 and 262144")
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPlanRequest:
+    question: str
+    cloud_consent: bool = False
+    max_output_tokens: int = 800
+
+    def validate(self) -> None:
+        if not self.question.strip():
+            raise ValueError("question cannot be empty")
+        if len(self.question) > 2_000:
+            raise ValueError("question cannot exceed 2000 characters")
+        if not 128 <= self.max_output_tokens <= 4_000:
+            raise ValueError("max_output_tokens must be between 128 and 4000")
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPlanData:
+    search_queries: tuple[str, ...]
+    category: str = ""
+    year_from: str = ""
+    year_to: str = ""
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "SearchPlanData":
+        expected = set(SEARCH_PLAN_SCHEMA["required"])
+        if set(raw) != expected:
+            missing = sorted(expected - set(raw))
+            extra = sorted(set(raw) - expected)
+            raise ProviderError(
+                f"Invalid search plan fields; missing={missing}, extra={extra}"
+            )
+        queries = raw["search_queries"]
+        if not isinstance(queries, list) or any(
+            not isinstance(item, str) for item in queries
+        ):
+            raise ProviderError("Search plan queries must be a string array")
+        values: dict[str, str] = {}
+        for name in ("category", "year_from", "year_to"):
+            if not isinstance(raw[name], str):
+                raise ProviderError(f"Search plan field '{name}' must be a string")
+            values[name] = raw[name]
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in queries:
+            query = " ".join(value.split()).strip()
+            key = query.casefold()
+            if not query or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(query)
+            if len(cleaned) == 8:
+                break
+        return cls(search_queries=tuple(cleaned), **values)
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPlanResult:
+    provider: str
+    model: str
+    data: SearchPlanData
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAnswerRequest:
+    question: str
+    context_text: str
+    allowed_file_ids: tuple[str, ...]
+    cloud_consent: bool = False
+    max_output_tokens: int = 2_000
+    context_window: int | None = None
+
+    def validate(self) -> None:
+        if not self.question.strip():
+            raise ValueError("question cannot be empty")
+        if not self.context_text.strip():
+            raise ValueError("context_text cannot be empty")
+        if not self.allowed_file_ids:
+            raise ValueError("allowed_file_ids cannot be empty")
+        if not 128 <= self.max_output_tokens <= 8_000:
+            raise ValueError("max_output_tokens must be between 128 and 8000")
+        if (
+            self.context_window is not None
+            and not 4_096 <= self.context_window <= 262_144
+        ):
+            raise ValueError("context_window must be between 4096 and 262144")
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPaperEvidence:
+    file_id: str
+    pages: tuple[int, ...]
+    why: str
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAnswerData:
+    answer_ko: str
+    papers: tuple[SearchPaperEvidence, ...]
+    confidence: str
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "SearchAnswerData":
+        expected = set(SEARCH_ANSWER_SCHEMA["required"])
+        if set(raw) != expected:
+            missing = sorted(expected - set(raw))
+            extra = sorted(set(raw) - expected)
+            raise ProviderError(
+                f"Invalid search answer fields; missing={missing}, extra={extra}"
+            )
+        if not isinstance(raw["answer_ko"], str):
+            raise ProviderError("Search answer must be a string")
+        confidence = raw["confidence"]
+        if confidence not in {"high", "medium", "low"}:
+            raise ProviderError("Search confidence must be high, medium or low")
+        raw_papers = raw["papers"]
+        if not isinstance(raw_papers, list):
+            raise ProviderError("Search answer papers must be an array")
+        papers: list[SearchPaperEvidence] = []
+        for item in raw_papers:
+            if not isinstance(item, Mapping) or set(item) != {
+                "file_id",
+                "pages",
+                "why",
+            }:
+                raise ProviderError("Search evidence has invalid fields")
+            pages = item["pages"]
+            if (
+                not isinstance(item["file_id"], str)
+                or not isinstance(item["why"], str)
+                or not isinstance(pages, list)
+                or any(
+                    not isinstance(page, int)
+                    or isinstance(page, bool)
+                    or page < 1
+                    for page in pages
+                )
+            ):
+                raise ProviderError("Search evidence values are invalid")
+            papers.append(
+                SearchPaperEvidence(
+                    file_id=item["file_id"],
+                    pages=tuple(dict.fromkeys(pages)),
+                    why=item["why"],
+                )
+            )
+        return cls(
+            answer_ko=raw["answer_ko"],
+            papers=tuple(papers),
+            confidence=confidence,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAnswerResult:
+    provider: str
+    model: str
+    data: SearchAnswerData
 
 
 def system_instructions(request: SummaryRequest) -> str:
@@ -203,6 +420,10 @@ class SummaryProvider(Protocol):
 
     def summarize(self, request: SummaryRequest) -> SummaryResult: ...
 
+    def plan_search(self, request: SearchPlanRequest) -> SearchPlanResult: ...
+
+    def answer_search(self, request: SearchAnswerRequest) -> SearchAnswerResult: ...
+
 
 def parse_summary_json(text: str) -> SummaryData:
     try:
@@ -212,6 +433,26 @@ def parse_summary_json(text: str) -> SummaryData:
     if not isinstance(raw, dict):
         raise ProviderError("Provider summary must be a JSON object")
     return SummaryData.from_mapping(raw)
+
+
+def parse_search_plan_json(text: str) -> SearchPlanData:
+    raw = _parse_json_object(text, "search plan")
+    return SearchPlanData.from_mapping(raw)
+
+
+def parse_search_answer_json(text: str) -> SearchAnswerData:
+    raw = _parse_json_object(text, "search answer")
+    return SearchAnswerData.from_mapping(raw)
+
+
+def _parse_json_object(text: str, label: str) -> Mapping[str, Any]:
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(f"Provider returned invalid {label} JSON") from exc
+    if not isinstance(raw, dict):
+        raise ProviderError(f"Provider {label} must be a JSON object")
+    return raw
 
 
 def require_cloud_consent(request: SummaryRequest) -> None:

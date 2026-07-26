@@ -10,6 +10,8 @@ from paper_organizer.providers import (
     OllamaProvider,
     OpenAIProvider,
     ProviderError,
+    SearchAnswerRequest,
+    SearchPlanRequest,
     SummaryRequest,
     cloud_request_policy,
 )
@@ -36,6 +38,23 @@ SUMMARY = {
     "meta_tags": ["directed evolution", "enzyme engineering"],
     "suggested_category": "",
 }
+SEARCH_PLAN = {
+    "search_queries": ["thermostable enzyme", "directed evolution"],
+    "category": "",
+    "year_from": "2020",
+    "year_to": "",
+}
+SEARCH_ANSWER = {
+    "answer_ko": "관련 논문이 있습니다.",
+    "papers": [
+        {
+            "file_id": "sha256:test",
+            "pages": [1, 2],
+            "why": "열안정성 효소 실험을 보고합니다.",
+        }
+    ],
+    "confidence": "high",
+}
 
 
 class FakeHttpClient:
@@ -56,6 +75,115 @@ class FakeHttpClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_openai_supports_search_plan_and_grounded_answer(self):
+        plan_client = FakeHttpClient(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(SEARCH_PLAN),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+        plan = OpenAIProvider("secret", http_client=plan_client).plan_search(
+            SearchPlanRequest("질문", cloud_consent=True)
+        )
+        answer_client = FakeHttpClient(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(SEARCH_ANSWER),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+        answer = OpenAIProvider("secret", http_client=answer_client).answer_search(
+            SearchAnswerRequest(
+                "질문",
+                "context",
+                ("sha256:test",),
+                cloud_consent=True,
+            )
+        )
+
+        self.assertEqual(plan.data.year_from, "2020")
+        self.assertEqual(answer.data.papers[0].pages, (1, 2))
+        self.assertEqual(
+            plan_client.calls[0]["payload"]["text"]["format"]["name"],
+            "paper_search_plan",
+        )
+        self.assertEqual(
+            answer_client.calls[0]["payload"]["text"]["format"]["name"],
+            "paper_search_answer",
+        )
+
+    def test_anthropic_supports_search_plan_and_grounded_answer(self):
+        plan_client = FakeHttpClient(
+            {"content": [{"type": "text", "text": json.dumps(SEARCH_PLAN)}]}
+        )
+        plan = AnthropicProvider("secret", http_client=plan_client).plan_search(
+            SearchPlanRequest("질문", cloud_consent=True)
+        )
+        answer_client = FakeHttpClient(
+            {"content": [{"type": "text", "text": json.dumps(SEARCH_ANSWER)}]}
+        )
+        answer = AnthropicProvider("secret", http_client=answer_client).answer_search(
+            SearchAnswerRequest(
+                "질문",
+                "context",
+                ("sha256:test",),
+                cloud_consent=True,
+            )
+        )
+
+        self.assertEqual(plan.data.search_queries[0], "thermostable enzyme")
+        self.assertEqual(answer.data.confidence, "high")
+        self.assertEqual(
+            plan_client.calls[0]["payload"]["output_config"]["format"]["schema"][
+                "required"
+            ],
+            ["search_queries", "category", "year_from", "year_to"],
+        )
+
+    def test_ollama_supports_search_plan_and_grounded_answer(self):
+        plan_client = FakeHttpClient(
+            {"message": {"content": json.dumps(SEARCH_PLAN)}}
+        )
+        plan = OllamaProvider("qwen3:4b", http_client=plan_client).plan_search(
+            SearchPlanRequest("질문")
+        )
+        answer_client = FakeHttpClient(
+            {"message": {"content": json.dumps(SEARCH_ANSWER)}}
+        )
+        answer = OllamaProvider("qwen3:4b", http_client=answer_client).answer_search(
+            SearchAnswerRequest(
+                "질문",
+                "context",
+                ("sha256:test",),
+                context_window=24_576,
+            )
+        )
+
+        self.assertEqual(plan.data.category, "")
+        self.assertEqual(answer.data.answer_ko, "관련 논문이 있습니다.")
+        self.assertFalse(plan_client.calls[0]["payload"]["think"])
+        self.assertEqual(
+            answer_client.calls[0]["payload"]["options"]["num_ctx"],
+            24_576,
+        )
+
     def test_openai_uses_responses_api_without_storage(self):
         client = FakeHttpClient(
             {

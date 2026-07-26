@@ -6,12 +6,22 @@ from typing import Any, Mapping
 
 from .base import (
     ApiKeySource,
+    SEARCH_ANSWER_INSTRUCTIONS,
+    SEARCH_ANSWER_SCHEMA,
+    SEARCH_PLAN_INSTRUCTIONS,
+    SEARCH_PLAN_SCHEMA,
     SUMMARY_SCHEMA,
     system_instructions,
     JsonHttpClient,
     ProviderError,
+    SearchAnswerRequest,
+    SearchAnswerResult,
+    SearchPlanRequest,
+    SearchPlanResult,
     SummaryRequest,
     SummaryResult,
+    parse_search_answer_json,
+    parse_search_plan_json,
     parse_summary_json,
     require_api_key,
     require_cloud_consent,
@@ -73,6 +83,67 @@ class AnthropicProvider:
             data=parse_summary_json(text),
             input_tokens=_optional_int(usage.get("input_tokens")),
             output_tokens=_optional_int(usage.get("output_tokens")),
+        )
+
+    def plan_search(self, request: SearchPlanRequest) -> SearchPlanResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_message(
+            system=SEARCH_PLAN_INSTRUCTIONS,
+            user=request.question,
+            schema=SEARCH_PLAN_SCHEMA,
+            max_tokens=request.max_output_tokens,
+        )
+        return SearchPlanResult(
+            provider=self.name,
+            model=self.model,
+            data=parse_search_plan_json(_collect_text(response)),
+        )
+
+    def answer_search(self, request: SearchAnswerRequest) -> SearchAnswerResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_message(
+            system=SEARCH_ANSWER_INSTRUCTIONS,
+            user=(
+                f"QUESTION:\n{request.question}\n\n"
+                f"CANDIDATE CONTEXT:\n{request.context_text}"
+            ),
+            schema=SEARCH_ANSWER_SCHEMA,
+            max_tokens=request.max_output_tokens,
+        )
+        return SearchAnswerResult(
+            provider=self.name,
+            model=self.model,
+            data=parse_search_answer_json(_collect_text(response)),
+        )
+
+    def _structured_message(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: Mapping[str, Any],
+        max_tokens: int,
+    ) -> Mapping[str, Any]:
+        api_key = require_api_key(self._api_key_source, "Anthropic")
+        return self._http.post_json(
+            ANTHROPIC_MESSAGES_URL,
+            {
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+                "output_config": {
+                    "format": {"type": "json_schema", "schema": schema}
+                },
+            },
+            self._timeout_seconds,
         )
 
 

@@ -6,12 +6,22 @@ from typing import Any, Mapping
 
 from .base import (
     ApiKeySource,
+    SEARCH_ANSWER_INSTRUCTIONS,
+    SEARCH_ANSWER_SCHEMA,
+    SEARCH_PLAN_INSTRUCTIONS,
+    SEARCH_PLAN_SCHEMA,
     SUMMARY_SCHEMA,
     system_instructions,
     JsonHttpClient,
     ProviderError,
+    SearchAnswerRequest,
+    SearchAnswerResult,
+    SearchPlanRequest,
+    SearchPlanResult,
     SummaryRequest,
     SummaryResult,
+    parse_search_answer_json,
+    parse_search_plan_json,
     parse_summary_json,
     require_api_key,
     require_cloud_consent,
@@ -76,6 +86,73 @@ class OpenAIProvider:
             data=parse_summary_json(text),
             input_tokens=_optional_int(usage.get("input_tokens")),
             output_tokens=_optional_int(usage.get("output_tokens")),
+        )
+
+    def plan_search(self, request: SearchPlanRequest) -> SearchPlanResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_response(
+            instructions=SEARCH_PLAN_INSTRUCTIONS,
+            user_input=request.question,
+            schema_name="paper_search_plan",
+            schema=SEARCH_PLAN_SCHEMA,
+            max_output_tokens=request.max_output_tokens,
+        )
+        return SearchPlanResult(
+            provider=self.name,
+            model=self.model,
+            data=parse_search_plan_json(_collect_output_text(response)),
+        )
+
+    def answer_search(self, request: SearchAnswerRequest) -> SearchAnswerResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_response(
+            instructions=SEARCH_ANSWER_INSTRUCTIONS,
+            user_input=(
+                f"QUESTION:\n{request.question}\n\n"
+                f"CANDIDATE CONTEXT:\n{request.context_text}"
+            ),
+            schema_name="paper_search_answer",
+            schema=SEARCH_ANSWER_SCHEMA,
+            max_output_tokens=request.max_output_tokens,
+        )
+        return SearchAnswerResult(
+            provider=self.name,
+            model=self.model,
+            data=parse_search_answer_json(_collect_output_text(response)),
+        )
+
+    def _structured_response(
+        self,
+        *,
+        instructions: str,
+        user_input: str,
+        schema_name: str,
+        schema: Mapping[str, Any],
+        max_output_tokens: int,
+    ) -> Mapping[str, Any]:
+        api_key = require_api_key(self._api_key_source, "OpenAI")
+        return self._http.post_json(
+            OPENAI_RESPONSES_URL,
+            {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            {
+                "model": self.model,
+                "instructions": instructions,
+                "input": user_input,
+                "max_output_tokens": max_output_tokens,
+                "store": False,
+                "reasoning": {"effort": "none"},
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": schema,
+                    }
+                },
+            },
+            self._timeout_seconds,
         )
 
 

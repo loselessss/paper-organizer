@@ -24,6 +24,9 @@ from PyQt5.QtWidgets import (
 from paper_organizer import __version__
 from paper_organizer.application.ai_settings import AiSettingsController
 from paper_organizer.application.background_analysis import BackgroundAnalysisService
+from paper_organizer.application.conversational_search import (
+    ConversationalSearchController,
+)
 from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import ImmediateSummaryController
@@ -45,6 +48,7 @@ from .migration_widget import LegacyMigrationDialog
 from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
 from .folder_settings_dialog import FolderSettingsDialog
+from .search_chat_dialog import SearchChatDialog
 from .startup_splash import app_icon_path
 from .update_dialog import UpdateCheckWorker, UpdateDialog
 
@@ -57,12 +61,14 @@ class PaperOrganizerWindow(QMainWindow):
         library_workflow: LibraryWorkflowController | None = None,
         lifecycle: LifecycleSettingsController | None = None,
         background_analysis: BackgroundAnalysisService | None = None,
+        conversational_search: ConversationalSearchController | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._ai_settings = ai_settings
         self._immediate_summary = immediate_summary
         self._lifecycle = lifecycle
+        self._conversational_search = conversational_search
         self._force_quit = False
         self._tray_message_shown = False
         self._tray: QSystemTrayIcon | None = None
@@ -120,6 +126,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget.reanalysis_queued.connect(
                 self._library_reanalysis_queued
             )
+            self.library_widget.natural_search_requested.connect(
+                self.show_natural_search
+            )
         self.setCentralWidget(self.tabs)
 
         settings_menu = self.menuBar().addMenu("설정")
@@ -135,6 +144,13 @@ class PaperOrganizerWindow(QMainWindow):
             migration_action = QAction("레거시 라이브러리 변환...", self)
             migration_action.triggered.connect(self.show_legacy_migration)
             tools_menu.addAction(migration_action)
+            if self._conversational_search is not None:
+                natural_search_action = QAction("자연어로 논문 찾기...", self)
+                natural_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+                natural_search_action.triggered.connect(
+                    lambda: self.show_natural_search("")
+                )
+                tools_menu.addAction(natural_search_action)
             tools_menu.addSeparator()
             reindex_action = QAction("검색 색인 재구축", self)
             reindex_action.triggered.connect(self.rebuild_search_index)
@@ -265,6 +281,7 @@ class PaperOrganizerWindow(QMainWindow):
             "단축키",
             "F5: 새 PDF 검색\n"
             "Ctrl+F: 라이브러리 검색\n"
+            "Ctrl+Shift+F: 자연어로 논문 찾기\n"
             "Ctrl+Shift+S: 즉시 요약\n"
             "Ctrl+A: 표 전체 선택\n"
             "Esc: 대화상자 닫기",
@@ -333,6 +350,35 @@ class PaperOrganizerWindow(QMainWindow):
         dialog.exec_()
         if resume_background and self.queue_widget is not None:
             self.queue_widget.start_background_analysis()
+
+    def show_natural_search(self, question: str = "") -> None:
+        if self._conversational_search is None:
+            return
+        resume_background = bool(
+            self.queue_widget is not None
+            and self.queue_widget.is_background_running()
+        )
+        if resume_background and not self.queue_widget.pause_background_analysis():
+            QMessageBox.information(
+                self,
+                "백그라운드 분석 마무리 중",
+                "현재 논문 분석이 끝난 뒤 자연어 검색을 다시 열어주세요.",
+            )
+            return
+        dialog = SearchChatDialog(self._conversational_search, self)
+        dialog.paper_requested.connect(self._open_natural_search_result)
+        if question:
+            dialog.set_question(question)
+            QTimer.singleShot(0, dialog.start_search)
+        dialog.exec_()
+        if resume_background and self.queue_widget is not None:
+            self.queue_widget.start_background_analysis()
+
+    def _open_natural_search_result(self, path: str) -> None:
+        if self.library_widget is None:
+            return
+        self.tabs.setCurrentWidget(self.library_widget)
+        self.library_widget.select_path(path)
 
     def show_pdf_export(self) -> None:
         if self._library_workflow is None:

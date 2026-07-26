@@ -43,6 +43,7 @@ from paper_organizer.application.background_analysis import (
     AnalysisRunEvent,
     BackgroundAnalysisService,
 )
+from paper_organizer.application.conversational_search import requires_ai_search
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
@@ -1203,6 +1204,7 @@ class AnalysisQueueWidget(QWidget):
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
+    natural_search_requested = pyqtSignal(str)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -1212,12 +1214,12 @@ class LibraryWidget(QWidget):
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(
-            "제목·저자·분야·태그와 논문 본문 전체에서 검색"
+            "단어는 즉시 검색 · 질문은 AI가 근거 논문으로 답변"
         )
         self.search_edit.setClearButtonEnabled(True)
         refresh_button = QPushButton("새로고침")
-        refresh_button.clicked.connect(lambda: self.refresh(True))
-        self.search_edit.returnPressed.connect(self.refresh)
+        refresh_button.clicked.connect(self._search_or_refresh)
+        self.search_edit.returnPressed.connect(self._submit_search)
         self.search_edit.textChanged.connect(self._search_text_changed)
         search_row.addWidget(self.search_edit, 1)
         search_row.addWidget(refresh_button)
@@ -1297,6 +1299,19 @@ class LibraryWidget(QWidget):
     def _search_text_changed(self, text: str) -> None:
         if not text.strip():
             self.refresh()
+
+    def _submit_search(self) -> None:
+        query = self.search_edit.text().strip()
+        if query and requires_ai_search(query):
+            self.natural_search_requested.emit(query)
+            return
+        self.refresh()
+
+    def _search_or_refresh(self) -> None:
+        if self.search_edit.text().strip():
+            self._submit_search()
+        else:
+            self.refresh(True)
 
     def refresh(self, force: bool = False) -> None:
         if force:
