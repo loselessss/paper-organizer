@@ -54,6 +54,8 @@ SYSTEM_INSTRUCTIONS = (
     "Every article type, including narrative reviews, systematic reviews, and "
     "meta-analyses, has a byline: extract all authors shown in that byline. Never "
     "treat a review article as authorless and never copy cited-reference authors. "
+    "For patents, put inventors in authors and always return an empty venue; a "
+    "patent office, applicant, assignee, or publication number is not a journal. "
     "Classify the paper into one university department-level category and a "
     "narrower subcategory, both written in Korean."
 )

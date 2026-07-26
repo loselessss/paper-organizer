@@ -50,7 +50,10 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.application.summary_service import (
             ImmediateSummaryController,
         )
-        from paper_organizer.application.library_workflow import LibraryWorkflowController
+        from paper_organizer.application.library_workflow import (
+            EditablePaperMetadata,
+            LibraryWorkflowController,
+        )
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
@@ -99,6 +102,20 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.tabs.count(), 2)
             self.assertEqual(
                 window.windowTitle(), f"Paper Organizer — v{__version__}"
+            )
+            window.collection_widget.form.set_metadata(
+                EditablePaperMetadata(
+                    title="Patent",
+                    document_type="patent",
+                    publication_number="US20260000001",
+                )
+            )
+            self.assertEqual(
+                window.collection_widget.form.authors_label.text(), "발명자"
+            )
+            self.assertTrue(window.collection_widget.form.venue_edit.isHidden())
+            self.assertFalse(
+                window.collection_widget.form.publication_number_edit.isHidden()
             )
             self.assertEqual(window.tabs.tabText(0), "수집 및 분석")
             self.assertEqual(window.tabs.tabText(1), "라이브러리")

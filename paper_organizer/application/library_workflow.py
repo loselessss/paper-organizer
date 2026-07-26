@@ -106,6 +106,11 @@ class EditablePaperMetadata:
     authors: list[str] = field(default_factory=list)
     year: int | None = None
     venue: str = ""
+    document_type: str = "paper"
+    patent_office: str = ""
+    publication_number: str = ""
+    application_number: str = ""
+    assignee: str = ""
     category: str = "Uncategorized"
     subcategory: str = "General"
     tags: list[str] = field(default_factory=list)
@@ -493,6 +498,13 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
     bibliography = record.get("bibliography", {})
     classification = record.get("classification", {})
     description = record.get("description", {})
+    document = record.get("document", {})
+    patent = record.get("patent", {})
+    document_type = str(
+        document.get("type")
+        or record.get("detection", {}).get("document_type")
+        or "paper"
+    )
     raw_year = bibliography.get("year")
     try:
         year = int(raw_year) if raw_year not in (None, "") else None
@@ -502,12 +514,46 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
         title=str(bibliography.get("title", "")),
         authors=[str(value) for value in bibliography.get("authors", [])],
         year=year,
-        venue=str(bibliography.get("venue", "")),
+        venue=(
+            ""
+            if document_type == "patent"
+            else str(bibliography.get("venue", ""))
+        ),
+        document_type=document_type,
+        patent_office=str(patent.get("office", "")),
+        publication_number=str(patent.get("publication_number", "")),
+        application_number=str(patent.get("application_number", "")),
+        assignee=str(patent.get("assignee", "")),
         category=str(classification.get("category") or "Uncategorized"),
         subcategory=str(classification.get("subcategory") or "General"),
         tags=[str(value) for value in classification.get("tags", [])],
         summary_ko=str(description.get("summary_ko", "")),
     )
+
+
+def _metadata_for_library_entry(
+    record: dict[str, Any], sidecar_path: Path
+) -> EditablePaperMetadata:
+    metadata = _metadata_from_record(record)
+    has_patent_details = any(
+        (
+            metadata.patent_office,
+            metadata.publication_number,
+            metadata.application_number,
+            metadata.assignee,
+        )
+    )
+    if metadata.document_type == "patent" and has_patent_details:
+        return metadata
+    if sidecar_path.suffix.casefold() != PAPERPACK_SUFFIX:
+        return metadata
+    try:
+        pages = [text for _number, text in content_pages(load_paperpack_content(sidecar_path))]
+        if metadata.document_type == "patent" or _detection(pages)[0] == "patent_likely":
+            return _apply_patent_metadata(metadata, pages)
+    except (OSError, PaperPackError, TypeError, ValueError):
+        pass
+    return metadata
 
 
 def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadata:
@@ -609,6 +655,54 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
 
 def _is_supported_document(status: str) -> bool:
     return status in {"academic_likely", "patent_likely"}
+
+
+def _apply_patent_metadata(
+    metadata: EditablePaperMetadata, page_texts: list[str]
+) -> EditablePaperMetadata:
+    text = "\n".join(page_texts[:5])
+    metadata.document_type = "patent"
+    metadata.venue = ""
+    patterns = {
+        "publication_number": (
+            r"(?im)^\s*(?:publication\s+(?:number|no\.?)|공개번호)\s*[:#]?\s*"
+            r"([A-Z]{0,3}\s*\d[\w .\-/]{3,30})"
+        ),
+        "application_number": (
+            r"(?im)^\s*(?:application\s+(?:number|no\.?)|출원번호)\s*[:#]?\s*"
+            r"([A-Z]{0,3}\s*\d[\w .\-/]{3,30})"
+        ),
+        "assignee": (
+            r"(?im)^\s*(?:applicant|assignee|출원인|특허권자)\s*[:#]?\s*(.{2,120})$"
+        ),
+    }
+    for field_name, pattern in patterns.items():
+        match = re.search(pattern, text)
+        if match:
+            setattr(metadata, field_name, " ".join(match.group(1).split()).strip(" ;,"))
+    inventor = re.search(
+        r"(?im)^\s*(?:inventors?|발명자)\s*[:#]?\s*(.{2,240})$", text
+    )
+    if inventor:
+        metadata.authors = [
+            value.strip()
+            for value in re.split(r"\s*;\s*|,\s*(?=[A-Z][a-z])", inventor.group(1))
+            if value.strip()
+        ]
+    number = metadata.publication_number.upper().replace(" ", "")
+    office_names = {
+        "US": "USPTO",
+        "EP": "EPO",
+        "WO": "WIPO",
+        "KR": "KIPO",
+        "JP": "JPO",
+        "CN": "CNIPA",
+    }
+    metadata.patent_office = next(
+        (office for prefix, office in office_names.items() if number.startswith(prefix)),
+        "",
+    )
+    return metadata
 
 
 def _library_references(root: Path) -> Iterable[tuple[dict[str, Any], Path, Path, DocumentIdentity]]:
@@ -887,10 +981,13 @@ class LibraryWorkflowController:
                         )
                 identity = build_identity_from_pages(file_sha256, page_texts)
                 status, reason = _detection(page_texts)
+                metadata = _default_metadata(found.path, page_texts)
+                if status == "patent_likely":
+                    metadata = _apply_patent_metadata(metadata, page_texts)
                 item = ReviewItem(
                     path=found.path,
                     identity=identity,
-                    metadata=_default_metadata(found.path, page_texts),
+                    metadata=metadata,
                     detection_status=status,
                     detection_reason=reason,
                     duplicate=_best_duplicate(identity, references),
@@ -962,6 +1059,11 @@ class LibraryWorkflowController:
             authors=list(item.metadata.authors),
             year=item.metadata.year,
             venue=item.metadata.venue,
+            document_type=item.metadata.document_type,
+            patent_office=item.metadata.patent_office,
+            publication_number=item.metadata.publication_number,
+            application_number=item.metadata.application_number,
+            assignee=item.metadata.assignee,
             category=item.metadata.category,
             subcategory=item.metadata.subcategory,
             tags=list(item.metadata.tags),
@@ -982,7 +1084,9 @@ class LibraryWorkflowController:
         if result is not None and result.classified:
             metadata.category = result.category
             metadata.subcategory = result.subcategory
-        if not metadata.venue:
+        if metadata.document_type == "patent":
+            metadata.venue = ""
+        elif not metadata.venue:
             metadata.venue = extract_venue(page_texts)
         return metadata
 
@@ -1231,6 +1335,9 @@ class LibraryWorkflowController:
                 "백그라운드 분석 결과는 라이브러리의 paperpack에만 저장할 수 있습니다."
             )
         record = load_paperpack_metadata(source)
+        inferred_metadata = _metadata_for_library_entry(record, source)
+        if inferred_metadata.document_type == "patent":
+            _apply_metadata(record, inferred_metadata)
         now = _now_iso()
         result = execution.result
         data = result.data
@@ -1302,6 +1409,12 @@ class LibraryWorkflowController:
         sources = curation.setdefault("field_sources", {})
         bibliography = record.setdefault("bibliography", {})
         classification = record.setdefault("classification", {})
+        is_patent = (
+            record.get("document", {}).get("type") == "patent"
+            or record.get("detection", {}).get("document_type") == "patent"
+        )
+        if is_patent:
+            bibliography["venue"] = ""
 
         def replaceable(field: str, current: Any) -> bool:
             if field in locked or sources.get(field) == "user":
@@ -1320,7 +1433,12 @@ class LibraryWorkflowController:
                 [value.strip() for value in data.authors if value.strip()],
             ),
             (bibliography, "bibliography.year", "year", year),
-            (bibliography, "bibliography.venue", "venue", data.venue.strip()),
+            (
+                bibliography,
+                "bibliography.venue",
+                "venue",
+                "" if is_patent else data.venue.strip(),
+            ),
             (
                 classification,
                 "classification.category",
@@ -1800,7 +1918,7 @@ class LibraryWorkflowController:
                         LibraryEntry(
                             pdf_path=pdf_path,
                             sidecar_path=sidecar,
-                            metadata=_metadata_from_record(record),
+                            metadata=_metadata_for_library_entry(record, sidecar),
                             work_id=identity.work_id,
                             source_variant=identity.source_variant,
                             record=record,
@@ -1820,6 +1938,10 @@ class LibraryWorkflowController:
                     *metadata.authors,
                     str(metadata.year or ""),
                     metadata.venue,
+                    metadata.patent_office,
+                    metadata.publication_number,
+                    metadata.application_number,
+                    metadata.assignee,
                     metadata.category,
                     metadata.subcategory,
                     *metadata.tags,
@@ -1963,6 +2085,11 @@ class LibraryWorkflowController:
                     "bibliography.authors": "user",
                     "bibliography.year": "user",
                     "bibliography.venue": "user",
+                    "document.type": "user",
+                    "patent.office": "user",
+                    "patent.publication_number": "user",
+                    "patent.application_number": "user",
+                    "patent.assignee": "user",
                     "classification.category": "user",
                     "classification.subcategory": "user",
                     "classification.tags": "user",
@@ -2013,14 +2140,23 @@ def _validate_metadata(metadata: EditablePaperMetadata) -> None:
 
 
 def _apply_metadata(record: dict[str, Any], metadata: EditablePaperMetadata) -> None:
+    document_type = "patent" if metadata.document_type == "patent" else "paper"
+    record.setdefault("document", {})["type"] = document_type
     record.setdefault("bibliography", {}).update(
         {
             "title": metadata.title.strip(),
             "authors": metadata.authors,
             "year": metadata.year,
-            "venue": metadata.venue.strip(),
+            "venue": "" if document_type == "patent" else metadata.venue.strip(),
         }
     )
+    if document_type == "patent":
+        record["patent"] = {
+            "office": metadata.patent_office.strip(),
+            "publication_number": metadata.publication_number.strip(),
+            "application_number": metadata.application_number.strip(),
+            "assignee": metadata.assignee.strip(),
+        }
     record.setdefault("classification", {}).update(
         {
             "category": metadata.category.strip() or "Uncategorized",

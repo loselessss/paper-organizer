@@ -104,6 +104,22 @@ class SystemInstructionTests(unittest.TestCase):
 
 
 class AiClassificationTests(unittest.TestCase):
+    def test_patent_ignores_ai_journal_venue(self):
+        record = {
+            "detection": {"document_type": "patent"},
+            "bibliography": {},
+            "classification": {},
+            "curation": {"field_sources": {}, "locked_fields": []},
+        }
+
+        LibraryWorkflowController._apply_ai_bibliography(
+            record,
+            execution(Path("patent.pdf")).result.data,
+            "ai:ollama",
+        )
+
+        self.assertEqual(record["bibliography"]["venue"], "")
+
     def _organized(self, root: Path):
         input_dir = root / "downloads"
         library = root / "library"

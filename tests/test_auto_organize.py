@@ -69,6 +69,13 @@ class AutoOrganizeTests(unittest.TestCase):
             record = load_paperpack_metadata(pack)
             self.assertTrue(record["detection"]["is_patent"])
             self.assertEqual(record["detection"]["document_type"], "patent")
+            self.assertEqual(record["document"]["type"], "patent")
+            self.assertEqual(record["bibliography"]["venue"], "")
+            self.assertEqual(record["bibliography"]["authors"], ["Example Inventor"])
+            self.assertEqual(record["patent"]["office"], "USPTO")
+            self.assertEqual(record["patent"]["publication_number"], "US20260000001")
+            self.assertEqual(record["patent"]["assignee"], "Example Labs")
+
     def _controller(self, root: Path, *, auto_organize: bool = True):
         input_dir = root / "downloads"
         library = root / "library"

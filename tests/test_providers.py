@@ -139,6 +139,10 @@ class ProviderTests(unittest.TestCase):
             "never treat a review article as authorless",
             client.calls[0]["payload"]["messages"][0]["content"].casefold(),
         )
+        self.assertIn(
+            "for patents",
+            client.calls[0]["payload"]["messages"][0]["content"].casefold(),
+        )
 
     def test_invalid_provider_shape_is_rejected(self):
         broken = dict(SUMMARY)

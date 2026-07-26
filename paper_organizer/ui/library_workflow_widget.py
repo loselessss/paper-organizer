@@ -121,15 +121,30 @@ class MetadataForm(QGroupBox):
         self.year_edit.setMaximumWidth(100)
         self.venue_edit = QLineEdit()
         self.venue_edit.setPlaceholderText("저널명 또는 학회명")
+        self.patent_office_edit = QLineEdit()
+        self.publication_number_edit = QLineEdit()
+        self.application_number_edit = QLineEdit()
+        self.assignee_edit = QLineEdit()
         self.category_edit = QLineEdit("Uncategorized")
         self.subcategory_edit = QLineEdit("General")
         self.tags_edit = QLineEdit()
         self.tags_edit.setPlaceholderText("쉼표로 구분")
         self._summary_ko = ""
+        self._document_type = "paper"
+        self.authors_label = QLabel("저자")
+        self.venue_label = QLabel("저널/학회")
+        self.patent_office_label = QLabel("특허청")
+        self.publication_number_label = QLabel("공개번호")
+        self.application_number_label = QLabel("출원번호")
+        self.assignee_label = QLabel("출원인/권리자")
         form.addRow("제목", self.title_edit)
-        form.addRow("저자", self.authors_edit)
+        form.addRow(self.authors_label, self.authors_edit)
         form.addRow("연도", self.year_edit)
-        form.addRow("저널/학회", self.venue_edit)
+        form.addRow(self.venue_label, self.venue_edit)
+        form.addRow(self.patent_office_label, self.patent_office_edit)
+        form.addRow(self.publication_number_label, self.publication_number_edit)
+        form.addRow(self.application_number_label, self.application_number_edit)
+        form.addRow(self.assignee_label, self.assignee_edit)
         form.addRow("분야", self.category_edit)
         form.addRow("세부분야", self.subcategory_edit)
         form.addRow("태그", self.tags_edit)
@@ -140,11 +155,31 @@ class MetadataForm(QGroupBox):
         self.authors_edit.setText(", ".join(value.authors))
         self.year_edit.setText(str(value.year or ""))
         self.venue_edit.setText(value.venue)
+        self.patent_office_edit.setText(value.patent_office)
+        self.publication_number_edit.setText(value.publication_number)
+        self.application_number_edit.setText(value.application_number)
+        self.assignee_edit.setText(value.assignee)
         self.category_edit.setText(value.category)
         self.subcategory_edit.setText(value.subcategory)
         self.tags_edit.setText(", ".join(value.tags))
         self._summary_ko = value.summary_ko
+        self._set_document_type(value.document_type)
         self.setEnabled(metadata is not None)
+
+    def _set_document_type(self, document_type: str) -> None:
+        self._document_type = "patent" if document_type == "patent" else "paper"
+        patent = self._document_type == "patent"
+        self.authors_label.setText("발명자" if patent else "저자")
+        self.venue_label.setVisible(not patent)
+        self.venue_edit.setVisible(not patent)
+        for label, editor in (
+            (self.patent_office_label, self.patent_office_edit),
+            (self.publication_number_label, self.publication_number_edit),
+            (self.application_number_label, self.application_number_edit),
+            (self.assignee_label, self.assignee_edit),
+        ):
+            label.setVisible(patent)
+            editor.setVisible(patent)
 
     def metadata(self) -> EditablePaperMetadata:
         year_text = self.year_edit.text().strip()
@@ -156,6 +191,11 @@ class MetadataForm(QGroupBox):
             authors=split_values(self.authors_edit.text()),
             year=int(year_text) if year_text else None,
             venue=self.venue_edit.text().strip(),
+            document_type=self._document_type,
+            patent_office=self.patent_office_edit.text().strip(),
+            publication_number=self.publication_number_edit.text().strip(),
+            application_number=self.application_number_edit.text().strip(),
+            assignee=self.assignee_edit.text().strip(),
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
             tags=split_values(self.tags_edit.text()),
@@ -859,7 +899,7 @@ class LibraryWidget(QWidget):
         root.addLayout(search_row)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["제목", "저널/학회", "저자", "연도", "분야", "분석 상태"]
+            ["제목", "유형/출처", "저자/발명자", "연도", "분야", "분석 상태"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -944,9 +984,20 @@ class LibraryWidget(QWidget):
         for row, entry in enumerate(self._entries):
             metadata = entry.metadata
             queue_item = queue_by_path.get(str(entry.sidecar_path.resolve()))
+            source_text = metadata.venue
+            if metadata.document_type == "patent":
+                source_text = " · ".join(
+                    value
+                    for value in (
+                        "특허",
+                        metadata.patent_office,
+                        metadata.publication_number,
+                    )
+                    if value
+                )
             values = [
                 metadata.title,
-                metadata.venue,
+                source_text,
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",
@@ -954,7 +1005,7 @@ class LibraryWidget(QWidget):
             ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
-        self.status_label.setText(f"논문 파일 {len(self._entries)}개")
+        self.status_label.setText(f"라이브러리 문서 {len(self._entries)}개")
         if self._entries:
             self.table.selectRow(0)
             self._selection_changed()
@@ -994,10 +1045,10 @@ class LibraryWidget(QWidget):
         self._refresh_pdf_edit_actions(entry)
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
-        """선택 논문의 description/analysis 내용을 읽기 전용으로 보여준다."""
+        """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
         if entry is None:
             self.analysis_view.setHtml(
-                "<p style='color:#777'>왼쪽 목록에서 논문을 선택하면 "
+                "<p style='color:#777'>왼쪽 목록에서 문서를 선택하면 "
                 "AI 분석 내용이 표시됩니다.</p>"
             )
             return
