@@ -91,6 +91,11 @@ class PaperOrganizerWindow(QMainWindow):
             self.queue_widget.library_requested.connect(
                 self._open_queue_item_in_library
             )
+            self.queue_widget.library_changed.connect(
+                lambda: self.library_widget.refresh(True)
+                if self.library_widget is not None
+                else None
+            )
         self.setCentralWidget(self.tabs)
 
         settings_menu = self.menuBar().addMenu("설정")

@@ -415,6 +415,7 @@ class _SortableQueueItem(QTableWidgetItem):
 class AnalysisQueueWidget(QWidget):
     summary_requested = pyqtSignal(str)
     library_requested = pyqtSignal(str)
+    library_changed = pyqtSignal()
     analysis_progress = pyqtSignal(str, bool)
 
     def __init__(
@@ -737,6 +738,8 @@ class AnalysisQueueWidget(QWidget):
             self._analysis_running = False
             self._current_analysis_title = ""
         self.status_label.setText(f"{labels.get(event.state, event.state)} · {event.message}")
+        if event.state == "completed":
+            self.library_changed.emit()
         self._emit_progress()
 
     def _analysis_worker_finished(self) -> None:

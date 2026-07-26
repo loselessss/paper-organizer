@@ -150,6 +150,7 @@ class UiSmokeTests(unittest.TestCase):
         from PyQt5.QtCore import Qt
 
         from paper_organizer.application.analysis_queue import AnalysisQueueItem
+        from paper_organizer.application.background_analysis import AnalysisRunEvent
         from paper_organizer.ui.library_workflow_widget import AnalysisQueueWidget
 
         def queue_item(key, title, priority, status):
@@ -190,6 +191,12 @@ class UiSmokeTests(unittest.TestCase):
 
         widget.refresh()
         self.assertEqual(widget._selected().queue_id, "sha256:b")
+        library_events = []
+        widget.library_changed.connect(lambda: library_events.append(True))
+        widget._analysis_event(
+            AnalysisRunEvent("completed", "저장 완료", "sha256:a", "Alpha")
+        )
+        self.assertEqual(library_events, [True])
         widget.close()
 
     def test_first_run_requires_an_explicit_close_choice(self):
