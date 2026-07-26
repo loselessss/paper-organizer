@@ -29,6 +29,7 @@ PAGES = [
 
 
 def write_pdf(path: Path, pages: list[str]) -> None:
+    pages = [*pages, *(["Test fixture continuation"] * max(0, 3 - len(pages)))]
     document = fitz.open()
     for text in pages:
         page = document.new_page()
@@ -87,7 +88,7 @@ class OrganizeContentTests(unittest.TestCase):
                 item, EditablePaperMetadata(title="Stored content")
             )
             pages = content_pages(load_paperpack_content(organized.pdf_path))
-            self.assertEqual(len(pages), 2)
+            self.assertEqual(len(pages), 3)
             self.assertIn("thermostable", pages[0][1])
             self.assertIn("Escherichia", pages[1][1])
 
@@ -116,7 +117,7 @@ class OrganizeContentTests(unittest.TestCase):
             filled, problems = controller.backfill_content()
             self.assertEqual((filled, problems), (1, ()))
             self.assertEqual(
-                len(content_pages(load_paperpack_content(organized.pdf_path))), 2
+                len(content_pages(load_paperpack_content(organized.pdf_path))), 3
             )
 
             again, problems = controller.backfill_content()

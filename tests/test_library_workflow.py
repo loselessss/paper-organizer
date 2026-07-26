@@ -76,6 +76,19 @@ class LibraryWorkflowTests(unittest.TestCase):
     def test_downloads_is_the_default_input_folder(self):
         self.assertEqual(default_input_dir(), Path.home() / "Downloads")
 
+    def test_one_or_two_page_pdfs_are_not_discovered_as_papers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "one-page.pdf", ["short document"])
+            write_pdf(input_dir / "two-pages.pdf", ["page one", "page two"])
+
+            result = self._scan_twice(controller)
+
+            self.assertEqual(result.items, ())
+            self.assertEqual(controller.scan().items, ())
+            self.assertEqual(controller.analysis_queue(), [])
+
     def test_organize_writes_paperpack_and_rebuilds_index(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

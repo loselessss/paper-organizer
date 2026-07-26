@@ -6,6 +6,7 @@ import sys
 
 
 def main() -> int:
+    from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QApplication, QDialog
 
     from paper_organizer.application.ai_settings import AiSettingsController
@@ -22,7 +23,8 @@ def main() -> int:
     qt_argv = [argument for argument in sys.argv if argument != "--background"]
     app = QApplication.instance() or QApplication(qt_argv)
     lifecycle = LifecycleSettingsController()
-    if lifecycle.first_run_required():
+    was_first_run = lifecycle.first_run_required()
+    if was_first_run:
         first_run = LifecyclePreferencesDialog(lifecycle, first_run=True)
         if first_run.exec_() != QDialog.Accepted:
             return 0
@@ -63,6 +65,8 @@ def main() -> int:
         else:
             window.show()
             splash.finish(window)
+            if was_first_run:
+                QTimer.singleShot(0, window.show_first_run_ai_setup)
 
     loader = StartupLoader(workflow, splash)
     runtime["loader"] = loader

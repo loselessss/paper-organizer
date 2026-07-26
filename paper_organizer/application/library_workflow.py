@@ -559,6 +559,7 @@ class LibraryWorkflowController:
         self._settings_path = settings_path or default_settings_path()
         self._tracker = DiscoveryTracker()
         self._cache: dict[Path, tuple[int, int, ReviewItem]] = {}
+        self._short_documents: dict[Path, tuple[int, int]] = {}
         self._library_cache: list[LibraryEntry] | None = None
 
     def settings(self) -> AppSettings:
@@ -646,6 +647,11 @@ class LibraryWorkflowController:
                 stat = path.stat()
             except OSError:
                 continue
+            short_signature = self._short_documents.get(path)
+            if short_signature == (stat.st_size, stat.st_mtime_ns):
+                continue
+            if short_signature is not None:
+                self._short_documents.pop(path, None)
             if not _source_is_already_imported(
                 path, stat.st_size, stat.st_mtime_ns, library_root, receipts
             ):
@@ -670,6 +676,11 @@ class LibraryWorkflowController:
                 continue
             try:
                 page_texts = extract_page_texts(found.path)
+                if len(page_texts) < 3:
+                    self._short_documents[found.path] = key
+                    self._tracker.forget(found.path)
+                    self._cache.pop(found.path, None)
+                    continue
                 ocr_used = False
                 if _detection(page_texts)[0] == "needs_ocr":
                     try:

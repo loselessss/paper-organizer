@@ -236,13 +236,14 @@ class OllamaModelDialog(QDialog):
                 if self._operation == "install"
                 else "JSON 응답 검증 완료"
             )
+            self._controller.select_ollama_model(model.name)
             self.model_verified.emit(model.name)
             installed_now = self._operation == "install"
             QMessageBox.information(
                 self,
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
-                "AI 설정의 모델 칸에 반영했으며 설정 저장 전까지는 활성화되지 않습니다.",
+                "활성 Ollama 모델로 선택하고 설정에 저장했습니다.",
             )
             self._refresh_after_operation = self._operation == "install"
             return
@@ -376,10 +377,23 @@ class OllamaModelDialog(QDialog):
             self.model_combo.addItem(
                 f"{entry.label} — {state}, {size}", entry.model_id
             )
+        selected_found = False
         if selected:
             index = self.model_combo.findData(selected)
             if index >= 0:
                 self.model_combo.setCurrentIndex(index)
+                selected_found = True
+        if not selected_found:
+            first_installed = next(
+                (
+                    index
+                    for index, entry in enumerate(snapshot.entries)
+                    if entry.installed
+                ),
+                0,
+            )
+            if self.model_combo.count():
+                self.model_combo.setCurrentIndex(first_installed)
         self.model_combo.blockSignals(False)
         installed_lines = []
         for entry in snapshot.entries:

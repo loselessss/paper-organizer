@@ -33,6 +33,7 @@ def protein_pages() -> list[str]:
 
 
 def write_pdf(path: Path, pages: list[str]) -> None:
+    pages = [*pages, *(["Test fixture continuation"] * max(0, 3 - len(pages)))]
     document = fitz.open()
     for text in pages:
         page = document.new_page()

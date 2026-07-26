@@ -184,6 +184,18 @@ class AiSettingsController:
     def verify_installed_ollama_model(self, model: str):
         return self._model_manager.verify_installed(model)
 
+    def select_ollama_model(self, model: str) -> AiSettingsView:
+        """Persist a verified local model as the active summary model."""
+
+        normalized = model.strip()
+        if not normalized:
+            raise ValueError("Ollama model cannot be empty")
+        settings = load_settings(self._settings_path)
+        settings.summary_provider = "ollama"
+        settings.selected_model = normalized
+        save_settings(settings, self._settings_path)
+        return self.view()
+
     def delete_ollama_model(self, model: str) -> bool:
         return self._model_manager.delete(model)
 

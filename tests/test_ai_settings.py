@@ -105,6 +105,18 @@ class AiSettingsControllerTests(unittest.TestCase):
 
         self.assertEqual(openai_view.model, "gpt-custom")
 
+    def test_verified_ollama_model_can_be_selected_and_saved_immediately(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            controller = AiSettingsController(MemorySecretStore(), path)
+
+            view = controller.select_ollama_model("qwen3:8b")
+
+            self.assertEqual(view.provider, "ollama")
+            self.assertEqual(view.model, "qwen3:8b")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["selected_model"], "qwen3:8b")
+
 
 if __name__ == "__main__":
     unittest.main()
