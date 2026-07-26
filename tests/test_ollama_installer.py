@@ -91,6 +91,16 @@ class FindWingetTests(unittest.TestCase):
             ), mock.patch.dict(os.environ, {"LOCALAPPDATA": temp}):
                 self.assertEqual(find_winget_executable(), "")
 
+    def test_inaccessible_store_alias_returns_empty(self):
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.shutil.which",
+            return_value=None,
+        ), mock.patch(
+            "paper_organizer.infra.ollama_installer.Path.is_file",
+            side_effect=OSError("access denied"),
+        ):
+            self.assertEqual(find_winget_executable(), "")
+
 
 class EnsureRuntimeTests(unittest.TestCase):
     def test_already_running_runtime_installs_nothing(self):

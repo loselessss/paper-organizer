@@ -135,7 +135,7 @@ sPDF에서 저장한 뒤 `편집본을 PaperPack에 적용`을 눌러야만 내�
 중단하며, `편집본 폐기`는 작업 복사본만 지웁니다. 적용 뒤 파일 정체성과 분석 큐를
 갱신하고 기존 본문 색인과 AI 결과는 재분석 대상으로 표시합니다.
 
-시작할 때 `Paper Organizer 0.9.0`과 `Created by SANGKYU SHIN, Ph.D.`가 표시되는
+시작할 때 `Paper Organizer 1.0.0`과 `Created by SANGKYU SHIN, Ph.D.`가 표시되는
 스플래시를 띄우고, 별도 작업 스레드에서 로컬 paperpack·JSON과 동기화 폴더 상태를
 읽은 뒤 메인 창을 엽니다.
 
@@ -194,7 +194,7 @@ python -m pip install -e '.[gui,build]'
 .\build_installer.bat
 ```
 
-결과는 `Output\PaperOrganizer_Setup_0.9.0.exe`입니다. 설치본에는 sPDF와 기본 OCR
+결과는 `Output\PaperOrganizer_Setup_1.0.0.exe`입니다. 설치본에는 sPDF와 기본 OCR
 런타임이 포함되지만 Ollama LLM 가중치는 포함되지 않습니다. 제거 프로그램은 앱
 파일과 선택한 로그인 자동 시작 항목만 제거하며 `.paperpack`, 설정, API 키 저장소와
 공용 Ollama 모델은 삭제하지 않습니다.

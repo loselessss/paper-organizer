@@ -25,6 +25,15 @@ _START_TIMEOUT_SECONDS = 60
 CommandRunner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 
 
+def _is_accessible_file(path: Path) -> bool:
+    """Return whether path is a file without failing on protected aliases."""
+
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True, slots=True)
 class OllamaRuntimeState:
     installed: bool
@@ -66,7 +75,7 @@ def find_ollama_executable() -> str:
         Path(os.environ.get("ProgramFiles", "")) / "Ollama" / "ollama.exe",
     ]
     for candidate in candidates:
-        if candidate.parent.name and candidate.is_file():
+        if candidate.parent.name and _is_accessible_file(candidate):
             return str(candidate)
     return ""
 
@@ -88,7 +97,7 @@ def find_winget_executable() -> str:
         / "WindowsApps"
         / "winget.exe"
     )
-    if candidate.parent.parent.name and candidate.is_file():
+    if candidate.parent.parent.name and _is_accessible_file(candidate):
         return str(candidate)
     return ""
 

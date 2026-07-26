@@ -14,5 +14,5 @@ if not exist "%ISCC%" (
 "%ISCC%" installer.iss
 if errorlevel 1 exit /b %errorlevel%
 
-echo [OK] Output\PaperOrganizer_Setup_0.9.0.exe
+echo [OK] Output\PaperOrganizer_Setup_1.0.0.exe
 endlocal
