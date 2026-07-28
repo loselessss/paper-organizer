@@ -1,0 +1,62 @@
+{
+  "document_id": "BENCH-SYN-003",
+  "difficulty": "normal",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "Scale-Up of Soluble PhaZ Hydrolase Production from 2-L to 30-L Fermentation Using Fixed Aeration and Agitation",
+  "authors": "Noah Pike, Imani Rao, and Celia Moss | Synthetic Fermentation Evaluation Unit",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "How does fixed-setting scale-up from 2 L to 30 L affect biomass, soluble PhaZ production, insoluble product, acetate, and enzyme quality?",
+  "methods": [
+    "2-L and 30-L fermentation",
+    "fixed aeration and agitation",
+    "wet cell weight",
+    "gel densitometry",
+    "nickel affinity purification",
+    "specific activity and acetate assays"
+  ],
+  "key_findings": [
+    "Biomass increased at 30 L",
+    "Soluble PhaZ decreased from 8.2 to 6.3 mg/L",
+    "Insoluble PhaZ increased from 34% to 57%",
+    "Acetate increased from 1.1 to 3.8 g/L",
+    "Specific activity was unchanged"
+  ],
+  "numeric_findings": [
+    "18.4 vs 21.7 g/L wet cell weight",
+    "8.2 vs 6.3 mg/L soluble PhaZ",
+    "34% vs 57% insoluble",
+    "1.1 vs 3.8 g/L acetate",
+    "112 vs 109 U/mg"
+  ],
+  "conclusion": "Scale-up increased biomass but reduced soluble product; oxygen limitation is plausible but unproven.",
+  "critical_negations": [
+    "Dissolved oxygen was not measured at 30 L",
+    "kLa was not calculated",
+    "Specific activity did not decrease materially"
+  ],
+  "forbidden_claims": [
+    "Oxygen limitation was directly proven",
+    "The 30-L process increased soluble PhaZ",
+    "Specific activity doubled",
+    "A DO cascade was used at 30 L"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-003.pdf"
+  }
+}

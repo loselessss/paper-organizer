@@ -4,8 +4,8 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: v1.3.4 Ollama 초기 설정·8B 이하 모델 정책·자동 재기동 구현
-- 이번 회차 범위: 첫 실행 AI 안내, 대형 모델 선택 제외, 즉시 요약 Ollama 재시작
+- 상태: v1.4.0 구역 기반 요약·라이브러리 탐색·모델 벤치마크 구현
+- 이번 회차 범위: 요약 전처리 개편, exact_file 이동, 트레이·업데이트 UI, 0.6B/1.7B/4B/8B 비교
 
 ---
 
@@ -72,6 +72,8 @@ GUI 실행은 다음과 같습니다.
        · 페이지 본문을 content/content.json에 저장
        · papers/<분야>/<세부분야>/x.paperpack 생성, 분석 큐에 등록
   → BackgroundAnalysisService.run_next()   한 편씩 AI 분석
+       · 반복 머리말·쪽번호·OCR 잡음을 제거하고 논문 구역별 문단 컨텍스트 구성
+       · 4B 이하는 구역별 요약→최종 요약, 8B 이상은 전체 구역 직접 요약
        · 요약 + 분류·제목·저자·연도·저널명 정정 (field_sources = "ai:<provider>")
        · 분류가 바뀌면 paperpack을 새 분야 폴더로 이동
   → 검색 색인(index/search.sqlite) 증분 갱신
@@ -129,6 +131,12 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 `SummaryData.from_mapping()`이 `set(raw) != expected`로 검사합니다. 스키마에
 필드를 하나 추가하면 provider 3개와 관련 테스트 픽스처를 모두 고쳐야 합니다.
 
+**요약 전처리는 PaperPack 본문을 바꾸지 않습니다.**
+`application/summary_preprocessing.py`가 AI로 보낼 임시 컨텍스트만 구역별로
+정리합니다. 전문 검색용 `content/content.json`은 원문 페이지 텍스트를 그대로
+유지합니다. 긴 입력은 `summary_service._truncate_section_context()`가 각 검출
+구역을 남기며 줄입니다.
+
 **테스트용 PDF 본문이 500자 미만이면 `needs_ocr`로 분류됩니다.**
 자동 보관 대상에서 빠져 테스트가 조용히 어긋납니다. 픽스처는 실제 논문 분량에
 가깝게 쓰세요(`tests/test_auto_organize.py`의 `protein_pages()` 참고).
@@ -157,7 +165,14 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 - **방향**: 깨짐 감지(U+FFFD·제어문자·사설영역 비율) → cp1252↔UTF-8 재해석 복원 시도 → 본문 첫 줄 → 파일명 순으로 fallback.
 - **참고**: AI 분석이 이미 제목을 정정하므로, 자동 분석을 켜 두면 상당수는 사후 보정됩니다. 급하지 않습니다.
 
-### (2) 분류 체계 다듬기
+### (2) 합성 벤치마크 결과로 기본 모델·프롬프트 결정
+
+`tests/benchmark/README.md`의 실행기로 0.6B·1.7B·4B·8B를 집 PC에서 돌린 뒤
+`model_summary.csv`와 문서별 JSON을 비교합니다. 특히 OCR 3편의 처리 시간,
+`critical_negations` 보존, `forbidden_hits`를 우선 봅니다. 결과 파일은 Git에
+올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만 문서화하세요.
+
+### (3) 분류 체계 다듬기
 
 `paper_organizer/models/taxonomy.json`에 학과 20개와 세부 전공이 들어 있습니다.
 실제로 쓰다 보면 본인 분야가 잘 안 잡히는 경우가 나올 텐데, 그때는 해당 분야의

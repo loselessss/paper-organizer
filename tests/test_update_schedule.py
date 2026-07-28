@@ -29,6 +29,14 @@ class UpdateCheckScheduleTests(unittest.TestCase):
 
             self.assertTrue(schedule.is_due(now))
 
+    def test_skipped_version_is_persisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            schedule = UpdateCheckSchedule(path)
+            schedule.skip_version("1.4.0")
+            self.assertTrue(schedule.is_skipped("1.4.0"))
+            self.assertFalse(schedule.is_skipped("1.4.1"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,9 @@ class PaperOrganizerWindow(QMainWindow):
                     immediate_count=count
                 )
             )
+            self.collection_widget.library_requested.connect(
+                self._open_queue_item_in_library
+            )
             collect_split = QSplitter(Qt.Horizontal)
             collect_split.addWidget(self.collection_widget)
             collect_split.addWidget(self.queue_widget)
@@ -442,9 +445,10 @@ class PaperOrganizerWindow(QMainWindow):
             if self._lifecycle.settings().close_behavior == "quit":
                 self._tray.hide()
             elif QSystemTrayIcon.isSystemTrayAvailable():
-                self._tray.show()
+                self._show_tray()
 
     def _create_system_tray(self) -> None:
+        self._dispose_tray()
         icon = QIcon(str(app_icon_path()))
         tray = QSystemTrayIcon(icon, self)
         tray.setToolTip("Paper Organizer")
@@ -457,6 +461,24 @@ class PaperOrganizerWindow(QMainWindow):
         tray.setContextMenu(menu)
         tray.activated.connect(self._tray_activated)
         self._tray = tray
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._dispose_tray)
+
+    def _show_tray(self) -> None:
+        if self._tray is not None and not self._tray.isVisible():
+            self._tray.show()
+
+    def _dispose_tray(self) -> None:
+        """Remove the native icon before window/process teardown to avoid ghosts."""
+
+        tray = self._tray
+        self._tray = None
+        if tray is None:
+            return
+        tray.hide()
+        tray.setContextMenu(None)
+        tray.deleteLater()
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -503,6 +525,8 @@ class PaperOrganizerWindow(QMainWindow):
                     f"현재 v{__version__}이 최신 버전입니다.",
                 )
             return
+        if not manual and self._update_schedule.is_skipped(update.version):
+            return
         self._available_update = update
         message = f"Paper Organizer {update.version} 업데이트가 있습니다."
         self.statusBar().showMessage(message, 10000)
@@ -537,7 +561,19 @@ class PaperOrganizerWindow(QMainWindow):
         self._available_update = None
         dialog = UpdateDialog(self._update_service, update, self)
         dialog.install_requested.connect(self._update_downloaded)
+        dialog.skip_requested.connect(self._skip_update_version)
         dialog.exec_()
+
+    def _skip_update_version(self, version: str) -> None:
+        try:
+            self._update_schedule.skip_version(version)
+        except Exception as exc:
+            QMessageBox.warning(self, "업데이트 설정 저장 실패", str(exc))
+            return
+        self.statusBar().showMessage(
+            f"v{version} 자동 알림을 건너뜁니다. 수동 업데이트 확인은 계속 가능합니다.",
+            7000,
+        )
 
     def _update_downloaded(self, path: Path) -> None:
         self._pending_installer = path
@@ -578,7 +614,7 @@ class PaperOrganizerWindow(QMainWindow):
         if self.queue_widget is not None:
             self.queue_widget.shutdown_background_analysis()
         if self._tray is not None:
-            self._tray.hide()
+            self._dispose_tray()
         QApplication.instance().quit()
 
     def _quit_from_tray(self) -> None:
@@ -588,7 +624,7 @@ class PaperOrganizerWindow(QMainWindow):
             self._force_quit = False
             return
         if self._tray is not None:
-            self._tray.hide()
+            self._dispose_tray()
         QApplication.instance().quit()
 
     def start_in_background(self) -> bool:
@@ -599,7 +635,7 @@ class PaperOrganizerWindow(QMainWindow):
             or not QSystemTrayIcon.isSystemTrayAvailable()
         ):
             return False
-        self._tray.show()
+        self._show_tray()
         self.hide()
         return True
 
@@ -631,7 +667,7 @@ class PaperOrganizerWindow(QMainWindow):
             if self._tray is not None and QSystemTrayIcon.isSystemTrayAvailable():
                 event.ignore()
                 self.hide()
-                self._tray.show()
+                self._show_tray()
                 if not self._tray_message_shown:
                     self._tray.showMessage(
                         "Paper Organizer",
@@ -661,5 +697,5 @@ class PaperOrganizerWindow(QMainWindow):
             self._update_worker.requestInterruption()
             self._update_worker.wait(1000)
         if self._tray is not None:
-            self._tray.hide()
+            self._dispose_tray()
         super().closeEvent(event)

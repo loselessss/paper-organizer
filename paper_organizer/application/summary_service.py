@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable
@@ -12,6 +13,10 @@ from typing import Callable
 import fitz
 
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
+from paper_organizer.application.summary_preprocessing import (
+    PreprocessedDocument,
+    preprocess_paper_text,
+)
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 from paper_organizer.infra.settings import default_settings_path, load_settings
@@ -54,12 +59,16 @@ class SummaryPreview:
     sends_to_cloud: bool
     requires_cloud_consent: bool
     context_window: int | None = None
+    included_sections: tuple[str, ...] = ()
+    output_language: str = "ko"
+    summary_strategy: str = "direct"
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedSummary:
     preview: SummaryPreview
     document_text: str = field(repr=False)
+    section_contexts: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +86,9 @@ class SummaryExecution:
             "input_tokens": self.result.input_tokens,
             "output_tokens": self.result.output_tokens,
             "context_window": self.preview.context_window,
+            "included_sections": list(self.preview.included_sections),
+            "output_language": self.preview.output_language,
+            "summary_strategy": self.preview.summary_strategy,
         }
 
 
@@ -221,16 +233,24 @@ def _prepared_from_chunks(
     model = _selected_model(settings)
     if not model:
         raise SummaryPreparationError("요약 AI 모델을 먼저 선택하세요.")
-    text = _strip_reference_section(_clean_text("\n\n".join(chunks)))
-    if len(text) < MINIMUM_TEXT_CHARS:
+    page_texts = [
+        re.sub(r"^\[PDF PAGE \d+\]\s*\n?", "", chunk, count=1)
+        for chunk in chunks
+    ]
+    processed = preprocess_paper_text(
+        page_texts,
+        page_numbers=tuple(index + 1 for index in page_indexes),
+    )
+    full_text = processed.text
+    if len(full_text) < MINIMUM_TEXT_CHARS:
         raise SummaryPreparationError(
             "내장 OCR을 실행했지만 인식된 본문이 너무 적습니다."
         )
-    context_window = _adaptive_context_window(settings, model, len(text))
+    context_window = _adaptive_context_window(settings, model, len(full_text))
     max_chars = QUICK_MAX_CHARS if selected_mode is SummaryMode.QUICK else FULL_MAX_CHARS
     if context_window is not None:
         max_chars = min(max_chars, max(4_000, (context_window - CONTEXT_TOKEN_RESERVE) * 4))
-    text, truncated = _truncate_text(text, max_chars)
+    text, truncated = _truncate_section_context(processed, max_chars)
     sends_to_cloud = provider in {"openai", "anthropic"}
     preview = SummaryPreview(
         pdf_path=path,
@@ -238,15 +258,26 @@ def _prepared_from_chunks(
         provider=provider,
         model=model,
         page_count=page_count,
-        included_pdf_pages=tuple(index + 1 for index in page_indexes),
+        included_pdf_pages=processed.included_pdf_pages,
         character_count=len(text),
         estimated_input_tokens=math.ceil(len(text) / 4),
         truncated=truncated,
         sends_to_cloud=sends_to_cloud,
         requires_cloud_consent=sends_to_cloud and not settings.cloud_processing_consent,
         context_window=context_window,
+        included_sections=tuple(section.label for section in processed.sections),
+        output_language=settings.summary_language,
+        summary_strategy=(
+            "hierarchical"
+            if _uses_hierarchical_summary(settings, model)
+            else "direct"
+        ),
     )
-    return PreparedSummary(preview=preview, document_text=text)
+    return PreparedSummary(
+        preview=preview,
+        document_text=text,
+        section_contexts=_section_contexts(processed),
+    )
 
 
 def run_prepared_summary(
@@ -266,15 +297,97 @@ def run_prepared_summary(
         )
     provider = build_provider(settings, secret_store, http_client=http_client)
     consent = settings.cloud_processing_consent or allow_cloud_once
-    result = provider.summarize(
-        SummaryRequest(
-            document_text=prepared.document_text,
-            cloud_consent=consent,
-            prompt_version="paper-summary-v6",
-            allowed_categories=_allowed_categories(settings),
-            context_window=prepared.preview.context_window,
-        )
+    request_options = {
+        "cloud_consent": consent,
+        "allowed_categories": _allowed_categories(settings),
+        "context_window": prepared.preview.context_window,
+        "output_language": settings.summary_language,
+    }
+    hierarchical = (
+        prepared.preview.summary_strategy == "hierarchical"
+        and len(prepared.section_contexts) > 1
     )
+    request_options["advanced_analysis"] = not hierarchical
+    if hierarchical:
+        partial_options = dict(request_options)
+        partial_options["allowed_categories"] = ()
+        partials = [
+            provider.summarize(
+                SummaryRequest(
+                    document_text=context,
+                    max_output_tokens=900,
+                    prompt_version="paper-summary-v8-section",
+                    stage="section",
+                    **partial_options,
+                )
+            )
+            for context in prepared.section_contexts
+        ]
+        synthesis_text = _render_section_summaries(partials)
+        final_input = synthesis_text
+        result = provider.summarize(
+            SummaryRequest(
+                document_text=synthesis_text,
+                prompt_version="paper-summary-v8-hierarchical",
+                stage="synthesis",
+                **request_options,
+            )
+        )
+        input_tokens = _sum_optional_tokens(
+            [partial.input_tokens for partial in partials]
+            + [result.input_tokens]
+        )
+        output_tokens = _sum_optional_tokens(
+            [partial.output_tokens for partial in partials]
+            + [result.output_tokens]
+        )
+        result = replace(
+            result,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+    else:
+        final_input = prepared.document_text
+        result = provider.summarize(
+            SummaryRequest(
+                document_text=prepared.document_text,
+                prompt_version="paper-summary-v8-direct",
+                stage="direct",
+                **request_options,
+            )
+        )
+    if _title_needs_original_language_retry(
+        result.data.title, prepared.document_text
+    ):
+        retry = provider.summarize(
+            SummaryRequest(
+                document_text=final_input,
+                prompt_version="paper-summary-v8-title-retry",
+                stage="synthesis" if hierarchical else "direct",
+                title_retry=True,
+                **request_options,
+            )
+        )
+        result = replace(
+            retry,
+            input_tokens=_sum_optional_tokens(
+                [result.input_tokens, retry.input_tokens]
+            ),
+            output_tokens=_sum_optional_tokens(
+                [result.output_tokens, retry.output_tokens]
+            ),
+        )
+    if hierarchical and (result.data.contributions or result.data.limitations):
+        result = replace(
+            result,
+            data=replace(result.data, contributions=(), limitations=()),
+        )
+    normalized_summary = _paragraphize_summary(result.data.summary_ko)
+    if normalized_summary != result.data.summary_ko:
+        result = replace(
+            result,
+            data=replace(result.data, summary_ko=normalized_summary),
+        )
     return SummaryExecution(preview=prepared.preview, result=result)
 
 
@@ -296,9 +409,18 @@ def _allowed_categories(settings: AppSettings) -> tuple[str, ...]:
 def _selected_page_indexes(page_count: int, mode: SummaryMode) -> tuple[int, ...]:
     if mode is SummaryMode.FULL:
         return tuple(range(page_count))
-    front = list(range(min(page_count, 8)))
-    tail_start = max(8, page_count - 3)
-    return tuple(front + list(range(tail_start, page_count)))
+    if page_count <= 18:
+        return tuple(range(page_count))
+    front = list(range(6))
+    tail = list(range(page_count - 3, page_count))
+    interior_start = 6
+    interior_end = page_count - 4
+    span = interior_end - interior_start
+    sampled = [
+        round(interior_start + span * index / 8)
+        for index in range(9)
+    ]
+    return tuple(dict.fromkeys(front + sampled + tail))
 
 
 def _selected_model(settings: AppSettings) -> str:
@@ -309,6 +431,16 @@ def _selected_model(settings: AppSettings) -> str:
     return settings.anthropic_model.strip()
 
 
+def _model_parameters(model: str) -> float:
+    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", model.casefold())
+    return float(match.group(1)) if match else 0.0
+
+
+def _uses_hierarchical_summary(settings: AppSettings, model: str) -> bool:
+    parameters = _model_parameters(model)
+    return settings.summary_provider == "ollama" and 0 < parameters <= 4.0
+
+
 def _adaptive_context_window(
     settings: AppSettings, model: str, character_count: int
 ) -> int | None:
@@ -316,8 +448,7 @@ def _adaptive_context_window(
 
     if settings.summary_provider != "ollama":
         return None
-    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", model.casefold())
-    parameters = float(match.group(1)) if match else 0.0
+    parameters = _model_parameters(model)
     hardware = settings.hardware_profile
     try:
         memory_gb = float(hardware.get("memory_total_gb") or 0)
@@ -394,6 +525,148 @@ def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
     if len(text) <= max_chars:
         return text, False
     front = int(max_chars * 0.72)
-    marker = "\n\n[...중간 본문 생략...]\n\n"
+    marker = "\n\n[...context omitted...]\n\n"
     back = max_chars - front - len(marker)
     return text[:front] + marker + text[-back:], True
+
+
+def _truncate_section_context(
+    processed: PreprocessedDocument, max_chars: int
+) -> tuple[str, bool]:
+    """Keep evidence from every detected section when context must be shortened."""
+
+    if len(processed.text) <= max_chars:
+        return processed.text, False
+    prefix = ""
+    if processed.regex_facts:
+        prefix = (
+            "[REGEX-VALIDATED CANDIDATES]\n"
+            + "\n".join(processed.regex_facts)
+            + "\n\n"
+        )
+    section_count = max(1, len(processed.sections))
+    header_chars = sum(
+        len(
+            f"[SECTION: {section.label} | PDF PAGES: "
+            f"{','.join(str(page) for page in section.pdf_pages)}]\n\n"
+        )
+        for section in processed.sections
+    )
+    available = max(0, max_chars - len(prefix) - header_chars)
+    per_section = max(256, available // section_count)
+    blocks: list[str] = []
+    for section in processed.sections:
+        pages = ",".join(str(page) for page in section.pdf_pages)
+        header = f"[SECTION: {section.label} | PDF PAGES: {pages}]"
+        used = 0
+        paragraphs: list[str] = []
+        for index, paragraph in enumerate(section.paragraphs, 1):
+            block = f"[PARAGRAPH {index}]\n{paragraph}"
+            if paragraphs and used + len(block) + 2 > per_section:
+                break
+            if not paragraphs and len(block) > per_section:
+                block = block[:per_section].rstrip() + "\n[...section context omitted...]"
+            paragraphs.append(block)
+            used += len(block) + 2
+        blocks.append(header + "\n\n" + "\n\n".join(paragraphs))
+    text = prefix + "\n\n".join(blocks)
+    return text[:max_chars].rstrip(), True
+
+
+def _paragraphize_summary(value: str) -> str:
+    """Normalize model prose into UI-friendly paragraphs after JSON validation."""
+
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    existing = [
+        " ".join(paragraph.split())
+        for paragraph in re.split(r"\n\s*\n", normalized)
+        if paragraph.strip()
+    ]
+    if len(existing) > 1:
+        return "\n\n".join(existing)
+    lines = [" ".join(line.split()) for line in normalized.splitlines() if line.strip()]
+    if len(lines) > 1:
+        return "\n\n".join(lines)
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(
+            r"(?<=[.!?])\s+(?=[A-Z0-9가-힣])",
+            normalized,
+        )
+        if sentence.strip()
+    ]
+    if len(sentences) < 4:
+        return normalized
+    paragraph_count = min(4, max(2, math.ceil(len(sentences) / 2)))
+    paragraphs: list[str] = []
+    start = 0
+    for remaining_groups in range(paragraph_count, 0, -1):
+        remaining_sentences = len(sentences) - start
+        take = math.ceil(remaining_sentences / remaining_groups)
+        paragraphs.append(" ".join(sentences[start : start + take]))
+        start += take
+    return "\n\n".join(paragraphs)
+
+
+def _section_contexts(processed: PreprocessedDocument) -> tuple[str, ...]:
+    facts = ""
+    if processed.regex_facts:
+        facts = (
+            "[REGEX-VALIDATED CANDIDATES]\n"
+            + "\n".join(processed.regex_facts)
+            + "\n\n"
+        )
+    contexts: list[str] = []
+    for section in processed.sections:
+        pages = ",".join(str(page) for page in section.pdf_pages)
+        body = "\n\n".join(
+            f"[PARAGRAPH {index}]\n{paragraph}"
+            for index, paragraph in enumerate(section.paragraphs, 1)
+        )
+        prefix = facts if section.name == "front" else ""
+        context = (
+            prefix
+            + f"[SECTION: {section.label} | PDF PAGES: {pages}]\n\n"
+            + body
+        )
+        contexts.append(_truncate_text(context, 24_000)[0])
+    return tuple(contexts)
+
+
+def _render_section_summaries(results: list[SummaryResult]) -> str:
+    blocks: list[str] = []
+    for index, result in enumerate(results, 1):
+        blocks.append(
+            f"[SECTION EVIDENCE {index}]\n"
+            + json.dumps(
+                {
+                    "summary": result.data.summary_ko,
+                    "research_question": result.data.research_question,
+                    "methods": list(result.data.methods),
+                    "keywords": list(result.data.keywords),
+                    "title": result.data.title,
+                    "authors": list(result.data.authors),
+                    "year": result.data.year,
+                    "venue": result.data.venue,
+                    "meta_tags": list(result.data.meta_tags),
+                },
+                ensure_ascii=False,
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _sum_optional_tokens(values: list[int | None]) -> int | None:
+    present = [value for value in values if value is not None]
+    return sum(present) if present else None
+
+
+def _title_needs_original_language_retry(title: str, source_text: str) -> bool:
+    """Retry only a clear script mismatch; do not second-guess bilingual papers."""
+
+    normalized_title = title.strip()
+    if not normalized_title or not re.search(r"[가-힣]", normalized_title):
+        return False
+    source_hangul = len(re.findall(r"[가-힣]", source_text))
+    source_latin = len(re.findall(r"[A-Za-z]", source_text))
+    return source_latin >= 100 and source_hangul == 0

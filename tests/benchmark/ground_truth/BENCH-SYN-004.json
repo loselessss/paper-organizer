@@ -1,0 +1,58 @@
+{
+  "document_id": "BENCH-SYN-004",
+  "difficulty": "distractor",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "MpxR Cleaves a Periplasmic Fluorescent Reporter Independently of the Canonical Heat-Shock Regulators",
+  "authors": "Juno Bell, Arun Elsen, and Mira Wen | Fictional Membrane Protease Laboratory",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does MpxR cleave a periplasmic reporter, and is cleavage dependent on DnaK, DnaJ, sigma32, or FtsH?",
+  "methods": [
+    "Periplasmic fluorescent cleavage reporter",
+    "MpxR wild-type and Ser201Ala mutant",
+    "conditional regulator depletion",
+    "membrane fractionation",
+    "immunoblotting"
+  ],
+  "key_findings": [
+    "Wild-type MpxR increased cleavage 4.6-fold",
+    "Ser201Ala was inactive",
+    "DnaK, DnaJ, sigma32, and FtsH depletion did not materially reduce cleavage"
+  ],
+  "numeric_findings": [
+    "4.6-fold WT cleavage",
+    "1.1-fold S201A signal",
+    "less than 12% change after regulator depletion"
+  ],
+  "conclusion": "MpxR catalytic activity cleaves the reporter independently of the tested heat-shock regulators.",
+  "critical_negations": [
+    "The heat-shock regulators were not required",
+    "No phosphorylation assay was performed",
+    "The paper is not primarily about DnaK or sigma32"
+  ],
+  "forbidden_claims": [
+    "The study characterized DnaK phosphorylation",
+    "FtsH was the protease that cleaved the reporter",
+    "sigma32 activated MpxR",
+    "Surface plasmon resonance was used",
+    "The paper is a heat-shock review"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-004.pdf"
+  }
+}

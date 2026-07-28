@@ -42,6 +42,7 @@ class AppSettings:
     hardware_profile: dict[str, Any] = field(default_factory=dict)
     managed_ollama_models: list[str] = field(default_factory=list)
     summary_provider: str = "ollama"
+    summary_language: str = "ko"
     openai_model: str = "gpt-5.6"
     anthropic_model: str = "claude-sonnet-4-6"
     cloud_processing_consent: bool = False
@@ -49,6 +50,7 @@ class AppSettings:
     cloud_max_parallel_requests: int = 1
     cloud_monthly_budget_usd: float = 0.0
     last_update_check_at: str = ""
+    skipped_update_version: str = ""
     minimum_age_seconds: int = 30
     scan_interval_seconds: int = 300
 
@@ -118,10 +120,14 @@ class AppSettings:
             raise ValueError("managed_ollama_models must contain unique model names")
         if self.summary_provider not in {"ollama", "openai", "anthropic"}:
             raise ValueError("summary_provider must be ollama, openai or anthropic")
+        if self.summary_language not in {"ko", "source"}:
+            raise ValueError("summary_language must be ko or source")
         if not isinstance(self.cloud_processing_consent, bool):
             raise ValueError("cloud_processing_consent must be a boolean")
         if not isinstance(self.last_update_check_at, str):
             raise ValueError("last_update_check_at must be a string")
+        if not isinstance(self.skipped_update_version, str):
+            raise ValueError("skipped_update_version must be a string")
         if self.cloud_request_profile not in {
             "conservative",
             "standard",

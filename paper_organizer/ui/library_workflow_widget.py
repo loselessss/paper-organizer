@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from threading import Event
 
-from PyQt5.QtCore import QMimeData, Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QMimeData, QProcess, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QDrag
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QMenu,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -424,6 +425,7 @@ class CollectionReviewWidget(QWidget):
     queue_changed = pyqtSignal()
     papers_auto_organized = pyqtSignal(list)
     immediate_analysis_requested = pyqtSignal(int)
+    library_requested = pyqtSignal(str)
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
@@ -457,6 +459,8 @@ class CollectionReviewWidget(QWidget):
         self.table.setDefaultDropAction(Qt.CopyAction)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.cellDoubleClicked.connect(
             lambda row, _column: self._open_row(row)
         )
@@ -620,10 +624,41 @@ class CollectionReviewWidget(QWidget):
         if not 0 <= row < len(self._items):
             return
         item = self._items[row]
+        if (
+            item.duplicate is not None
+            and item.duplicate.match.kind.value == "exact_file"
+        ):
+            self.library_requested.emit(str(item.duplicate.sidecar_path))
+            return
         try:
             open_pdf(item.path, self)
         except Exception as exc:
             QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+
+    def _show_context_menu(self, position) -> None:
+        index = self.table.indexAt(position)
+        if index.isValid() and not self.table.item(index.row(), 0).isSelected():
+            self.table.clearSelection()
+            self.table.selectRow(index.row())
+        items = self._selected_items()
+        if not items:
+            return
+        menu = QMenu(self)
+        open_action = menu.addAction("새 PDF를 sPDF로 열기")
+        open_action.triggered.connect(self._open_selected)
+        if len(items) == 1 and items[0].duplicate is not None:
+            duplicate = items[0].duplicate
+            existing_action = menu.addAction("기존 라이브러리 분석 보기")
+            existing_action.setEnabled(duplicate.sidecar_path.is_file())
+            existing_action.triggered.connect(
+                lambda: self.library_requested.emit(str(duplicate.sidecar_path))
+            )
+        menu.addSeparator()
+        organize_action = menu.addAction("분석 큐로 보내기")
+        organize_action.triggered.connect(self._organize_selected)
+        trash_action = menu.addAction("제외 목록으로 보내기")
+        trash_action.triggered.connect(self._trash_selected)
+        menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def _organize_selected(self) -> None:
         items = self._selected_items()
@@ -835,6 +870,11 @@ class AnalysisQueueWidget(QWidget):
         self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.review_items_dropped.connect(self.review_items_dropped.emit)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.cellDoubleClicked.connect(
+            lambda _row, _column: self._show_selected_in_library()
+        )
         root.addWidget(self.table, 1)
         actions = QHBoxLayout()
         refresh_button = QPushButton("새로고침")
@@ -985,6 +1025,47 @@ class AnalysisQueueWidget(QWidget):
             if cell.column() == 0
         }
         return [item for item in self._items if item.queue_id in queue_ids]
+
+    def _show_selected_in_library(self) -> None:
+        item = self._selected()
+        if item is None or not Path(item.path).is_file():
+            return
+        self.library_requested.emit(item.path)
+
+    def _show_context_menu(self, position) -> None:
+        index = self.table.indexAt(position)
+        if index.isValid() and not self.table.item(index.row(), 0).isSelected():
+            self.table.clearSelection()
+            self.table.selectRow(index.row())
+        items = self._selected_items()
+        if not items:
+            return
+        menu = QMenu(self)
+        if len(items) == 1:
+            library_action = menu.addAction("라이브러리 분석 내용 보기")
+            library_action.setEnabled(Path(items[0].path).is_file())
+            library_action.triggered.connect(self._show_selected_in_library)
+            menu.addSeparator()
+        run_action = menu.addAction("선택 항목 바로 분석")
+        run_action.setEnabled(
+            any(
+                item.status in {"organized_pending_analysis", "failed"}
+                and Path(item.path).is_file()
+                for item in items
+            )
+        )
+        run_action.triggered.connect(self._run_selected_now)
+        retry_action = menu.addAction("실패 항목 다시 분석")
+        retry_action.setEnabled(any(item.status == "failed" for item in items))
+        retry_action.triggered.connect(self._retry_selected)
+        priority_action = menu.addAction(self.priority_button.text())
+        priority_action.setEnabled(any(item.status != "analyzing" for item in items))
+        priority_action.triggered.connect(self._toggle_priority)
+        menu.addSeparator()
+        remove_action = menu.addAction("선택 항목 큐에서 제외…")
+        remove_action.setEnabled(any(item.status != "analyzing" for item in items))
+        remove_action.triggered.connect(self._remove_selected)
+        menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def _retry_selected(self) -> None:
         failed = [item for item in self._selected_items() if item.status == "failed"]
@@ -1219,6 +1300,8 @@ class LibraryWidget(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.cellDoubleClicked.connect(
             lambda row, _column: self._open_row(row)
         )
@@ -1356,6 +1439,10 @@ class LibraryWidget(QWidget):
                 if queue_item
                 else status_labels.get(stored_status, "미등록")
             )
+            if str(
+                entry.record.get("analysis", {}).get("suggested_category") or ""
+            ).strip():
+                analysis_status += " · 분야 승인 필요"
             values = [
                 metadata.title,
                 source_text,
@@ -1365,7 +1452,9 @@ class LibraryWidget(QWidget):
                 analysis_status,
             ]
             for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.UserRole, str(entry.sidecar_path.resolve()))
+                self.table.setItem(row, column, cell)
         self.status_label.setText(f"라이브러리 문서 {len(self._entries)}개")
         self.reanalyze_all_button.setEnabled(bool(self._entries))
         if self._entries:
@@ -1384,12 +1473,27 @@ class LibraryWidget(QWidget):
 
     def _selected(self) -> LibraryEntry | None:
         row = self.table.currentRow()
-        return self._entries[row] if 0 <= row < len(self._entries) else None
+        cell = self.table.item(row, 0) if row >= 0 else None
+        path = str(cell.data(Qt.UserRole)) if cell is not None else ""
+        return next(
+            (
+                entry
+                for entry in self._entries
+                if str(entry.sidecar_path.resolve()) == path
+            ),
+            None,
+        )
 
     def _selected_entries(self) -> list[LibraryEntry]:
-        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        paths = {
+            str(cell.data(Qt.UserRole))
+            for cell in self.table.selectedItems()
+            if cell.column() == 0
+        }
         return [
-            self._entries[row] for row in rows if 0 <= row < len(self._entries)
+            entry
+            for entry in self._entries
+            if str(entry.sidecar_path.resolve()) in paths
         ]
 
     def select_path(self, path: str | Path) -> bool:
@@ -1426,6 +1530,16 @@ class LibraryWidget(QWidget):
                 ).strip()
             )
         )
+        suggestion = (
+            str(entry.record.get("analysis", {}).get("suggested_category") or "").strip()
+            if entry
+            else ""
+        )
+        self.approve_category_button.setText(
+            f"추천 분야 ‘{suggestion}’ 승인 후 재분석"
+            if suggestion
+            else "AI 추천 연구분야 없음"
+        )
         self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entries)
 
@@ -1454,7 +1568,12 @@ class LibraryWidget(QWidget):
             )
             return
         if summary:
-            sections.append(f"<h3>요약</h3><p>{esc(summary)}</p>")
+            summary_paragraphs = "".join(
+                f"<p>{esc(paragraph)}</p>"
+                for paragraph in str(summary).split("\n\n")
+                if paragraph.strip()
+            )
+            sections.append(f"<h3>요약</h3>{summary_paragraphs}")
         question = description.get("research_question") or ""
         if question:
             sections.append(f"<h3>연구 질문</h3><p>{esc(question)}</p>")
@@ -1591,11 +1710,63 @@ class LibraryWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "색인 저장 실패", str(exc))
             return
-        self._entries[self.table.currentRow()] = updated
         status = "PaperPack 메타데이터 저장 및 통합 인덱스 재생성을 완료했습니다."
         self.refresh()
         self.status_label.setText(status)
         self.metadata_changed.emit()
+
+    def _show_context_menu(self, position) -> None:
+        index = self.table.indexAt(position)
+        if index.isValid() and not self.table.item(index.row(), 0).isSelected():
+            self.table.clearSelection()
+            self.table.selectRow(index.row())
+        entries = self._selected_entries()
+        if not entries:
+            return
+        menu = QMenu(self)
+        open_action = menu.addAction("sPDF로 열기")
+        open_action.triggered.connect(self._open_selected)
+        explorer_action = menu.addAction("탐색기에서 열기")
+        explorer_action.triggered.connect(self._open_in_explorer)
+        menu.addSeparator()
+        reanalyze_action = menu.addAction("선택 논문 재요약")
+        reanalyze_action.triggered.connect(self._reanalyze_selected)
+        if len(entries) == 1:
+            suggestion = str(
+                entries[0].record.get("analysis", {}).get("suggested_category")
+                or ""
+            ).strip()
+            approve_action = menu.addAction(
+                f"AI 추천 연구분야 ‘{suggestion}’ 승인"
+                if suggestion
+                else "AI 추천 연구분야 없음"
+            )
+            approve_action.setEnabled(bool(suggestion))
+            approve_action.triggered.connect(self._approve_category)
+        menu.addSeparator()
+        delete_action = menu.addAction("선택 항목 완전 삭제…")
+        delete_action.triggered.connect(self._delete_selected)
+        menu.exec_(self.table.viewport().mapToGlobal(position))
+
+    def _open_in_explorer(self) -> None:
+        failures: list[str] = []
+        opened: set[Path] = set()
+        for entry in self._selected_entries():
+            target = entry.sidecar_path.resolve()
+            if target in opened:
+                continue
+            opened.add(target)
+            if not target.exists():
+                failures.append(f"{entry.metadata.title}: 파일이 없습니다.")
+                continue
+            if not QProcess.startDetached(
+                "explorer.exe", ["/select,", str(target)]
+            ):
+                failures.append(f"{entry.metadata.title}: 탐색기를 열지 못했습니다.")
+        if failures:
+            QMessageBox.warning(
+                self, "탐색기 열기 실패", "\n".join(failures[:10])
+            )
 
     def _delete_selected(self) -> None:
         entries = self._selected_entries()

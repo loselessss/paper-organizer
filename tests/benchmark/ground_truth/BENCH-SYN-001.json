@@ -1,0 +1,58 @@
+{
+  "document_id": "BENCH-SYN-001",
+  "difficulty": "normal",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "High-Salt Binding Buffer Reduces DnaK Co-Elution During Nickel Affinity Purification of a Recombinant Collagen-Like Protein",
+  "authors": "Mina Vale, Theo Karst, and Liora Senn | Institute for Synthetic Bioprocess Benchmarks",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does increasing NaCl from 300 to 500 mM reduce DnaK co-elution during Ni-NTA purification of His10-ColX3 without a major loss of target recovery?",
+  "methods": [
+    "E. coli expression at 16 C",
+    "Ni-NTA affinity chromatography",
+    "300 vs 500 mM NaCl comparison",
+    "SDS-PAGE densitometry",
+    "ATP/Mg2+ pretreatment"
+  ],
+  "key_findings": [
+    "500 mM NaCl reduced the DnaK-to-ColX3 ratio 2.7-fold",
+    "ColX3 recovery decreased modestly from 5.6 to 5.1 mg/L",
+    "ATP/Mg2+ did not improve purity beyond high salt alone"
+  ],
+  "numeric_findings": [
+    "DnaK/ColX3 ratio: 0.62 to 0.23",
+    "ColX3 yield: 5.6 to 5.1 mg/L",
+    "ATP/Mg2+ ratio: 0.21"
+  ],
+  "conclusion": "High-salt binding improved purity with a modest recovery cost; ATP/Mg2+ added no measurable benefit.",
+  "critical_negations": [
+    "ATP-Mg2+ did not further improve purity",
+    "DnaK was not completely removed",
+    "DnaK phosphorylation was not measured"
+  ],
+  "forbidden_claims": [
+    "The target protein was DnaK",
+    "High salt increased ColX3 yield",
+    "ATP completely removed DnaK",
+    "DnaK phosphorylation caused the effect",
+    "Size-exclusion chromatography was used"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-001.pdf"
+  }
+}

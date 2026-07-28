@@ -1,0 +1,56 @@
+{
+  "document_id": "BENCH-SYN-007",
+  "difficulty": "ocr_moderate",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "Low-Temperature Induction Reduces Inclusion-Body Formation of SynLig-B Without Changing Total Expression",
+  "authors": "Ari Kess, Hana Miro, and Zoe Lorn | Synthetic Expression Archive",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does low-temperature induction improve SynLig-B solubility, and is the improvement due to greater total expression?",
+  "methods": [
+    "0.1 mM IPTG induction",
+    "30 C for 6 h vs 16 C for 18 h",
+    "sonication and fractionation",
+    "SDS-PAGE quantification"
+  ],
+  "key_findings": [
+    "Soluble fraction increased from 18% to 57%",
+    "Soluble yield increased from 1.9 to 5.8 mg/L",
+    "Total expression remained about 10 mg/L"
+  ],
+  "numeric_findings": [
+    "10.4 vs 10.1 mg/L total",
+    "18% vs 57% soluble fraction",
+    "1.9 vs 5.8 mg/L soluble yield"
+  ],
+  "conclusion": "Low temperature improved partitioning into the soluble fraction rather than total expression.",
+  "critical_negations": [
+    "Total expression did not increase",
+    "Apparent molecular mass did not change",
+    "Temperature and duration both changed"
+  ],
+  "forbidden_claims": [
+    "Total SynLig-B expression tripled",
+    "The 16 C sample was induced for 6 h",
+    "DnaK binding was measured",
+    "The molecular mass decreased"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-007.pdf"
+  }
+}

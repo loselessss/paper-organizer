@@ -1,0 +1,58 @@
+{
+  "document_id": "BENCH-SYN-005",
+  "difficulty": "distractor",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "Trehalose Preserves Soluble LmOx During Repeated Freeze-Thaw Cycles Without Increasing Catalytic Turnover",
+  "authors": "Celia Yara, Bram Cole, and Nia Fenn | Synthetic Formulation Laboratory",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does trehalose preserve soluble LmOx during repeated freeze-thaw cycles, and does it change specific activity?",
+  "methods": [
+    "0-20% trehalose",
+    "five freeze-thaw cycles",
+    "-80 C freeze and 20 C thaw",
+    "soluble protein recovery",
+    "specific activity assay"
+  ],
+  "key_findings": [
+    "10% trehalose preserved 84% soluble LmOx versus 41% without trehalose",
+    "Specific activity remained 118-123 U/mg and did not increase",
+    "10% was the lowest concentration at the recovery plateau"
+  ],
+  "numeric_findings": [
+    "41%, 68%, 84%, and 82% recovery",
+    "118-123 U/mg specific activity"
+  ],
+  "conclusion": "Trehalose improved physical recovery, not catalytic turnover.",
+  "critical_negations": [
+    "Specific activity did not increase",
+    "Sucrose was not tested",
+    "pH 6.0 was not tested",
+    "30 C thawing was not tested"
+  ],
+  "forbidden_claims": [
+    "Trehalose activated LmOx",
+    "Sucrose was superior to trehalose",
+    "The experiment was performed at pH 6.0",
+    "Samples were thawed at 30 C",
+    "20% trehalose doubled turnover"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-005.pdf"
+  }
+}

@@ -83,6 +83,7 @@ class _UpdateDownloadWorker(QThread):
 
 class UpdateDialog(QDialog):
     install_requested = pyqtSignal(object)
+    skip_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -123,6 +124,13 @@ class UpdateDialog(QDialog):
         self.notes.setOpenExternalLinks(False)
         self.notes.setPlainText(update.release_notes or "변경 기록이 없습니다.")
         layout.addWidget(self.notes, 1)
+        choice_note = QLabel(
+            "설치파일은 한 버전 전체 단위입니다. 지금 설치하거나, 나중에 다시 "
+            "알림을 받거나, 이 버전만 건너뛸 수 있습니다."
+        )
+        choice_note.setWordWrap(True)
+        choice_note.setStyleSheet("color: #666;")
+        layout.addWidget(choice_note)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -143,6 +151,9 @@ class UpdateDialog(QDialog):
         self.buttons.addButton(
             self.release_button, QDialogButtonBox.ActionRole
         )
+        self.skip_button = QPushButton("이 버전 건너뛰기")
+        self.skip_button.clicked.connect(self._skip_version)
+        self.buttons.addButton(self.skip_button, QDialogButtonBox.ActionRole)
         self.install_button = QPushButton("다운로드 후 설치")
         self.install_button.clicked.connect(self._start_download)
         self.buttons.addButton(
@@ -162,11 +173,23 @@ class UpdateDialog(QDialog):
                 "설치파일 무결성 정보가 없어 앱 안에서는 자동 설치하지 않습니다."
             )
 
+    def _skip_version(self) -> None:
+        if QMessageBox.question(
+            self,
+            "업데이트 건너뛰기",
+            f"v{self._update.version} 알림을 더 이상 자동으로 표시하지 않을까요?\n"
+            "‘업데이트 확인’ 메뉴에서는 언제든 다시 확인할 수 있습니다.",
+        ) != QMessageBox.Yes:
+            return
+        self.skip_requested.emit(self._update.version)
+        self.accept()
+
     def _start_download(self) -> None:
         if self._worker is not None:
             return
         self.install_button.setEnabled(False)
         self.release_button.setEnabled(False)
+        self.skip_button.setEnabled(False)
         self.progress_bar.show()
         self.status_label.setText("업데이트 설치파일을 다운로드하는 중입니다…")
         worker = _UpdateDownloadWorker(self._service, self._update, self)
@@ -218,6 +241,7 @@ class UpdateDialog(QDialog):
         if worker is not None:
             worker.deleteLater()
         self.release_button.setEnabled(True)
+        self.skip_button.setEnabled(True)
         if self._update.asset is not None and self._update.asset.sha256:
             self.install_button.setEnabled(True)
 

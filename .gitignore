@@ -22,3 +22,4 @@ Output/
 .paper-organizer/
 library/
 trash/
+tests/benchmark/results*/

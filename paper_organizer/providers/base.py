@@ -85,8 +85,12 @@ SEARCH_ANSWER_SCHEMA: dict[str, Any] = {
 }
 
 SYSTEM_INSTRUCTIONS = (
-    "You analyze academic papers. Use only the supplied document text. "
-    "Return Korean prose for summary_ko and preserve technical names accurately. "
+    "You analyze academic papers from section-labeled paragraph context. "
+    "Use only the supplied document text. Keep Introduction, Materials and Methods, "
+    "Results, and Discussion claims distinct. Treat REGEX-VALIDATED CANDIDATES as "
+    "candidates that must still agree with the paper. Write summary_ko as three to "
+    "five short paragraphs separated by blank lines, not as one wall of text. "
+    "Preserve technical names accurately. "
     "If evidence is missing, use an empty string or empty list instead of guessing. "
     "Also correct the bibliography from the document: title is the paper's own "
     "title, authors are the listed authors, year is the four-digit publication "
@@ -156,9 +160,13 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v6"
+    prompt_version: str = "paper-summary-v8-direct"
     allowed_categories: tuple[str, ...] = ()
     context_window: int | None = None
+    output_language: str = "ko"
+    stage: str = "direct"
+    title_retry: bool = False
+    advanced_analysis: bool = True
 
     def validate(self) -> None:
         if not self.document_text.strip():
@@ -170,6 +178,14 @@ class SummaryRequest:
             and not 4_096 <= self.context_window <= 262_144
         ):
             raise ValueError("context_window must be between 4096 and 262144")
+        if self.output_language not in {"ko", "source"}:
+            raise ValueError("output_language must be ko or source")
+        if self.stage not in {"direct", "section", "synthesis"}:
+            raise ValueError("stage must be direct, section or synthesis")
+        if not isinstance(self.title_retry, bool):
+            raise ValueError("title_retry must be a boolean")
+        if not isinstance(self.advanced_analysis, bool):
+            raise ValueError("advanced_analysis must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,11 +350,49 @@ class SearchAnswerResult:
 def system_instructions(request: SummaryRequest) -> str:
     """Append the caller's category list so the model picks from it."""
 
+    language = (
+        "Translate the explanatory fields, including summary_ko, research_question, "
+        "methods, contributions, and limitations, into natural Korean. Keep established "
+        "technical names in their source form where translation would reduce precision."
+        if request.output_language == "ko"
+        else "Keep the explanatory fields, including summary_ko, research_question, "
+        "methods, contributions, and limitations, in the paper's original language. "
+        "For an English paper, do not translate them into Korean."
+    )
+    stage = ""
+    if request.stage == "section":
+        stage = (
+            " This is an intermediate pass over exactly one labeled paper section. "
+            "Extract concise evidence from only that section. Keep numeric values and "
+            "negations exact. Do not infer facts from other sections. Use empty values "
+            "for bibliography or classification fields not visible in this section."
+        )
+    elif request.stage == "synthesis":
+        stage = (
+            " This is the final pass over JSON evidence summaries produced independently "
+            "from paper sections. Reconcile them into one coherent paper summary. Preserve "
+            "numeric values and negations, distinguish results from discussion, and never "
+            "invent details omitted by every section summary."
+        )
+    retry = (
+        " The previous response incorrectly translated or rewrote the paper title. "
+        "Retry the complete JSON response, but copy title character-for-character "
+        "from the source evidence in its original language. An English source title "
+        "must contain no Korean translation."
+        if request.title_retry
+        else ""
+    )
+    analysis_scope = (
+        ""
+        if request.advanced_analysis
+        else " Do not infer contributions or limitations; return empty arrays for both."
+    )
     allowed = [name.strip() for name in request.allowed_categories if name.strip()]
     if not allowed:
-        return SYSTEM_INSTRUCTIONS
+        return f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{analysis_scope}"
     return (
-        f"{SYSTEM_INSTRUCTIONS} Choose category from exactly this list: "
+        f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{analysis_scope} "
+        "Choose category from exactly this list: "
         f"{', '.join(allowed)}. If one fits, return it in category and return "
         "an empty suggested_category. If none fits, return empty category and "
         "subcategory strings and propose one concise Korean university "

@@ -1,0 +1,56 @@
+{
+  "document_id": "BENCH-SYN-008",
+  "difficulty": "ocr_severe",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "Batch-Binding Time from 5 to 60 Minutes Does Not Limit Capture of His-CasP from Clarified Lysate",
+  "authors": "Uma Bren, Rafi Vale, and Tess Orin | Simulated Downstream Processing Group",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does extending Ni-resin batch-binding time from 5 to 60 min improve His-CasP capture, and is resin capacity a separate limitation?",
+  "methods": [
+    "1.0 mL nickel slurry",
+    "5, 20, and 60 min batch mixing",
+    "0.25 mL low-resin control",
+    "densitometry of bound and flow-through fractions"
+  ],
+  "key_findings": [
+    "Bound recovery was 73-75% at all standard binding times",
+    "Extending time did not improve capture",
+    "Low resin reduced recovery to 38% and increased flow-through to 45%"
+  ],
+  "numeric_findings": [
+    "73%, 75%, 74% recovery at 5, 20, 60 min",
+    "38% recovery with 0.25 mL slurry",
+    "45% flow-through with low resin"
+  ],
+  "conclusion": "Five minutes was sufficient at the standard resin amount; resin capacity, not contact time, limited the low-resin condition.",
+  "critical_negations": [
+    "Longer binding did not improve recovery",
+    "The study did not test less than 5 min",
+    "The low-resin result should not be attributed to short contact time"
+  ],
+  "forbidden_claims": [
+    "60 min gave the highest meaningful recovery",
+    "Binding kinetics required one hour",
+    "The low-resin group used 5 min",
+    "Phosphate incorporation was measured"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-008.pdf"
+  }
+}

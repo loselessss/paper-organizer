@@ -1,0 +1,69 @@
+{
+  "name": "Synthetic Scientific Paper Summary Benchmark",
+  "version": "1.0",
+  "documents": [
+    {
+      "document_id": "BENCH-SYN-001",
+      "difficulty": "normal",
+      "title": "High-Salt Binding Buffer Reduces DnaK Co-Elution During Nickel Affinity Purification of a Recombinant Collagen-Like Protein",
+      "pdf": "pdfs/BENCH-SYN-001.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-001.json"
+    },
+    {
+      "document_id": "BENCH-SYN-002",
+      "difficulty": "normal",
+      "title": "A Transient Alkaline Shift Reversibly Increases Association of the Chaperone ChpA with Heat-Damaged Lysozyme",
+      "pdf": "pdfs/BENCH-SYN-002.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-002.json"
+    },
+    {
+      "document_id": "BENCH-SYN-003",
+      "difficulty": "normal",
+      "title": "Scale-Up of Soluble PhaZ Hydrolase Production from 2-L to 30-L Fermentation Using Fixed Aeration and Agitation",
+      "pdf": "pdfs/BENCH-SYN-003.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-003.json"
+    },
+    {
+      "document_id": "BENCH-SYN-004",
+      "difficulty": "distractor",
+      "title": "MpxR Cleaves a Periplasmic Fluorescent Reporter Independently of the Canonical Heat-Shock Regulators",
+      "pdf": "pdfs/BENCH-SYN-004.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-004.json"
+    },
+    {
+      "document_id": "BENCH-SYN-005",
+      "difficulty": "distractor",
+      "title": "Trehalose Preserves Soluble LmOx During Repeated Freeze-Thaw Cycles Without Increasing Catalytic Turnover",
+      "pdf": "pdfs/BENCH-SYN-005.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-005.json"
+    },
+    {
+      "document_id": "BENCH-SYN-006",
+      "difficulty": "distractor",
+      "title": "Co-Expression of PdxJ Increases Soluble EnzQ Production Without Detectable Binding to Purified EnzQ",
+      "pdf": "pdfs/BENCH-SYN-006.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-006.json"
+    },
+    {
+      "document_id": "BENCH-SYN-007",
+      "difficulty": "ocr_moderate",
+      "title": "Low-Temperature Induction Reduces Inclusion-Body Formation of SynLig-B Without Changing Total Expression",
+      "pdf": "pdfs/BENCH-SYN-007.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-007.json"
+    },
+    {
+      "document_id": "BENCH-SYN-008",
+      "difficulty": "ocr_severe",
+      "title": "Batch-Binding Time from 5 to 60 Minutes Does Not Limit Capture of His-CasP from Clarified Lysate",
+      "pdf": "pdfs/BENCH-SYN-008.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-008.json"
+    },
+    {
+      "document_id": "BENCH-SYN-009",
+      "difficulty": "ocr_mixed",
+      "title": "ATP Selectively Releases ClpH, but Not GroX, from a Heat-Damaged Casein Matrix",
+      "pdf": "pdfs/BENCH-SYN-009.pdf",
+      "ground_truth": "ground_truth/BENCH-SYN-009.json"
+    }
+  ]
+}

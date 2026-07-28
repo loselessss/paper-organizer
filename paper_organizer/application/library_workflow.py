@@ -1497,10 +1497,11 @@ class LibraryWorkflowController:
             "summary_ko": data.summary_ko,
             "research_question": data.research_question,
             "methods": list(data.methods),
-            "contributions": list(data.contributions),
-            "limitations": list(data.limitations),
             "keywords": list(data.keywords),
         }
+        if execution.preview.summary_strategy != "hierarchical":
+            values["contributions"] = list(data.contributions)
+            values["limitations"] = list(data.limitations)
         for name, value in values.items():
             field = f"description.{name}"
             current_source = str(sources.get(field) or "")

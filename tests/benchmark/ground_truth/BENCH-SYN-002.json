@@ -1,0 +1,57 @@
+{
+  "document_id": "BENCH-SYN-002",
+  "difficulty": "normal",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "A Transient Alkaline Shift Reversibly Increases Association of the Chaperone ChpA with Heat-Damaged Lysozyme",
+  "authors": "Elias Orin and Priya Daro | Center for Synthetic Stress Biology",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does a transient alkaline shift reversibly increase ChpA binding to heat-damaged lysozyme?",
+  "methods": [
+    "Heat-damaged lysozyme affinity resin",
+    "pH 7.2, 8.0, and 8.5 comparison",
+    "ATP/Mg2+ elution",
+    "time-course after return to pH 7.2",
+    "immunoblot quantification"
+  ],
+  "key_findings": [
+    "Binding increased 3.2-fold at pH 8.5",
+    "Binding returned to 1.1-fold after 20 min at pH 7.2",
+    "Total ChpA changed by less than 6%"
+  ],
+  "numeric_findings": [
+    "1.7-fold at pH 8.0",
+    "3.2-fold at pH 8.5",
+    "1.1-fold after 20 min recovery"
+  ],
+  "conclusion": "The alkaline shift caused a reversible increase in ChpA binding capacity without changing abundance.",
+  "critical_negations": [
+    "Phosphorylation was not assessed",
+    "Total ChpA did not materially increase",
+    "Native lysozyme showed low binding"
+  ],
+  "forbidden_claims": [
+    "ChpA phosphorylation caused binding",
+    "ChpA expression increased 3.2-fold",
+    "The effect was irreversible",
+    "Surface plasmon resonance was used"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-002.pdf"
+  }
+}

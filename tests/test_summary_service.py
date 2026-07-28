@@ -14,6 +14,8 @@ from paper_organizer.application.summary_service import (
     prepare_summary,
     prepare_text_summary,
     run_prepared_summary,
+    _paragraphize_summary,
+    _title_needs_original_language_retry,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError
@@ -26,7 +28,7 @@ SUMMARY = {
     "contributions": ["시험 기여"],
     "limitations": ["시험 한계"],
     "keywords": ["시험"],
-    "title": "시험 제목",
+    "title": "Test Paper Title",
     "authors": ["시험 저자"],
     "year": "2026",
     "venue": "시험 저널",
@@ -54,6 +56,12 @@ class FakeHttpClient:
 
     def post_json(self, url, headers, payload, timeout_seconds):
         self.calls.append({"url": url, "headers": headers, "payload": payload})
+        if url.endswith("/api/chat"):
+            return {
+                "message": {"content": json.dumps(SUMMARY)},
+                "prompt_eval_count": 100,
+                "eval_count": 20,
+            }
         return {
             "output": [
                 {
@@ -81,6 +89,137 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_translated_korean_title_is_retried_for_english_source(self):
+        self.assertTrue(
+            _title_needs_original_language_retry(
+                "번역된 논문 제목",
+                "English scientific source text. " * 20,
+            )
+        )
+        self.assertFalse(
+            _title_needs_original_language_retry(
+                "한국어 논문 제목",
+                "한국어 원문입니다. " * 20,
+            )
+        )
+
+    def test_title_script_mismatch_retries_final_json_once(self):
+        first = dict(SUMMARY, title="번역된 논문 제목")
+        corrected = dict(SUMMARY, title="An Original English Title")
+
+        class SequenceClient:
+            def __init__(self):
+                self.calls = []
+                self.responses = [first, corrected]
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append({"url": url, "headers": headers, "payload": payload})
+                value = self.responses.pop(0)
+                return {
+                    "message": {"content": json.dumps(value)},
+                    "prompt_eval_count": 10,
+                    "eval_count": 5,
+                }
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "An Original English Title\nA. Author\nSynthetic Journal\n"
+                "Introduction\n" + "English scientific evidence. " * 40,
+            ],
+            settings,
+        )
+        client = SequenceClient()
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+        self.assertEqual(len(client.calls), 2)
+        self.assertIn(
+            "previous response incorrectly translated",
+            client.calls[1]["payload"]["messages"][0]["content"].casefold(),
+        )
+        self.assertEqual(execution.result.data.title, "An Original English Title")
+
+    def test_small_ollama_model_uses_section_then_synthesis_and_hides_advanced_fields(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:4b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "An Original English Title\nA. Author\nSynthetic Journal\n"
+                "Abstract\n" + "Abstract evidence. " * 40,
+                "Introduction\n" + "Question evidence. " * 40,
+                "Materials and Methods\n" + "Method evidence. " * 40,
+                "Results\n" + "Result evidence. " * 40,
+                "Discussion\n" + "Discussion evidence. " * 40,
+            ],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = FakeHttpClient()
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
+        self.assertEqual(
+            len(client.calls), len(prepared.section_contexts) + 1
+        )
+        self.assertIn(
+            "intermediate pass",
+            client.calls[0]["payload"]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "final pass",
+            client.calls[-1]["payload"]["messages"][0]["content"],
+        )
+        self.assertEqual(execution.result.data.contributions, ())
+        self.assertEqual(execution.result.data.limitations, ())
+
+    def test_8b_ollama_model_uses_one_pass_and_keeps_advanced_fields(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\n" + "Scientific evidence. " * 40],
+            settings,
+        )
+        client = FakeHttpClient()
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+        self.assertEqual(prepared.preview.summary_strategy, "direct")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(execution.result.data.contributions, ("시험 기여",))
+        self.assertEqual(execution.result.data.limitations, ("시험 한계",))
+
+    def test_single_block_summary_is_split_into_readable_paragraphs(self):
+        value = (
+            "First finding was observed. Second finding was measured. "
+            "Third finding was reproduced. The study has one limitation. "
+            "The conclusion follows from the results."
+        )
+        normalized = _paragraphize_summary(value)
+        self.assertGreaterEqual(normalized.count("\n\n"), 1)
+        self.assertEqual(normalized.replace("\n\n", " "), value)
+
     def test_immediate_local_summary_starts_ollama_before_request(self):
         with tempfile.TemporaryDirectory() as temp:
             settings_path = Path(temp) / "settings.json"
@@ -148,7 +287,7 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             prepared.preview.included_pdf_pages,
-            (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12),
+            (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12),
         )
         self.assertTrue(prepared.preview.sends_to_cloud)
         self.assertTrue(prepared.preview.requires_cloud_consent)
@@ -188,6 +327,29 @@ class SummaryServiceTests(unittest.TestCase):
             prepared.preview.estimated_input_tokens,
             24_576 - 3_000,
         )
+
+    def test_truncation_keeps_each_scientific_section(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:4b",
+            hardware_profile={"memory_total_gb": 8, "gpus": []},
+        )
+        pages = [
+            "Introduction\n" + "Intro evidence. " * 3_000,
+            "Materials and Methods\n" + "Method evidence. " * 3_000,
+            "Results\n" + "Result evidence. " * 3_000,
+            "Discussion\n" + "Discussion evidence. " * 3_000,
+        ]
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"), pages, settings, SummaryMode.FULL
+        )
+        for heading in (
+            "Introduction",
+            "Materials and Methods",
+            "Results",
+            "Discussion",
+        ):
+            self.assertIn(f"[SECTION: {heading}", prepared.document_text)
 
     def test_qwen_8b_performance_uses_40k_context_when_hardware_allows(self):
         settings = AppSettings(
@@ -300,6 +462,32 @@ class SummaryServiceTests(unittest.TestCase):
         instructions = client.calls[0]["payload"]["instructions"]
         self.assertIn("Choose category from exactly this list: 고문서과학", instructions)
         self.assertNotIn("균류생태학, 고문서과학", instructions)
+
+    def test_source_language_setting_is_sent_to_provider(self):
+        settings = AppSettings(
+            summary_provider="openai",
+            openai_model="gpt-test",
+            cloud_processing_consent=True,
+            summary_language="source",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic content and evidence. " * 30],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = FakeHttpClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        instructions = client.calls[0]["payload"]["instructions"]
+        self.assertIn("paper's original language", instructions)
+        self.assertEqual(execution.provenance["output_language"], "source")
 
     def test_provider_change_requires_new_preview(self):
         with tempfile.TemporaryDirectory() as temp:

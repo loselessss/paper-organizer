@@ -69,6 +69,9 @@ class AiSettingsDialog(QDialog):
         key_layout.addWidget(self.key_delete_button)
 
         self.consent_check = QCheckBox("이 제공자로 논문 텍스트 전송을 계속 허용")
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("한국어로 번역", "ko")
+        self.language_combo.addItem("논문 원문 언어 유지", "source")
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("보수적", "conservative")
         self.profile_combo.addItem("표준", "standard")
@@ -86,6 +89,7 @@ class AiSettingsDialog(QDialog):
         form.addRow("키 상태", self.key_status)
         form.addRow("API 키", key_buttons)
         form.addRow("클라우드 동의", self.consent_check)
+        form.addRow("요약 출력 언어", self.language_combo)
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
         form.addRow("월간 앱 비용 한도", self.budget_spin)
@@ -175,6 +179,8 @@ class AiSettingsDialog(QDialog):
         self.provider_combo.blockSignals(False)
         self.model_edit.setText(view.model)
         self.consent_check.setChecked(view.cloud_processing_consent)
+        language_index = self.language_combo.findData(view.summary_language)
+        self.language_combo.setCurrentIndex(max(0, language_index))
         profile_index = self.profile_combo.findData(view.cloud_request_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         settings = self._controller.settings()
@@ -406,6 +412,7 @@ class AiSettingsDialog(QDialog):
                 cloud_max_parallel_requests=self.parallel_spin.value(),
                 cloud_monthly_budget_usd=self.budget_spin.value(),
                 model_profile=self.model_profile_combo.currentData(),
+                summary_language=self.language_combo.currentData(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "AI 설정 저장 실패", str(exc))

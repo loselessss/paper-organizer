@@ -1,0 +1,57 @@
+{
+  "document_id": "BENCH-SYN-006",
+  "difficulty": "distractor",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "Co-Expression of PdxJ Increases Soluble EnzQ Production Without Detectable Binding to Purified EnzQ",
+  "authors": "Lena Sato, Quinn Nyx, and Omar Bren | Model Protein Interaction Facility",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Does PdxJ co-expression increase soluble EnzQ, and do purified PdxJ and EnzQ form a stable complex?",
+  "methods": [
+    "co-expression in E. coli",
+    "nickel purification",
+    "nickel pull-down",
+    "size-exclusion chromatography",
+    "microscale thermophoresis"
+  ],
+  "key_findings": [
+    "Soluble EnzQ increased from 2.4 to 7.1 mg/L",
+    "Total expression increased only 1.2-fold",
+    "No stable binding was detected by three assays"
+  ],
+  "numeric_findings": [
+    "2.4 vs 7.1 mg/L soluble yield",
+    "3.0-fold increase",
+    "binding not detected up to 50 uM PdxJ"
+  ],
+  "conclusion": "PdxJ improves soluble production but does not remain stably bound to purified EnzQ under tested conditions.",
+  "critical_negations": [
+    "No stable complex was detected",
+    "A transient interaction was not demonstrated",
+    "Total expression did not increase threefold"
+  ],
+  "forbidden_claims": [
+    "PdxJ binds EnzQ with high affinity",
+    "SEC demonstrated a PdxJ-EnzQ complex",
+    "MST measured a finite Kd",
+    "PdxJ increased total expression threefold"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-006.pdf"
+  }
+}

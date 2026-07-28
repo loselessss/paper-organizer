@@ -82,6 +82,16 @@ class SettingsTests(unittest.TestCase):
     def test_background_analysis_is_enabled_by_default(self):
         self.assertTrue(AppSettings().background_analysis_enabled)
 
+    def test_summary_language_is_validated(self):
+        AppSettings(summary_language="ko").validate()
+        AppSettings(summary_language="source").validate()
+        with self.assertRaises(ValueError):
+            AppSettings(summary_language="automatic").validate()
+
+    def test_skipped_update_version_must_be_text(self):
+        with self.assertRaises(ValueError):
+            AppSettings(skipped_update_version=123).validate()
+
     def test_watch_folders_round_trip_and_legacy_input_remains_supported(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"

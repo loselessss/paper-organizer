@@ -167,11 +167,23 @@ class ImmediateSummaryWidget(QWidget):
             if preview.context_window is not None
             else ""
         )
+        sections = " · ".join(preview.included_sections) or "문서 본문"
+        language = (
+            "한국어 번역"
+            if preview.output_language == "ko"
+            else "원문 언어 유지"
+        )
+        strategy = (
+            "구역별 요약 → 전체 요약 (기여·한계 제외)"
+            if preview.summary_strategy == "hierarchical"
+            else "전체 구역 통합 요약"
+        )
         self.preview_label.setText(
             f"{destination}: {preview.provider} / {preview.model}\n"
             f"PDF {len(preview.included_pdf_pages)}쪽, {preview.character_count:,}자, "
             f"입력 약 {preview.estimated_input_tokens:,}토큰{context}{truncated}\n"
-            f"대상 페이지: {', '.join(map(str, preview.included_pdf_pages))}"
+            f"대상 페이지: {', '.join(map(str, preview.included_pdf_pages))}\n"
+            f"구역: {sections} · 출력: {language}\n방식: {strategy}"
         )
         self.consent_check.setVisible(preview.sends_to_cloud)
         self.consent_check.setEnabled(preview.requires_cloud_consent)
@@ -211,9 +223,14 @@ class ImmediateSummaryWidget(QWidget):
         bullets = lambda values: "".join(
             f"<li>{esc(value)}</li>" for value in values
         )
+        paragraphs = "".join(
+            f"<p>{esc(value)}</p>"
+            for value in data.summary_ko.split("\n\n")
+            if value.strip()
+        )
         self.output.setHtml(
             "<p><b>임시 분석</b> — 검토 전에는 파일 이동·정식 색인에 사용되지 않습니다.</p>"
-            f"<h3>요약</h3><p>{esc(data.summary_ko)}</p>"
+            f"<h3>요약</h3>{paragraphs}"
             f"<h3>연구 질문</h3><p>{esc(data.research_question)}</p>"
             f"<h3>방법</h3><ul>{bullets(data.methods)}</ul>"
             f"<h3>핵심 기여</h3><ul>{bullets(data.contributions)}</ul>"

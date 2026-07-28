@@ -43,3 +43,14 @@ class UpdateCheckSchedule:
         settings = load_settings(self._settings_path)
         settings.last_update_check_at = current.astimezone(timezone.utc).isoformat()
         save_settings(settings, self._settings_path)
+
+    def is_skipped(self, version: str) -> bool:
+        return load_settings(self._settings_path).skipped_update_version == version.strip()
+
+    def skip_version(self, version: str) -> None:
+        normalized = version.strip()
+        if not normalized:
+            raise ValueError("건너뛸 업데이트 버전이 비어 있습니다.")
+        settings = load_settings(self._settings_path)
+        settings.skipped_update_version = normalized
+        save_settings(settings, self._settings_path)

@@ -58,6 +58,7 @@ class AiSettingsView:
     recommended_model: str
     recommendation_profile: str
     last_hardware_scan_at: str
+    summary_language: str
 
 
 class AiSettingsController:
@@ -108,6 +109,7 @@ class AiSettingsController:
                 settings.hardware_profile.get("recommendation_profile") or ""
             ),
             last_hardware_scan_at=settings.last_hardware_scan_at,
+            summary_language=settings.summary_language,
         )
 
     def settings(self) -> AppSettings:
@@ -145,6 +147,7 @@ class AiSettingsController:
         cloud_max_parallel_requests: int,
         cloud_monthly_budget_usd: float,
         model_profile: str | None = None,
+        summary_language: str | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
         if normalized_provider not in PROVIDER_LABELS:
@@ -160,6 +163,8 @@ class AiSettingsController:
         settings.cloud_monthly_budget_usd = cloud_monthly_budget_usd
         if model_profile is not None:
             settings.model_profile = model_profile
+        if summary_language is not None:
+            settings.summary_language = summary_language
         if normalized_provider == "ollama":
             settings.selected_model = normalized_model
         elif normalized_provider == "openai":

@@ -50,7 +50,9 @@ def write_pdf(path: Path, pages: list[str]) -> None:
     os.utime(path, (old, old))
 
 
-def execution(pdf: Path, **overrides) -> SummaryExecution:
+def execution(
+    pdf: Path, *, summary_strategy: str = "direct", **overrides
+) -> SummaryExecution:
     data = SummaryData(
         **{
             "summary_ko": "AI 요약",
@@ -82,6 +84,7 @@ def execution(pdf: Path, **overrides) -> SummaryExecution:
         truncated=False,
         sends_to_cloud=False,
         requires_cloud_consent=False,
+        summary_strategy=summary_strategy,
     )
     result = SummaryResult(
         provider="ollama",
@@ -245,6 +248,35 @@ class AiClassificationTests(unittest.TestCase):
                 record["classification"]["ai_tags"],
                 ["열안정성", "단백질 설계"],
             )
+
+    def test_small_model_reanalysis_preserves_existing_advanced_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, library, pack = self._organized(root)
+            pdf = controller.materialize_pdf(pack)
+            controller.apply_analysis_result(
+                pack,
+                execution(
+                    pdf,
+                    contributions=("8B 기여",),
+                    limitations=("8B 한계",),
+                ),
+            )
+            moved = next((library / "papers").rglob("*.paperpack"))
+            moved_pdf = controller.materialize_pdf(moved)
+            controller.apply_analysis_result(
+                moved,
+                execution(
+                    moved_pdf,
+                    summary_strategy="hierarchical",
+                    contributions=(),
+                    limitations=(),
+                ),
+            )
+            final = next((library / "papers").rglob("*.paperpack"))
+            description = load_paperpack_metadata(final)["description"]
+            self.assertEqual(description["contributions"], ["8B 기여"])
+            self.assertEqual(description["limitations"], ["8B 한계"])
 
     def test_category_suggestion_requires_approval_then_can_be_requeued(self):
         with tempfile.TemporaryDirectory() as temp:

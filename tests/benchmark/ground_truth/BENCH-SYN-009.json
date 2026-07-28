@@ -1,0 +1,58 @@
+{
+  "document_id": "BENCH-SYN-009",
+  "difficulty": "ocr_mixed",
+  "synthetic": true,
+  "page_count": 4,
+  "title": "ATP Selectively Releases ClpH, but Not GroX, from a Heat-Damaged Casein Matrix",
+  "authors": "Tara Moss, Ken Daro, and Eli Senn | Synthetic Chaperone Interaction Unit",
+  "section_pages": {
+    "abstract": 1,
+    "introduction": 1,
+    "methods": 2,
+    "results": 3,
+    "discussion": 4,
+    "references": 4
+  },
+  "research_question": "Do ClpH and GroX differ in ATP-Mg2+-dependent release from a heat-damaged casein matrix?",
+  "methods": [
+    "heat-damaged casein affinity matrix",
+    "sequential ATP/Mg2+ and acid elution",
+    "ADP and no-magnesium controls",
+    "immunoblot quantification"
+  ],
+  "key_findings": [
+    "ATP-Mg2+ released 81% of ClpH but 7% of GroX",
+    "ADP-Mg2+ released 19% of ClpH",
+    "ATP without MgCl2 released 24% of ClpH",
+    "GroX required acid elution"
+  ],
+  "numeric_findings": [
+    "81% ClpH vs 7% GroX with ATP-Mg2+",
+    "19% ClpH with ADP-Mg2+",
+    "24% ClpH with ATP without MgCl2"
+  ],
+  "conclusion": "ClpH and GroX both bind damaged casein, but only ClpH is efficiently released by ATP-Mg2+.",
+  "critical_negations": [
+    "No phosphorylation assay was performed",
+    "ATP alone was insufficient for efficient release",
+    "GroX was not released efficiently by ATP-Mg2+"
+  ],
+  "forbidden_claims": [
+    "ClpH was phosphorylated",
+    "GroX was released by ATP",
+    "ATP-Mg2+ prevented both proteins from binding",
+    "Surface plasmon resonance was used",
+    "A kinase mediated release"
+  ],
+  "scoring_notes": {
+    "required_sections": [
+      "research_question",
+      "methods",
+      "key_findings",
+      "conclusion"
+    ],
+    "penalize_reference_only_claims": true,
+    "penalize_unsupported_mechanisms": true,
+    "source_file": "pdfs/BENCH-SYN-009.pdf"
+  }
+}

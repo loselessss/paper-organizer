@@ -323,7 +323,7 @@ class UiSmokeTests(unittest.TestCase):
             dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):
-        from PyQt5.QtWidgets import QLabel
+        from PyQt5.QtWidgets import QLabel, QMessageBox
 
         from paper_organizer.application.update_service import (
             AvailableUpdate,
@@ -360,6 +360,13 @@ class UiSmokeTests(unittest.TestCase):
             "PaperOrganizer_Setup_1.3.1.exe (128.0 MB)",
             labels,
         )
+        skipped = []
+        dialog.skip_requested.connect(skipped.append)
+        with mock.patch.object(
+            QMessageBox, "question", return_value=QMessageBox.Yes
+        ):
+            dialog._skip_version()
+        self.assertEqual(skipped, ["1.3.1"])
         dialog.close()
 
     def test_excluded_file_restore_dialog_uses_wide_multi_select_table(self):
@@ -545,6 +552,71 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIn("2개를 제외 목록", widget.status_label.text())
         widget.close()
 
+    def test_exact_file_double_click_routes_to_existing_library_paperpack(self):
+        from paper_organizer.application.library_workflow import (
+            DuplicateReference,
+            EditablePaperMetadata,
+            ReviewItem,
+        )
+        from paper_organizer.models.paper import (
+            DocumentIdentity,
+            DuplicateKind,
+            DuplicateMatch,
+        )
+        from paper_organizer.ui.library_workflow_widget import CollectionReviewWidget
+
+        class FakeController:
+            def settings(self):
+                return type(
+                    "Settings",
+                    (),
+                    {"scan_interval_seconds": 300, "auto_enabled": False},
+                )()
+
+        with tempfile.TemporaryDirectory() as temp:
+            existing = Path(temp) / "existing.paperpack"
+            existing.write_bytes(b"paperpack")
+            incoming = Path(temp) / "incoming.pdf"
+            identity = DocumentIdentity(
+                file_id="sha256:" + "a" * 64,
+                edition_id="sha256:" + "a" * 64,
+                work_id="work:test",
+                file_sha256="a" * 64,
+                content_fingerprint="content:test",
+                segment_fingerprints=(),
+                fingerprint_version="v1",
+                doi=None,
+                source_variant="publisher",
+                wrapper_pages=(),
+                content_start_pdf_page=1,
+                page_count=3,
+            )
+            duplicate = DuplicateReference(
+                match=DuplicateMatch(
+                    DuplicateKind.EXACT_FILE, 1.0, ("same hash",)
+                ),
+                title="Existing",
+                pdf_path=Path(temp) / "materialized.pdf",
+                sidecar_path=existing,
+                source_variant="publisher",
+            )
+            widget = CollectionReviewWidget(FakeController())
+            widget._items = [
+                ReviewItem(
+                    path=incoming,
+                    identity=identity,
+                    metadata=EditablePaperMetadata(title="Incoming"),
+                    detection_status="academic_likely",
+                    detection_reason="학술 문서",
+                    duplicate=duplicate,
+                )
+            ]
+            routed = []
+            widget.library_requested.connect(routed.append)
+            widget._open_row(0)
+            self.assertEqual(routed, [str(existing)])
+            widget.close()
+
     def test_immediate_analysis_runs_selected_items_without_polling_gap(self):
         from paper_organizer.application.background_analysis import AnalysisRunEvent
         from paper_organizer.ui.library_workflow_widget import (
@@ -676,6 +748,36 @@ class UiSmokeTests(unittest.TestCase):
             widget._remove_selected()
         self.assertEqual(len(widget._controller.removed), 2)
         widget.close()
+
+    def test_analysis_queue_double_click_routes_paperpack_to_library(self):
+        from paper_organizer.application.analysis_queue import AnalysisQueueItem
+        from paper_organizer.ui.library_workflow_widget import AnalysisQueueWidget
+
+        with tempfile.TemporaryDirectory() as temp:
+            paperpack = Path(temp) / "paper.paperpack"
+            paperpack.write_bytes(b"placeholder")
+            item = AnalysisQueueItem(
+                queue_id="sha256:" + "b" * 64,
+                path=str(paperpack),
+                file_sha256="b" * 64,
+                title="Queued",
+                status="organized_pending_analysis",
+                priority=0,
+                added_at="2026-07-28T00:00:00+00:00",
+                updated_at="2026-07-28T00:00:00+00:00",
+            )
+
+            class FakeController:
+                def analysis_queue(self):
+                    return [item]
+
+            widget = AnalysisQueueWidget(FakeController())
+            widget.table.selectRow(0)
+            routed = []
+            widget.library_requested.connect(routed.append)
+            widget._show_selected_in_library()
+            self.assertEqual(routed, [str(paperpack)])
+            widget.close()
 
     def test_first_run_requires_an_explicit_close_choice(self):
         from PyQt5.QtWidgets import QDialog
