@@ -2,10 +2,19 @@ import json
 import unittest
 from pathlib import Path
 
+from tests.benchmark.tools.run_models import DEFAULT_MODELS
 from tests.benchmark.tools.score_output import score_summary, token_overlap
 
 
 class BenchmarkToolTests(unittest.TestCase):
+    def test_cross_family_candidates_are_in_default_model_matrix(self):
+        self.assertIn("phi4-mini", DEFAULT_MODELS)
+        self.assertIn("gemma3:4b-it-qat", DEFAULT_MODELS)
+        self.assertIn(
+            "ministral-3:3b-instruct-2512-q4_K_M",
+            DEFAULT_MODELS,
+        )
+
     def test_token_overlap_is_case_and_whitespace_insensitive(self):
         self.assertEqual(
             token_overlap("DnaK ratio 0.62", "The DNAK   ratio was 0.62."),

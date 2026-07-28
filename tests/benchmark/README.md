@@ -19,7 +19,7 @@ This package contains nine entirely fictional scientific papers for evaluating P
 - `tools/run_models.py`: Paper Organizer's real section/OCR/JSON pipeline runner for
   installed Ollama models.
 
-## Run 0.6B / 1.7B / 4B / 8B
+## Run Qwen3 and cross-family 3B/4B candidates
 
 The runner never downloads or deletes a model. Install the desired models in Ollama
 first, then run from the repository root:
@@ -29,7 +29,10 @@ git submodule update --init
 .\.venv\Scripts\python -m pip install -e ".[gui,build]"
 ollama pull qwen3:0.6b
 ollama pull qwen3:1.7b
+ollama pull ministral-3:3b-instruct-2512-q4_K_M
+ollama pull phi4-mini
 ollama pull qwen3:4b
+ollama pull gemma3:4b-it-qat
 ollama pull qwen3:8b
 .\.venv\Scripts\python tests\benchmark\tools\run_models.py --resume
 ```
@@ -40,7 +43,7 @@ comparisons include:
 ```powershell
 # Fast smoke run on one clean and one OCR paper
 .\.venv\Scripts\python tests\benchmark\tools\run_models.py `
-  --models qwen3:0.6b qwen3:1.7b qwen3:4b qwen3:8b `
+  --models phi4-mini gemma3:4b-it-qat ministral-3:3b-instruct-2512-q4_K_M `
   --documents BENCH-SYN-001 BENCH-SYN-008 `
   --mode quick --resume
 

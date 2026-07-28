@@ -30,10 +30,21 @@ from paper_organizer.core.benchmark_recommendation import (  # noqa: E402
 )
 from paper_organizer.infra.settings import AppSettings  # noqa: E402
 
-from score_output import score_summary  # noqa: E402
+try:
+    from .score_output import score_summary  # type: ignore[import-not-found]  # noqa: E402
+except ImportError:
+    from score_output import score_summary  # noqa: E402
 
 
-DEFAULT_MODELS = ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "qwen3:8b")
+DEFAULT_MODELS = (
+    "qwen3:0.6b",
+    "qwen3:1.7b",
+    "ministral-3:3b-instruct-2512-q4_K_M",
+    "phi4-mini",
+    "qwen3:4b",
+    "gemma3:4b-it-qat",
+    "qwen3:8b",
+)
 BENCHMARK_ROOT = Path(__file__).resolve().parent.parent
 
 

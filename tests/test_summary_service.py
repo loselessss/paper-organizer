@@ -405,6 +405,22 @@ class SummaryServiceTests(unittest.TestCase):
             24_576 - 3_000,
         )
 
+    def test_phi4_mini_uses_catalog_size_for_small_model_policy(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="phi4-mini",
+            hardware_profile={"memory_total_gb": 16, "gpus": []},
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence and methods. " * 100],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
+        self.assertEqual(prepared.preview.context_window, 16_384)
+
     def test_truncation_keeps_each_scientific_section(self):
         settings = AppSettings(
             summary_provider="ollama",

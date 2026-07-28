@@ -4,7 +4,10 @@ import unittest
 from pathlib import Path
 
 from paper_organizer.application.local_ai import LocalAiAssessmentService
-from paper_organizer.core.model_recommendation import recommend_models
+from paper_organizer.core.model_recommendation import (
+    load_model_catalog,
+    recommend_models,
+)
 from paper_organizer.infra.hardware import GpuInfo, HardwareInspector, HardwareProfile
 from paper_organizer.infra.ollama_runtime import (
     InstalledOllamaModel,
@@ -61,6 +64,18 @@ class FakeOllamaInspector:
 
 
 class LocalAiTests(unittest.TestCase):
+    def test_cross_family_benchmark_models_are_in_catalog(self):
+        version, specs = load_model_catalog()
+        models = {spec.model_id: spec for spec in specs}
+
+        self.assertEqual(version, "2026.07.28")
+        self.assertEqual(models["phi4-mini"].parameters_b, 3.84)
+        self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 4.0)
+        self.assertEqual(
+            models["ministral-3:3b-instruct-2512-q4_K_M"].parameters_b,
+            3.85,
+        )
+
     def test_nvidia_smi_output_is_parsed_without_importing_ai_runtime(self):
         def run(command, timeout):
             self.assertEqual(command[0], "nvidia-smi")
@@ -162,7 +177,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "qwen3:8b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.26")
+            self.assertEqual(saved.model_catalog_version, "2026.07.28")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

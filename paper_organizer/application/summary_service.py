@@ -493,6 +493,15 @@ def _selected_model(settings: AppSettings) -> str:
 
 
 def _model_parameters(model: str) -> float:
+    try:
+        from paper_organizer.core.model_recommendation import load_model_catalog
+
+        key = model.strip().casefold().removesuffix(":latest")
+        for spec in load_model_catalog()[1]:
+            if spec.model_id.casefold().removesuffix(":latest") == key:
+                return spec.parameters_b
+    except (OSError, ValueError, KeyError):
+        pass
     match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", model.casefold())
     return float(match.group(1)) if match else 0.0
 

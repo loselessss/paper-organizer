@@ -4,8 +4,8 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: v1.4.2 AI JSON 응답 복구·분석 앱 버전 표시 구현
-- 이번 회차 범위: 요약 전처리 개편, exact_file 이동, 트레이·업데이트 UI, 0.6B/1.7B/4B/8B 비교
+- 상태: v1.5.0 교차 모델 벤치마크 후보 추가 완료
+- 이번 회차 범위: Phi-4 Mini, Gemma 3 4B QAT, Ministral 3 3B 다운로드·카탈로그·벤치마크 연동
 
 ---
 
@@ -167,7 +167,8 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 
 ### (2) 합성 벤치마크 결과로 기본 모델·프롬프트 결정
 
-`tests/benchmark/README.md`의 실행기로 설치된 후보 모델을 돌린 뒤
+`tests/benchmark/README.md`의 실행기로 Qwen3와 Phi-4 Mini, Gemma 3 4B QAT,
+Ministral 3 3B 등 설치된 후보 모델을 돌린 뒤
 `model_summary.csv`, `paper_scores.csv`, `recommendation.json`을 비교합니다.
 특히 OCR 3편의 처리 시간, `critical_negations` 보존, `forbidden_hits`를 우선
 봅니다. 결과 파일은 Git에 올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만

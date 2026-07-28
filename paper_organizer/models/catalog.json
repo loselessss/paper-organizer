@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.07.26",
-  "verified_at": "2026-07-26",
+  "catalog_version": "2026.07.28",
+  "verified_at": "2026-07-28",
   "models": [
     {
       "id": "qwen3:0.6b",
@@ -29,6 +29,32 @@
       "recommended_context": 8192
     },
     {
+      "id": "ministral-3:3b-instruct-2512-q4_K_M",
+      "label": "Ministral 3 3B Instruct Q4_K_M",
+      "parameters_b": 3.85,
+      "download_gb": 3.0,
+      "runtime_memory_gb": 6.5,
+      "minimum_ram_gb": 8.0,
+      "recommended_ram_gb": 12.0,
+      "tier": "light",
+      "quality": 3,
+      "license": "Apache-2.0",
+      "recommended_context": 24576
+    },
+    {
+      "id": "phi4-mini",
+      "label": "Phi-4 Mini 3.8B",
+      "parameters_b": 3.84,
+      "download_gb": 2.5,
+      "runtime_memory_gb": 5.5,
+      "minimum_ram_gb": 8.0,
+      "recommended_ram_gb": 12.0,
+      "tier": "light",
+      "quality": 3,
+      "license": "MIT",
+      "recommended_context": 24576
+    },
+    {
       "id": "qwen3:4b",
       "label": "Qwen3 4B",
       "parameters_b": 4.0,
@@ -53,6 +79,19 @@
       "quality": 3,
       "license": "Gemma Terms",
       "recommended_context": 8192
+    },
+    {
+      "id": "gemma3:4b-it-qat",
+      "label": "Gemma 3 4B IT QAT",
+      "parameters_b": 4.0,
+      "download_gb": 4.0,
+      "runtime_memory_gb": 7.5,
+      "minimum_ram_gb": 10.0,
+      "recommended_ram_gb": 16.0,
+      "tier": "light",
+      "quality": 3,
+      "license": "Gemma Terms",
+      "recommended_context": 24576
     },
     {
       "id": "qwen3:8b",

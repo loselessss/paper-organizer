@@ -634,11 +634,11 @@ Paper Organizer 설치본에는 요약용 LLM 가중치를 포함하지 않는�
 | 용량군 | 다운로드 예시 | 권장 용도 |
 |---|---|---|
 | 초경량, 약 0.5~1.5GB | Qwen3 0.6B `523MB`, 1.7B `1.4GB`; Gemma 3 1B `815MB` | 구역별 사실 추출·계층형 요약 벤치마크, 저사양 CPU |
-| 경량, 약 2.5~3.5GB | Qwen3 4B `2.5GB`; Gemma 3 4B `3.3GB` | 구역별 요약과 기본 메타데이터 추출 |
+| 경량, 약 2.5~4GB | Qwen3 4B `2.5GB`; Phi-4 Mini `2.5GB`; Ministral 3 3B Q4_K_M `3.0GB`; Gemma 3 4B `3.3GB`; Gemma 3 4B IT QAT `4.0GB` | 구역별 요약과 기본 메타데이터 추출·교차 모델 벤치마크 |
 | 균형, 약 5GB | Qwen3 8B `5.2GB` | 일반적인 정밀 요약·실험정보 추출의 상한 |
 | 초대형, 100GB 이상 | Qwen3 235B `142GB` | 개인용 백그라운드 앱에서는 추천·표시 대상에서 기본 제외 |
 
-공식 확인 자료: [Ollama Qwen3 모델 목록](https://ollama.com/library/qwen3), [Qwen3 전체 태그](https://registry.ollama.com/library/qwen3/tags), [Gemma 3 전체 태그](https://ollama.com/library/gemma3/tags).
+공식 확인 자료: [Ollama Qwen3 모델 목록](https://ollama.com/library/qwen3), [Qwen3 전체 태그](https://registry.ollama.com/library/qwen3/tags), [Gemma 3 전체 태그](https://ollama.com/library/gemma3/tags), [Phi-4 Mini](https://ollama.com/library/phi4-mini), [Ministral 3](https://ollama.com/library/ministral-3/tags).
 
 다운로드 크기와 실제 실행 RAM/VRAM은 같지 않다. 컨텍스트 캐시와 런타임 오버헤드가 추가되므로 추천기는 파일 용량만 보고 모델을 고르지 않고 하드웨어 여유와 짧은 실측 벤치마크를 함께 사용한다. 현재 0.6B·1.7B·4B는 구역별 계층형 요약 후보로 벤치마크하고, 8B를 통합 요약과 기여·한계 분석의 품질 상한으로 제안한다. 12B 이상은 Paper Organizer의 요약 이득에 비해 자원 사용량이 커 카탈로그에서 제외한다.
 

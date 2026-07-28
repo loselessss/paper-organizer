@@ -122,7 +122,8 @@ thinking/reasoning을 사용하지 않습니다. Ollama는 지원되는 GPU를 �
 요약 입력은 Abstract·Introduction·Materials and Methods·Results·Discussion·
 Conclusion 구역으로 나누고, 반복 머리말·쪽번호와 OCR 줄바꿈 잡음을 제거한 뒤
 문단 단위 JSON 응답으로 처리합니다. 요약 AI 설정에서 설명 필드를 한국어로
-번역하거나 논문 원문 언어로 유지할 수 있습니다. 0.6B·1.7B·4B·8B 로컬 모델 비교는
+번역하거나 논문 원문 언어로 유지할 수 있습니다. Qwen3 0.6B·1.7B·4B·8B와
+Phi-4 Mini·Gemma 3 4B IT QAT·Ministral 3 3B의 로컬 모델 비교는
 [`tests/benchmark/README.md`](tests/benchmark/README.md)의 합성 논문 실행기를
 사용하면 됩니다.
 
