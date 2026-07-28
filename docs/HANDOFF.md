@@ -167,10 +167,16 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 
 ### (2) 합성 벤치마크 결과로 기본 모델·프롬프트 결정
 
-`tests/benchmark/README.md`의 실행기로 0.6B·1.7B·4B·8B를 집 PC에서 돌린 뒤
-`model_summary.csv`와 문서별 JSON을 비교합니다. 특히 OCR 3편의 처리 시간,
-`critical_negations` 보존, `forbidden_hits`를 우선 봅니다. 결과 파일은 Git에
-올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만 문서화하세요.
+`tests/benchmark/README.md`의 실행기로 설치된 후보 모델을 돌린 뒤
+`model_summary.csv`, `paper_scores.csv`, `recommendation.json`을 비교합니다.
+특히 OCR 3편의 처리 시간, `critical_negations` 보존, `forbidden_hits`를 우선
+봅니다. 결과 파일은 Git에 올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만
+문서화하세요.
+
+설치 앱의 정밀 벤치마크 연결은 나중 단계입니다. 기본 사양 추천 모델을 기준으로
+바로 아래·기준·바로 위 등급만 후보로 만들고, 사용자가 총 다운로드 용량을 확인해
+명시적으로 선택했을 때만 최대 3개를 한 번에 받도록 합니다. 첫 실행에서 전체 모델을
+자동 다운로드하거나 벤치마크를 강제하지 않습니다.
 
 ### (3) 분류 체계 다듬기
 

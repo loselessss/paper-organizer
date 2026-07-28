@@ -1,0 +1,10 @@
+document_id,difficulty,max_score,title_points,research_question_points,methods_points,key_findings_points,numeric_findings_points,critical_negations_points,conclusion_points,forbidden_claim_penalty_each
+BENCH-SYN-001,normal,100,10,10,15,25,15,20,5,15
+BENCH-SYN-002,normal,100,10,10,15,25,15,20,5,15
+BENCH-SYN-003,normal,100,10,10,15,25,15,20,5,15
+BENCH-SYN-004,distractor,100,10,10,15,25,15,20,5,15
+BENCH-SYN-005,distractor,100,10,10,15,25,15,20,5,15
+BENCH-SYN-006,distractor,100,10,10,15,25,15,20,5,15
+BENCH-SYN-007,ocr_moderate,100,10,10,15,25,15,20,5,15
+BENCH-SYN-008,ocr_severe,100,10,10,15,25,15,20,5,15
+BENCH-SYN-009,ocr_mixed,100,10,10,15,25,15,20,5,15

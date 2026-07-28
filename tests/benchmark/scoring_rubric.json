@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "maximum_score": 100,
+  "coverage_threshold": 0.55,
+  "critical_negation_threshold": 0.75,
+  "forbidden_claim_threshold": 0.8,
+  "forbidden_claim_penalty_each": 15,
+  "weights": {
+    "title": 10,
+    "research_question": 10,
+    "methods": 15,
+    "key_findings": 25,
+    "numeric_findings": 15,
+    "critical_negations": 20,
+    "conclusion": 5
+  }
+}

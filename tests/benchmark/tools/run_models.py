@@ -25,6 +25,9 @@ from paper_organizer.application.summary_service import (  # noqa: E402
     prepare_summary,
     run_prepared_summary,
 )
+from paper_organizer.core.benchmark_recommendation import (  # noqa: E402
+    recommend_observed_model,
+)
 from paper_organizer.infra.settings import AppSettings  # noqa: E402
 
 from score_output import score_summary  # noqa: E402
@@ -130,6 +133,7 @@ def _run_one(
         return {
             "status": "ok",
             "document_id": document["document_id"],
+            "title": document["title"],
             "difficulty": document["difficulty"],
             "model": model,
             "mode": mode.value,
@@ -155,6 +159,7 @@ def _run_one(
         return {
             "status": "error",
             "document_id": document["document_id"],
+            "title": document["title"],
             "difficulty": document["difficulty"],
             "model": model,
             "mode": mode.value,
@@ -167,7 +172,19 @@ def _run_one(
         tracemalloc.stop()
 
 
-def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
+def _write_comparison(
+    output_dir: Path,
+    rows: list[dict[str, Any]],
+    *,
+    recommendation_profile: str,
+) -> None:
+    recommendation = recommend_observed_model(
+        rows,
+        profile=recommendation_profile,
+    )
+    recommendation_by_model = {
+        candidate.model: candidate for candidate in recommendation.candidates
+    }
     stream = io.StringIO(newline="")
     writer = csv.DictWriter(
         stream,
@@ -180,6 +197,9 @@ def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
             "runner_peak_memory_mb",
             "input_tokens",
             "output_tokens",
+            "score_100",
+            "raw_points",
+            "penalty_points",
             "mean_token_coverage",
             "covered_claims",
             "claim_count",
@@ -200,6 +220,9 @@ def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
                 "runner_peak_memory_mb": result["runner_peak_memory_mb"],
                 "input_tokens": result.get("input_tokens", ""),
                 "output_tokens": result.get("output_tokens", ""),
+                "score_100": score.get("score_100", ""),
+                "raw_points": score.get("raw_points", ""),
+                "penalty_points": score.get("penalty_points", ""),
                 "mean_token_coverage": score.get("mean_token_coverage", ""),
                 "covered_claims": score.get("covered_claims", ""),
                 "claim_count": score.get("claim_count", ""),
@@ -219,6 +242,8 @@ def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
             "success",
             "failed",
             "mean_seconds",
+            "fit_score_100",
+            "mean_score_100",
             "mean_coverage",
             "forbidden_hits",
         ),
@@ -237,6 +262,23 @@ def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
                         sum(result["elapsed_seconds"] for result in successes)
                         / len(successes),
                         3,
+                    )
+                    if successes
+                    else ""
+                ),
+                "fit_score_100": (
+                    recommendation_by_model[model].fit_score_100
+                    if model in recommendation_by_model
+                    else ""
+                ),
+                "mean_score_100": (
+                    round(
+                        sum(
+                            result["score"]["score_100"]
+                            for result in successes
+                        )
+                        / len(successes),
+                        2,
                     )
                     if successes
                     else ""
@@ -261,6 +303,68 @@ def _write_comparison(output_dir: Path, rows: list[dict[str, Any]]) -> None:
     _atomic_text(
         output_dir / "model_summary.csv",
         "\ufeff" + summary_stream.getvalue(),
+    )
+    _atomic_json(
+        output_dir / "recommendation.json",
+        {
+            "profile": recommendation.profile,
+            "recommended_model": recommendation.recommended_model,
+            "candidates": [asdict(item) for item in recommendation.candidates],
+        },
+    )
+    paper_stream = io.StringIO(newline="")
+    point_fields = (
+        "title",
+        "research_question",
+        "methods",
+        "key_findings",
+        "numeric_findings",
+        "critical_negations",
+        "conclusion",
+    )
+    paper_writer = csv.DictWriter(
+        paper_stream,
+        fieldnames=(
+            "model",
+            "document_id",
+            "difficulty",
+            "title",
+            "status",
+            "score_100",
+            *(f"{field}_points" for field in point_fields),
+            "penalty_points",
+            "forbidden_hits",
+            "elapsed_seconds",
+            "error",
+        ),
+    )
+    paper_writer.writeheader()
+    for result in rows:
+        score = result.get("score") or {}
+        breakdown = score.get("point_breakdown") or {}
+        paper_writer.writerow(
+            {
+                "model": result["model"],
+                "document_id": result["document_id"],
+                "difficulty": result["difficulty"],
+                "title": result.get("title", ""),
+                "status": result["status"],
+                "score_100": score.get("score_100", ""),
+                **{
+                    f"{field}_points": (
+                        breakdown.get(field, {}).get("earned", "")
+                    )
+                    for field in point_fields
+                },
+                "penalty_points": score.get("penalty_points", ""),
+                "forbidden_hits": score.get("forbidden_hits", ""),
+                "elapsed_seconds": result["elapsed_seconds"],
+                "error": result.get("error", ""),
+            }
+        )
+    _atomic_text(
+        output_dir / "paper_scores.csv",
+        "\ufeff" + paper_stream.getvalue(),
     )
 
 
@@ -300,7 +404,10 @@ def main() -> int:
             )
             if args.resume and result_path.is_file():
                 existing = json.loads(result_path.read_text(encoding="utf-8"))
-                if existing.get("status") == "ok":
+                if (
+                    existing.get("status") == "ok"
+                    and "score_100" in (existing.get("score") or {})
+                ):
                     rows.append(existing)
                     print(f"[{completed}/{total}] 건너뜀 {model} {document['document_id']}")
                     continue
@@ -321,11 +428,16 @@ def main() -> int:
                 print(
                     "  완료 "
                     f"{result['elapsed_seconds']:.1f}s · "
+                    f"{score['score_100']:.1f}/100 · "
                     f"coverage {score['mean_token_coverage']:.3f} · "
                     f"forbidden {score['forbidden_hits']}"
                 )
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_comparison(output_dir, rows)
+    _write_comparison(
+        output_dir,
+        rows,
+        recommendation_profile=args.resource_profile,
+    )
     _atomic_json(output_dir / "run.json", rows)
     failures = sum(result["status"] != "ok" for result in rows)
     print(f"결과: {output_dir / 'comparison.csv'}")

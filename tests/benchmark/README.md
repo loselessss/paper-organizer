@@ -13,11 +13,13 @@ This package contains nine entirely fictional scientific papers for evaluating P
 - `pdfs/`: benchmark papers.
 - `ground_truth/`: one JSON answer key per paper.
 - `manifest.json`: index.
+- `scoring_rubric.json`: shared 100-point rubric and penalty thresholds.
+- `paper_scorecard.csv`: maximum points assigned to every benchmark paper.
 - `tools/score_output.py`: deterministic lexical smoke scorer for one output.
 - `tools/run_models.py`: Paper Organizer's real section/OCR/JSON pipeline runner for
   installed Ollama models.
 
-## Run 0.6B / 1.7B / 4B / 8B at home
+## Run 0.6B / 1.7B / 4B / 8B
 
 The runner never downloads or deletes a model. Install the desired models in Ollama
 first, then run from the repository root:
@@ -51,7 +53,11 @@ comparisons include:
 Results are written to the selected output directory:
 
 - `model_summary.csv`: model-level success, speed, coverage and forbidden-claim totals;
+- `recommendation.json`: observed quality, speed and completion-rate ranking plus
+  the recommended model;
 - `comparison.csv`: one row per model/document;
+- `paper_scores.csv`: the 100-point score and category breakdown for every
+  model/document pair;
 - `<model>/<document>.json`: exact preview, sections, token counts, score and model JSON;
 - `run.json`: combined machine-readable result.
 
@@ -60,6 +66,20 @@ preprocessor/OCR process, not the separate Ollama process; use Windows Task Mana
 or another system monitor when comparing total RAM/VRAM. OCR papers require the
 `build` optional dependencies. A failed model/document is recorded and the remaining
 matrix continues.
+
+Every paper uses the same 100-point rubric: title 10, research question 10,
+methods 15, key findings 25, numerical findings 15, critical negations 20, and
+conclusion 5. Each detected forbidden claim deducts 15 points, down to a minimum
+of zero. Category points are divided evenly among that paper's answer-key items.
+This deterministic lexical score is intended for repeatable smoke comparisons;
+borderline outputs should still receive human semantic review.
+
+The recommendation is based on measured runs, not the static model catalog.
+`eco` gives speed more weight, `balanced` favors quality while retaining a speed
+penalty, and `performance` gives quality the highest weight. A model must finish
+at least 80% of the selected papers and average at least 50/100 to be eligible.
+The hardware catalog remains a safety filter for RAM and disk capacity; it is not
+treated as evidence of summary quality.
 
 This corpus is appropriate for prompt, context-window and model-selection tuning.
 Nine synthetic papers are far too few for a production weight fine-tune; keep a
