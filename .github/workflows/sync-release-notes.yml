@@ -1,0 +1,44 @@
+name: Sync release notes
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sync-release-notes.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Read package version
+        id: version
+        shell: bash
+        run: |
+          version=$(python -c "from paper_organizer import __version__; print(__version__)")
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Extract detailed release notes
+        shell: bash
+        run: |
+          python scripts/extract_release_notes.py "${{ steps.version.outputs.value }}" \
+            > release-notes.md
+
+      - name: Update existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.version.outputs.value }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md
+          else
+            echo "Release $tag does not exist yet; nothing to synchronize."
+          fi

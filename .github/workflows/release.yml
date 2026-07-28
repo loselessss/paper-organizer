@@ -52,6 +52,13 @@ jobs:
           "$hash  PaperOrganizer_Setup_latest.exe" |
             Set-Content -Encoding ascii -LiteralPath "$latestInstaller.sha256"
 
+      - name: Create detailed release notes
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          python scripts/extract_release_notes.py $version |
+            Set-Content -Encoding utf8 -LiteralPath release-notes.md
+
       - name: Preserve installer as workflow artifact
         uses: actions/upload-artifact@v6
         with:
@@ -75,4 +82,4 @@ jobs:
           gh release create $tag $installer $checksum $latestInstaller $latestChecksum `
             --verify-tag `
             --title "Paper Organizer $version" `
-            --generate-notes
+            --notes-file release-notes.md
