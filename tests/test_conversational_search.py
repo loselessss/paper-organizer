@@ -91,7 +91,7 @@ def create_library(root: Path):
             "subcategory": "단백질공학",
             "tags": [],
         },
-        "description": {"summary_ko": "", "keywords": []},
+        "description": {"summary": "", "keywords": []},
         "curation": {"revision": 1, "field_sources": {}},
         "workflow": {"analysis_status": "completed"},
     }

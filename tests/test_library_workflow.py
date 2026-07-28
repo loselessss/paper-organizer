@@ -229,7 +229,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                 category="Life Science",
                 subcategory="Cell Biology",
                 tags=["DMEM", "A549"],
-                summary_ko="사용자가 검토한 설명",
+                summary="사용자가 검토한 설명",
             )
             organized = controller.organize(result.items[0], metadata)
             self.assertTrue(organized.pdf_path.is_file())
@@ -264,7 +264,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                     category="Edited",
                     subcategory="Index",
                     tags=["medium", "DMEM"],
-                    summary_ko="수정된 설명",
+                    summary="수정된 설명",
                 ),
             )
             self.assertEqual(updated.metadata.title, "After")

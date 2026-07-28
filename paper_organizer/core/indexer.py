@@ -19,7 +19,7 @@ from paper_organizer.core.paperpack import (
 
 
 SIDECAR_SUFFIX = ".paper.json"
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +179,7 @@ def build_library_index(
                 classification.get("tags", []),
                 classification.get("ai_tags", []),
                 description.get("keywords", []),
-                description.get("summary_ko", ""),
+                description.get("summary", ""),
                 experimental,
             )
         )
@@ -198,7 +198,7 @@ def build_library_index(
                         *_text_list(classification.get("ai_tags")),
                     ]
                 ),
-                "summary_ko": description.get("summary_ko", ""),
+                "summary": description.get("summary", ""),
                 "experimental_terms": experimental,
                 "representative_file_id": representative.get("file_id", ""),
                 "variants": variants,

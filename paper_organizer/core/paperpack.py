@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -96,6 +97,36 @@ def _decode_object(value: bytes, label: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise PaperPackError(f"{label} must be a JSON object")
     return decoded
+
+
+def normalize_metadata_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return current metadata names, removing the former Korean-only summary key."""
+
+    normalized = copy.deepcopy(metadata)
+    legacy_name = "summary_ko"
+    for container_name in ("description", "analysis"):
+        container = normalized.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        if "summary" not in container and legacy_name in container:
+            container["summary"] = container[legacy_name]
+        container.pop(legacy_name, None)
+    curation = normalized.get("curation")
+    if isinstance(curation, dict):
+        sources = curation.get("field_sources")
+        if isinstance(sources, dict):
+            old_path = f"description.{legacy_name}"
+            if "description.summary" not in sources and old_path in sources:
+                sources["description.summary"] = sources[old_path]
+            sources.pop(old_path, None)
+        locked = curation.get("locked_fields")
+        if isinstance(locked, list):
+            old_path = f"description.{legacy_name}"
+            curation["locked_fields"] = [
+                "description.summary" if value == old_path else value
+                for value in locked
+            ]
+    return normalized
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -373,6 +404,7 @@ def create_paperpack(
         if stream.read(5) != b"%PDF-":
             raise PaperPackError("source is not a PDF")
     pdf_sha256, pdf_size = _sha256_file(source)
+    metadata = normalize_metadata_fields(metadata)
     metadata_bytes = _json_bytes(metadata, "metadata")
     content_bytes = _json_bytes(content or {}, "content")
     now = _now_iso()
@@ -490,15 +522,17 @@ def load_paperpack_metadata(path: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(path.expanduser().resolve(), "r") as archive:
             manifest = _read_manifest(archive)
-            return _decode_object(
-                _read_json_entry(
-                    archive,
-                    manifest,
+            return normalize_metadata_fields(
+                _decode_object(
+                    _read_json_entry(
+                        archive,
+                        manifest,
+                        "metadata",
+                        METADATA_ENTRY,
+                        MAX_METADATA_BYTES,
+                    ),
                     "metadata",
-                    METADATA_ENTRY,
-                    MAX_METADATA_BYTES,
-                ),
-                "metadata",
+                )
             )
     except (OSError, KeyError, zipfile.BadZipFile) as exc:
         raise PaperPackError(f"could not read paperpack metadata: {exc}") from None
@@ -532,6 +566,7 @@ def update_paperpack(
     """Atomically rewrite JSON entries while preserving the embedded PDF and history."""
 
     target = path.expanduser().resolve()
+    metadata = normalize_metadata_fields(metadata)
     metadata_bytes = _json_bytes(metadata, "metadata")
     handle, temp_name = tempfile.mkstemp(
         prefix=f".{target.stem}-", suffix=".tmp", dir=str(target.parent)
@@ -647,6 +682,7 @@ def replace_paperpack_pdf(
         if stream.read(5) != b"%PDF-":
             raise PaperPackError("edited file is not a PDF")
     edited_sha256, edited_size = _sha256_file(edited)
+    metadata = normalize_metadata_fields(metadata)
     metadata_bytes = _json_bytes(metadata, "metadata")
     handle, temp_name = tempfile.mkstemp(
         prefix=f".{target.stem}-", suffix=".tmp", dir=str(target.parent)

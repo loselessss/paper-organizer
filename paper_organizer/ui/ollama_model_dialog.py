@@ -13,8 +13,9 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -126,13 +127,15 @@ class OllamaModelDialog(QDialog):
         self._download_last_at = 0.0
         self._download_last_bytes = 0
         self._download_speed_bps = 0.0
+        self._download_highest_percent = 0
         self._runtime_elapsed_seconds = 0
         self._runtime_installing = False
         self._runtime_timer = QTimer(self)
         self._runtime_timer.setInterval(1000)
         self._runtime_timer.timeout.connect(self._runtime_tick)
         self.setWindowTitle("Ollama 모델 관리")
-        self.resize(680, 520)
+        self.resize(820, 620)
+        self.setMinimumSize(760, 560)
 
         root = QVBoxLayout(self)
         warning = QLabel(
@@ -175,21 +178,33 @@ class OllamaModelDialog(QDialog):
         self.model_detail.setWordWrap(True)
         root.addWidget(self.model_detail)
 
-        self.installed_models = QPlainTextEdit()
-        self.installed_models.setReadOnly(True)
-        self.installed_models.setPlaceholderText("설치된 모델이 여기에 표시됩니다.")
+        installed_label = QLabel(
+            "설치된 모델 — 항목을 선택하면 바로 삭제할 수 있습니다."
+        )
+        root.addWidget(installed_label)
+        self.installed_models = QListWidget()
+        self.installed_models.setAlternatingRowColors(True)
+        self.installed_models.setSelectionMode(QListWidget.SingleSelection)
+        self.installed_models.setToolTip(
+            "삭제할 모델을 이 목록에서 직접 선택하세요."
+        )
         root.addWidget(self.installed_models, 1)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("대기 중")
+        self.progress.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.progress.setMinimumHeight(24)
+        self.progress.setStyleSheet(
+            "QProgressBar { text-align: left; padding-left: 8px; }"
+        )
         root.addWidget(self.progress)
 
         action_row = QHBoxLayout()
         self.install_button = QPushButton("다운로드 후 선택")
         self.cancel_button = QPushButton("다운로드 취소")
-        self.delete_button = QPushButton("선택 모델 삭제")
+        self.delete_button = QPushButton("목록에서 선택한 모델 삭제")
         self.cancel_button.setEnabled(False)
         action_row.addWidget(self.install_button)
         action_row.addWidget(self.cancel_button)
@@ -203,6 +218,9 @@ class OllamaModelDialog(QDialog):
 
         self.refresh_button.clicked.connect(self.refresh)
         self.model_combo.currentIndexChanged.connect(self._selection_changed)
+        self.installed_models.currentItemChanged.connect(
+            self._installed_selection_changed
+        )
         self.install_button.clicked.connect(self._install)
         self.cancel_button.clicked.connect(self._cancel_download)
         self.delete_button.clicked.connect(self._delete)
@@ -409,7 +427,8 @@ class OllamaModelDialog(QDialog):
             if self.model_combo.count():
                 self.model_combo.setCurrentIndex(first_installed)
         self.model_combo.blockSignals(False)
-        installed_lines = []
+        self.installed_models.blockSignals(True)
+        self.installed_models.clear()
         for entry in snapshot.entries:
             if not entry.installed:
                 continue
@@ -418,11 +437,13 @@ class OllamaModelDialog(QDialog):
             details = " ".join(
                 value for value in (entry.parameter_size, entry.quantization) if value
             )
-            installed_lines.append(
+            item = QListWidgetItem(
                 f"{entry.model_id} — {entry.installed_size_gb:g}GB"
                 f"{f' · {details}' if details else ''}{owner}{selection}"
             )
-        self.installed_models.setPlainText("\n".join(installed_lines))
+            item.setData(Qt.UserRole, entry.model_id)
+            self.installed_models.addItem(item)
+        self.installed_models.blockSignals(False)
         self._selection_changed()
 
     def _selection_changed(self) -> None:
@@ -442,6 +463,29 @@ class OllamaModelDialog(QDialog):
                 f"예상 다운로드 {entry.estimated_download_gb:g}GB · "
                 f"안전 여유 필요 약 {required:.1f}GB"
             )
+        self._select_installed_model(entry.model_id if entry and entry.installed else "")
+        self._update_actions()
+
+    def _installed_selection_changed(self, current, _previous=None) -> None:
+        if current is None:
+            self._update_actions()
+            return
+        model = str(current.data(Qt.UserRole) or "")
+        entry = self._entry_for_model(model)
+        if entry is None:
+            self._update_actions()
+            return
+        index = self.model_combo.findData(entry.model_id)
+        if index >= 0 and index != self.model_combo.currentIndex():
+            self.model_combo.setCurrentIndex(index)
+            return
+        owner = "앱에서 다운로드" if entry.managed_by_app else "기존/공유 모델"
+        selection = " · 분석 모델 선택 제외" if not entry.selectable else ""
+        self.model_detail.setText(
+            f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
+            f"{entry.parameter_size or '파라미터 미상'} · "
+            f"{entry.quantization or '양자화 미상'}{selection}"
+        )
         self._update_actions()
 
     def _install(self) -> None:
@@ -478,16 +522,18 @@ class OllamaModelDialog(QDialog):
             "완료 후 설치 목록과 짧은 JSON 응답을 검증합니다.",
         ) != QMessageBox.Yes:
             return
-        self.progress.setRange(0, 0)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
         self.progress.setFormat("다운로드 준비 중…")
         self._download_last_at = time.monotonic()
         self._download_last_bytes = 0
         self._download_speed_bps = 0.0
+        self._download_highest_percent = 0
         self._start_worker("install", entry.model_id)
 
     def _delete(self) -> None:
-        entry = self._selected_entry()
-        if entry is None or not entry.installed:
+        entry = self._selected_installed_entry()
+        if entry is None:
             return
         if QMessageBox.warning(
             self,
@@ -531,13 +577,21 @@ class OllamaModelDialog(QDialog):
             self._download_speed_bps,
         )
         if progress.percent is None:
-            self.progress.setRange(0, 0)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(self._download_highest_percent)
             self.progress.setFormat(f"{progress.status}{detail}")
         else:
+            if progress.status.casefold() == "success":
+                self._download_highest_percent = 100
+            else:
+                self._download_highest_percent = min(
+                    99,
+                    max(self._download_highest_percent, progress.percent),
+                )
             self.progress.setRange(0, 100)
-            self.progress.setValue(progress.percent)
+            self.progress.setValue(self._download_highest_percent)
             self.progress.setFormat(
-                f"{progress.status} — {progress.percent}%{detail}"
+                f"{progress.status} — {self._download_highest_percent}%{detail}"
             )
 
     def _selected_entry(self):
@@ -548,8 +602,48 @@ class OllamaModelDialog(QDialog):
             (entry for entry in self._snapshot.entries if entry.model_id == model),
             None,
         )
+
+    def _selected_installed_entry(self):
+        item = self.installed_models.currentItem()
+        if item is None:
+            return None
+        entry = self._entry_for_model(str(item.data(Qt.UserRole) or ""))
+        return entry if entry is not None and entry.installed else None
+
+    def _entry_for_model(self, model: str):
+        if self._snapshot is None:
+            return None
+        key = model.strip().casefold().removesuffix(":latest")
+        return next(
+            (
+                entry
+                for entry in self._snapshot.entries
+                if entry.model_id.casefold().removesuffix(":latest") == key
+            ),
+            None,
+        )
+
+    def _select_installed_model(self, model: str) -> None:
+        key = model.strip().casefold().removesuffix(":latest")
+        target = None
+        for row in range(self.installed_models.count()):
+            item = self.installed_models.item(row)
+            item_key = str(item.data(Qt.UserRole) or "").casefold().removesuffix(
+                ":latest"
+            )
+            if item_key == key:
+                target = item
+                break
+        if target is self.installed_models.currentItem():
+            return
+        self.installed_models.blockSignals(True)
+        self.installed_models.setCurrentItem(target)
+        if target is None:
+            self.installed_models.clearSelection()
+        self.installed_models.blockSignals(False)
+
     def _busy(self) -> bool:
-        return self._worker is not None and self._worker.isRunning()
+        return self._worker is not None
 
     def _update_actions(self) -> None:
         busy = self._busy()
@@ -569,7 +663,7 @@ class OllamaModelDialog(QDialog):
             else "다운로드 후 선택"
         )
         self.delete_button.setEnabled(
-            not busy and reachable and entry is not None and entry.installed
+            not busy and reachable and self._selected_installed_entry() is not None
         )
         self.cancel_button.setEnabled(busy and self._operation == "install")
 

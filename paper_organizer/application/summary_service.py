@@ -22,6 +22,9 @@ from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 from paper_organizer.infra.settings import default_settings_path, load_settings
 from paper_organizer.providers.base import (
+    BibliographyData,
+    BibliographyRequest,
+    BibliographyResult,
     JsonHttpClient,
     ProviderError,
     SummaryProvider,
@@ -35,6 +38,19 @@ QUICK_MAX_CHARS = 30_000
 FULL_MAX_CHARS = 120_000
 MINIMUM_TEXT_CHARS = 500
 CONTEXT_TOKEN_RESERVE = 3_000
+OCR_MINIMUM_OLLAMA_PARAMETERS_B = 8.0
+_BIBLIOGRAPHY_MAX_CHARS = 12_000
+_DISTRIBUTION_PLATFORM_NAMES = (
+    "researchgate",
+    "academia.edu",
+    "pubmed",
+    "google scholar",
+    "semantic scholar",
+    "sciencedirect",
+    "springerlink",
+    "wiley online library",
+    "institutional repository",
+)
 _REFERENCE_HEADING_RE = re.compile(
     r"(?im)^[ \t]*(?:(?:\d+(?:\.\d+)*)[.)]?[ \t]+)?"
     r"(?:references?(?:[ \t]+(?:and[ \t]+notes|and[ \t]+further[ \t]+reading|cited))?|bibliography|"
@@ -76,6 +92,7 @@ class PreparedSummary:
     preview: SummaryPreview
     document_text: str = field(repr=False)
     section_contexts: tuple[str, ...] = field(default=(), repr=False)
+    bibliography_text: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +100,10 @@ class SummaryExecution:
     preview: SummaryPreview
     result: SummaryResult
     json_retry_count: int = 0
+    language_retry_count: int = 0
+    bibliography_retry_count: int = 0
+    bibliography_status: str = "ok"
+    bibliography_verified_fields: tuple[str, ...] = ()
 
     @property
     def provenance(self) -> dict[str, object]:
@@ -99,6 +120,12 @@ class SummaryExecution:
             "output_language": self.preview.output_language,
             "summary_strategy": self.preview.summary_strategy,
             "json_retry_count": self.json_retry_count,
+            "language_retry_count": self.language_retry_count,
+            "bibliography_retry_count": self.bibliography_retry_count,
+            "bibliography_status": self.bibliography_status,
+            "bibliography_verified_fields": list(
+                self.bibliography_verified_fields
+            ),
         }
 
 
@@ -191,6 +218,11 @@ def prepare_summary(
         if page_count < 2:
             raise SummaryPreparationError(
                 "2페이지 미만 문서는 OCR 대상에서 제외됩니다."
+            )
+        if provider == "ollama" and not ollama_model_supports_ocr(model):
+            raise SummaryPreparationError(
+                "OCR 문서는 8B 이상 Ollama 모델에서만 분석할 수 있습니다. "
+                "AI 설정에서 8B 모델을 선택한 뒤 다시 시도하세요."
             )
         try:
             from paper_organizer.application.background_ocr import ocr_page_texts
@@ -287,6 +319,7 @@ def _prepared_from_chunks(
         preview=preview,
         document_text=text,
         section_contexts=_section_contexts(processed),
+        bibliography_text=_bibliography_context(page_texts[0]),
     )
 
 
@@ -307,6 +340,31 @@ def run_prepared_summary(
         )
     provider = build_provider(settings, secret_store, http_client=http_client)
     consent = settings.cloud_processing_consent or allow_cloud_once
+    bibliography_result: BibliographyResult | None = None
+    bibliography_retry_count = 0
+    bibliography_verified_fields: tuple[str, ...] = ()
+    bibliography_status = "ok"
+    if _has_bibliography_identity_context(prepared.bibliography_text):
+        try:
+            (
+                bibliography_result,
+                bibliography_retry_count,
+                bibliography_verified_fields,
+            ) = _extract_verified_bibliography(
+                provider,
+                BibliographyRequest(
+                    document_text=prepared.bibliography_text,
+                    cloud_consent=consent,
+                    context_window=prepared.preview.context_window,
+                    is_patent=_looks_like_patent(prepared.bibliography_text),
+                ),
+            )
+            if len(bibliography_verified_fields) < 4:
+                bibliography_status = "partial"
+        except ProviderError:
+            bibliography_status = "failed"
+    else:
+        bibliography_status = "unavailable"
     request_options = {
         "cloud_consent": consent,
         "allowed_categories": _allowed_categories(settings),
@@ -319,35 +377,41 @@ def run_prepared_summary(
     )
     request_options["advanced_analysis"] = not hierarchical
     json_retry_count = 0
+    language_retry_count = 0
     if hierarchical:
         partial_options = dict(request_options)
         partial_options["allowed_categories"] = ()
         partials: list[SummaryResult] = []
         for context in prepared.section_contexts:
-            partial, retried = _summarize_with_json_retry(
-                provider,
-                SummaryRequest(
-                    document_text=context,
-                    max_output_tokens=900,
-                    prompt_version="paper-summary-v8-section",
-                    stage="section",
-                    **partial_options,
+            partial, json_retried, language_retried = (
+                _summarize_with_language_retry(
+                    provider,
+                    SummaryRequest(
+                        document_text=context,
+                        max_output_tokens=300,
+                        prompt_version="paper-summary-v9-section",
+                        stage="section",
+                        **partial_options,
+                    ),
+                    source_text=context,
                 )
             )
             partials.append(partial)
-            json_retry_count += retried
+            json_retry_count += json_retried
+            language_retry_count += language_retried
         synthesis_text = _render_section_summaries(partials)
-        final_input = synthesis_text
-        result, retried = _summarize_with_json_retry(
+        result, json_retried, language_retried = _summarize_with_language_retry(
             provider,
             SummaryRequest(
                 document_text=synthesis_text,
-                prompt_version="paper-summary-v8-hierarchical",
+                prompt_version="paper-summary-v9-hierarchical",
                 stage="synthesis",
                 **request_options,
-            )
+            ),
+            source_text=prepared.document_text,
         )
-        json_retry_count += retried
+        json_retry_count += json_retried
+        language_retry_count += language_retried
         input_tokens = _sum_optional_tokens(
             [partial.input_tokens for partial in partials]
             + [result.input_tokens]
@@ -362,38 +426,34 @@ def run_prepared_summary(
             output_tokens=output_tokens,
         )
     else:
-        final_input = prepared.document_text
-        result, retried = _summarize_with_json_retry(
+        result, json_retried, language_retried = _summarize_with_language_retry(
             provider,
             SummaryRequest(
                 document_text=prepared.document_text,
-                prompt_version="paper-summary-v8-direct",
+                prompt_version="paper-summary-v9-direct",
                 stage="direct",
                 **request_options,
-            )
+            ),
+            source_text=prepared.document_text,
         )
-        json_retry_count += retried
-    if _title_needs_original_language_retry(
-        result.data.title, prepared.document_text
-    ):
-        retry, retried = _summarize_with_json_retry(
-            provider,
-            SummaryRequest(
-                document_text=final_input,
-                prompt_version="paper-summary-v8-title-retry",
-                stage="synthesis" if hierarchical else "direct",
-                title_retry=True,
-                **request_options,
-            )
-        )
-        json_retry_count += retried
+        json_retry_count += json_retried
+        language_retry_count += language_retried
+    if bibliography_result is not None:
+        bibliography = bibliography_result.data
         result = replace(
-            retry,
+            result,
+            data=replace(
+                result.data,
+                title=bibliography.title,
+                authors=bibliography.authors,
+                year=bibliography.year,
+                venue=bibliography.venue,
+            ),
             input_tokens=_sum_optional_tokens(
-                [result.input_tokens, retry.input_tokens]
+                [bibliography_result.input_tokens, result.input_tokens]
             ),
             output_tokens=_sum_optional_tokens(
-                [result.output_tokens, retry.output_tokens]
+                [bibliography_result.output_tokens, result.output_tokens]
             ),
         )
     if hierarchical and (result.data.contributions or result.data.limitations):
@@ -401,16 +461,20 @@ def run_prepared_summary(
             result,
             data=replace(result.data, contributions=(), limitations=()),
         )
-    normalized_summary = _paragraphize_summary(result.data.summary_ko)
-    if normalized_summary != result.data.summary_ko:
+    normalized_summary = _paragraphize_summary(result.data.summary)
+    if normalized_summary != result.data.summary:
         result = replace(
             result,
-            data=replace(result.data, summary_ko=normalized_summary),
+            data=replace(result.data, summary=normalized_summary),
         )
     return SummaryExecution(
         preview=prepared.preview,
         result=result,
         json_retry_count=json_retry_count,
+        language_retry_count=language_retry_count,
+        bibliography_retry_count=bibliography_retry_count,
+        bibliography_status=bibliography_status,
+        bibliography_verified_fields=bibliography_verified_fields,
     )
 
 
@@ -437,6 +501,259 @@ def _summarize_with_json_retry(
                 "같은 논문을 다시 시도하거나 더 큰 모델을 선택하세요."
             ) from None
         raise
+
+
+def _extract_verified_bibliography(
+    provider: SummaryProvider,
+    request: BibliographyRequest,
+) -> tuple[BibliographyResult, int, tuple[str, ...]]:
+    """Extract a small first-page record and keep only source-verifiable values."""
+
+    try:
+        first = provider.extract_bibliography(request)
+    except ProviderError:
+        retry_request = replace(
+            request,
+            prompt_version=f"{request.prompt_version}-retry",
+            retry=True,
+        )
+        retry = provider.extract_bibliography(retry_request)
+        validated, verified, _needs_retry = _validate_bibliography(
+            retry.data,
+            request.document_text,
+            is_patent=request.is_patent,
+        )
+        return replace(retry, data=validated), 1, verified
+
+    validated, verified, needs_retry = _validate_bibliography(
+        first.data,
+        request.document_text,
+        is_patent=request.is_patent,
+    )
+    if not needs_retry:
+        return replace(first, data=validated), 0, verified
+
+    retry_request = replace(
+        request,
+        prompt_version=f"{request.prompt_version}-retry",
+        retry=True,
+    )
+    try:
+        retry = provider.extract_bibliography(retry_request)
+    except ProviderError:
+        return replace(first, data=validated), 1, verified
+    retried, retry_verified, _needs_retry = _validate_bibliography(
+        retry.data,
+        request.document_text,
+        is_patent=request.is_patent,
+    )
+    first_fields = set(verified)
+    retry_fields = set(retry_verified)
+    merged = BibliographyData(
+        title=(
+            retried.title if "title" in retry_fields else validated.title
+        ),
+        authors=(
+            retried.authors if "authors" in retry_fields else validated.authors
+        ),
+        year=retried.year if "year" in retry_fields else validated.year,
+        venue=retried.venue if "venue" in retry_fields else validated.venue,
+    )
+    merged_fields = tuple(
+        name
+        for name in ("title", "authors", "year", "venue")
+        if name in first_fields or name in retry_fields
+    )
+    return (
+        replace(
+            retry,
+            data=merged,
+            input_tokens=_sum_optional_tokens(
+                [first.input_tokens, retry.input_tokens]
+            ),
+            output_tokens=_sum_optional_tokens(
+                [first.output_tokens, retry.output_tokens]
+            ),
+        ),
+        1,
+        merged_fields,
+    )
+
+
+def _validate_bibliography(
+    data: BibliographyData,
+    source_text: str,
+    *,
+    is_patent: bool,
+) -> tuple[BibliographyData, tuple[str, ...], bool]:
+    """Reject hallucinated or distributor-derived first-page metadata."""
+
+    source = _normalize_bibliography_text(source_text)
+    title = data.title.strip()
+    title_valid = bool(title) and _normalized_value_present(title, source)
+
+    authors = tuple(
+        author.strip()
+        for author in data.authors
+        if author.strip()
+        and not _is_distribution_platform(author)
+        and _normalized_value_present(author, source)
+    )
+    authors_valid = bool(authors)
+
+    year = data.year.strip()
+    year_valid = bool(
+        re.fullmatch(r"(?:18|19|20|21)\d{2}", year)
+        and re.search(rf"(?<!\d){re.escape(year)}(?!\d)", source_text)
+    )
+
+    venue = "" if is_patent else data.venue.strip()
+    venue_valid = bool(
+        venue
+        and not _is_distribution_platform(venue)
+        and _normalized_value_present(venue, source)
+    )
+    verified = tuple(
+        name
+        for name, valid in (
+            ("title", title_valid),
+            ("authors", authors_valid),
+            ("year", year_valid),
+            ("venue", venue_valid),
+        )
+        if valid
+    )
+    invalid_nonempty = (
+        (bool(title) and not title_valid)
+        or (bool(data.authors) and len(authors) != len(data.authors))
+        or (bool(year) and not year_valid)
+        or (bool(data.venue.strip()) and not is_patent and not venue_valid)
+    )
+    needs_retry = invalid_nonempty or not title_valid or not authors_valid
+    return (
+        BibliographyData(
+            title=title if title_valid else "",
+            authors=authors,
+            year=year if year_valid else "",
+            venue=venue if venue_valid else "",
+        ),
+        verified,
+        needs_retry,
+    )
+
+
+def _normalized_value_present(value: str, normalized_source: str) -> bool:
+    normalized = _normalize_bibliography_text(value)
+    return bool(normalized) and normalized in normalized_source
+
+
+def _normalize_bibliography_text(value: str) -> str:
+    return re.sub(r"[\W_]+", " ", value.casefold(), flags=re.UNICODE).strip()
+
+
+def _is_distribution_platform(value: str) -> bool:
+    normalized = _normalize_bibliography_text(value)
+    return any(
+        _normalize_bibliography_text(name) in normalized
+        for name in _DISTRIBUTION_PLATFORM_NAMES
+    )
+
+
+def _summarize_with_language_retry(
+    provider: SummaryProvider,
+    request: SummaryRequest,
+    *,
+    source_text: str,
+) -> tuple[SummaryResult, int, int]:
+    """Retry once when explanatory fields violate the selected language."""
+
+    result, json_retries = _summarize_with_json_retry(provider, request)
+    if not _summary_language_mismatch(
+        result,
+        source_text=source_text,
+        output_language=request.output_language,
+    ):
+        return result, json_retries, 0
+    retry_request = replace(
+        request,
+        prompt_version=f"{request.prompt_version}-language-retry",
+        language_retry=True,
+    )
+    retry, retry_json_retries = _summarize_with_json_retry(
+        provider,
+        retry_request,
+    )
+    if _summary_language_mismatch(
+        retry,
+        source_text=source_text,
+        output_language=request.output_language,
+    ):
+        requested = (
+            "한국어"
+            if request.output_language == "ko"
+            else "논문 원문 언어"
+        )
+        raise ProviderError(
+            f"AI가 두 번 연속 {requested} 요약 지시를 따르지 못했습니다. "
+            "같은 논문을 다시 시도하거나 다른 모델을 선택하세요."
+        )
+    retry = replace(
+        retry,
+        input_tokens=_sum_optional_tokens(
+            [result.input_tokens, retry.input_tokens]
+        ),
+        output_tokens=_sum_optional_tokens(
+            [result.output_tokens, retry.output_tokens]
+        ),
+    )
+    return retry, json_retries + retry_json_retries, 1
+
+
+def _summary_language_mismatch(
+    result: SummaryResult,
+    *,
+    source_text: str,
+    output_language: str,
+) -> bool:
+    """Detect clear English/Korean contract violations without inspecting categories."""
+
+    data = result.data
+    explanatory_text = " ".join(
+        (
+            data.summary,
+            data.research_question,
+            *data.methods,
+            *data.contributions,
+            *data.limitations,
+            *data.keywords,
+            *data.meta_tags,
+        )
+    )
+    if not explanatory_text.strip():
+        return False
+    source_latin = len(re.findall(r"[A-Za-z]", source_text))
+    source_hangul = len(re.findall(r"[가-힣]", source_text))
+    output_latin = len(re.findall(r"[A-Za-z]", explanatory_text))
+    output_hangul = len(re.findall(r"[가-힣]", explanatory_text))
+    english_source = (
+        source_latin >= 100
+        and source_latin >= max(1, source_hangul) * 3
+    )
+    korean_source = (
+        source_hangul >= 100
+        and source_hangul >= max(1, source_latin)
+    )
+    if output_language == "source" and english_source:
+        return output_hangul > 0
+    expects_korean = output_language == "ko" or (
+        output_language == "source" and korean_source
+    )
+    if not expects_korean:
+        return False
+    letters = output_hangul + output_latin
+    return output_hangul < 10 or (
+        letters >= 40 and output_hangul / letters < 0.08
+    )
 
 
 def _is_summary_format_error(error: ProviderError) -> bool:
@@ -506,6 +823,12 @@ def _model_parameters(model: str) -> float:
     return float(match.group(1)) if match else 0.0
 
 
+def ollama_model_supports_ocr(model: str) -> bool:
+    """Return whether a known Ollama model meets the OCR analysis floor."""
+
+    return _model_parameters(model) >= OCR_MINIMUM_OLLAMA_PARAMETERS_B
+
+
 def _uses_hierarchical_summary(settings: AppSettings, model: str) -> bool:
     parameters = _model_parameters(model)
     return settings.summary_provider == "ollama" and 0 < parameters <= 4.0
@@ -569,6 +892,71 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _bibliography_context(first_page_text: str) -> str:
+    """Keep first-page identity text while removing download-platform furniture."""
+
+    kept: list[str] = []
+    for raw_line in first_page_text.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+        lowered = line.casefold()
+        if any(name in lowered for name in _DISTRIBUTION_PLATFORM_NAMES):
+            continue
+        if (
+            ("download" in lowered or "uploaded" in lowered)
+            and ("http://" in lowered or "https://" in lowered or "www." in lowered)
+        ):
+            continue
+        kept.append(line)
+    return "\n".join(kept)[:_BIBLIOGRAPHY_MAX_CHARS].strip()
+
+
+def _has_bibliography_identity_context(first_page_text: str) -> bool:
+    """Avoid an extra model call when the supplied page is clearly body text only."""
+
+    lines = [line.strip() for line in first_page_text.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return False
+    front_lines: list[str] = []
+    for line in lines:
+        if re.fullmatch(
+            r"(?:abstract|summary|introduction|background|초록|요약|서론|배경)\s*[:.]?",
+            line,
+            re.IGNORECASE,
+        ):
+            break
+        front_lines.append(line)
+    if len(front_lines) < 2:
+        return False
+    front = "\n".join(front_lines[:20])
+    signals = (
+        re.search(r"(?<!\d)(?:18|19|20|21)\d{2}(?!\d)", front),
+        re.search(r"\b10\.\d{4,9}/\S+", front, re.IGNORECASE),
+        re.search(r"[,;]|\band\b", front, re.IGNORECASE),
+        re.search(
+            r"\b(?:journal|conference|proceedings|university|institute|department|"
+            r"laboratory|centre|center)\b|저널|학회|대학교|연구소|특허",
+            front,
+            re.IGNORECASE,
+        ),
+    )
+    return any(signals)
+
+
+def _looks_like_patent(first_page_text: str) -> bool:
+    normalized = first_page_text.casefold()
+    markers = (
+        "patent application publication",
+        "international publication number",
+        "world intellectual property organization",
+        "발명의 명칭",
+        "공개특허",
+        "특허출원",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def _strip_reference_section(text: str) -> str:
@@ -710,14 +1098,10 @@ def _render_section_summaries(results: list[SummaryResult]) -> str:
             f"[SECTION EVIDENCE {index}]\n"
             + json.dumps(
                 {
-                    "summary": result.data.summary_ko,
+                    "summary": result.data.summary,
                     "research_question": result.data.research_question,
                     "methods": list(result.data.methods),
                     "keywords": list(result.data.keywords),
-                    "title": result.data.title,
-                    "authors": list(result.data.authors),
-                    "year": result.data.year,
-                    "venue": result.data.venue,
                     "meta_tags": list(result.data.meta_tags),
                 },
                 ensure_ascii=False,
@@ -729,14 +1113,3 @@ def _render_section_summaries(results: list[SummaryResult]) -> str:
 def _sum_optional_tokens(values: list[int | None]) -> int | None:
     present = [value for value in values if value is not None]
     return sum(present) if present else None
-
-
-def _title_needs_original_language_retry(title: str, source_text: str) -> bool:
-    """Retry only a clear script mismatch; do not second-guess bilingual papers."""
-
-    normalized_title = title.strip()
-    if not normalized_title or not re.search(r"[가-힣]", normalized_title):
-        return False
-    source_hangul = len(re.findall(r"[가-힣]", source_text))
-    source_latin = len(re.findall(r"[A-Za-z]", source_text))
-    return source_latin >= 100 and source_hangul == 0

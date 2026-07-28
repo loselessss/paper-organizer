@@ -24,7 +24,7 @@ from paper_organizer.core.paperpack import (
     load_paperpack_metadata,
 )
 
-SEARCH_INDEX_SCHEMA_VERSION = 1
+SEARCH_INDEX_SCHEMA_VERSION = 2
 _SNIPPET_TOKENS = 12
 
 
@@ -78,8 +78,33 @@ def _connect(path: Path):
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     with closing(connection):
+        _drop_stale_schema(connection)
         _create_schema(connection)
         yield connection
+
+
+def _drop_stale_schema(connection: sqlite3.Connection) -> None:
+    tables = {
+        str(row["name"])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
+    }
+    if "works" not in tables:
+        return
+    columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(works)").fetchall()
+    }
+    if "summary" in columns:
+        return
+    connection.executescript(
+        """
+        DROP TABLE IF EXISTS pages;
+        DROP TABLE IF EXISTS works;
+        DROP TABLE IF EXISTS meta;
+        """
+    )
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -99,7 +124,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             category TEXT NOT NULL DEFAULT '',
             subcategory TEXT NOT NULL DEFAULT '',
             tags TEXT NOT NULL DEFAULT '',
-            summary_ko TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
             indexed_at TEXT NOT NULL DEFAULT ''
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(
@@ -145,7 +170,7 @@ def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tu
             )
             if value
         ),
-        str(description.get("summary_ko") or ""),
+        str(description.get("summary") or ""),
         indexed_at,
     )
 
@@ -322,7 +347,7 @@ def search_metadata(
             FROM works
             WHERE lower(
                 title || ' ' || authors || ' ' || year || ' ' || venue || ' ' ||
-                category || ' ' || subcategory || ' ' || tags || ' ' || summary_ko
+                category || ' ' || subcategory || ' ' || tags || ' ' || summary
             ) LIKE ?
             ORDER BY title
             LIMIT ?

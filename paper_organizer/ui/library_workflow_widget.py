@@ -371,7 +371,7 @@ class MetadataForm(QGroupBox):
         self.subcategory_edit = QLineEdit("General")
         self.tags_edit = QLineEdit()
         self.tags_edit.setPlaceholderText("쉼표로 구분")
-        self._summary_ko = ""
+        self._summary = ""
         self._document_type = "paper"
         self.authors_label = QLabel("저자")
         self.venue_label = QLabel("저널/학회")
@@ -404,7 +404,7 @@ class MetadataForm(QGroupBox):
         self.category_edit.setText(value.category)
         self.subcategory_edit.setText(value.subcategory)
         self.tags_edit.setText(", ".join(value.tags))
-        self._summary_ko = value.summary_ko
+        self._summary = value.summary
         self._set_document_type(value.document_type)
         self.setEnabled(metadata is not None)
 
@@ -441,7 +441,7 @@ class MetadataForm(QGroupBox):
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
             tags=split_values(self.tags_edit.text()),
-            summary_ko=self._summary_ko,
+            summary=self._summary,
         )
 
 
@@ -1588,7 +1588,7 @@ class LibraryWidget(QWidget):
             else "<p style='color:#999'>없음</p>"
         )
         sections: list[str] = []
-        summary = description.get("summary_ko") or ""
+        summary = description.get("summary") or ""
         if not summary and not analysis:
             self.analysis_view.setHtml(
                 "<p style='color:#777'>아직 AI 분석 결과가 없습니다. "

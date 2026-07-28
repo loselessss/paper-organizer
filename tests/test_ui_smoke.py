@@ -91,6 +91,15 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
+            self.assertGreaterEqual(model_dialog.minimumWidth(), 760)
+            self.assertTrue(model_dialog.progress.alignment() & Qt.AlignLeft)
+            model_dialog._worker = object()
+            model_dialog._operation = "install"
+            model_dialog._update_actions()
+            self.assertTrue(model_dialog.cancel_button.isEnabled())
+            model_dialog._worker = None
+            model_dialog._operation = ""
+            model_dialog._update_actions()
             download_text = _download_detail(
                 512 * 1024 * 1024,
                 1024 * 1024 * 1024,
@@ -258,11 +267,14 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(controller.stop_calls, 1)
 
     def test_model_manager_opens_on_the_recommended_model(self):
+        from PyQt5.QtWidgets import QMessageBox
+
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer.application.ollama_model_manager import (
             OllamaModelEntry,
             OllamaModelSnapshot,
         )
+        from paper_organizer.infra.ollama_models import OllamaPullProgress
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
         with tempfile.TemporaryDirectory() as temp:
@@ -318,8 +330,32 @@ class UiSmokeTests(unittest.TestCase):
 
             self.assertEqual(dialog.model_combo.currentData(), "qwen3:8b")
             self.assertEqual(dialog.model_combo.findData("gemma3:12b"), -1)
-            self.assertIn("12B 이상 선택 제외", dialog.installed_models.toPlainText())
+            installed_text = "\n".join(
+                dialog.installed_models.item(row).text()
+                for row in range(dialog.installed_models.count())
+            )
+            self.assertIn("12B 이상 선택 제외", installed_text)
             self.assertEqual(dialog.install_button.text(), "다운로드 후 선택")
+            dialog.installed_models.setCurrentRow(0)
+            self.assertEqual(dialog.model_combo.currentData(), "qwen3:4b")
+            self.assertTrue(dialog.delete_button.isEnabled())
+            dialog.installed_models.setCurrentRow(1)
+            self.assertTrue(dialog.delete_button.isEnabled())
+            self.assertIn("분석 모델 선택 제외", dialog.model_detail.text())
+            with (
+                mock.patch.object(
+                    QMessageBox,
+                    "warning",
+                    return_value=QMessageBox.Yes,
+                ),
+                mock.patch.object(dialog, "_start_worker") as start_worker,
+            ):
+                dialog._delete()
+            start_worker.assert_called_once_with("delete", "gemma3:12b")
+            dialog._progress_changed(OllamaPullProgress("pulling", 80, 100))
+            self.assertEqual(dialog.progress.value(), 80)
+            dialog._progress_changed(OllamaPullProgress("pulling", 10, 100))
+            self.assertEqual(dialog.progress.value(), 80)
             dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):
@@ -831,7 +867,7 @@ class UiSmokeTests(unittest.TestCase):
                 work_id="work:test",
                 source_variant="publisher",
                 record={
-                    "description": {"summary_ko": "분석 요약"},
+                    "description": {"summary": "분석 요약"},
                     "analysis": {
                         "status": "completed",
                         "completed_at": "2026-07-28T12:00:00+09:00",
@@ -839,7 +875,7 @@ class UiSmokeTests(unittest.TestCase):
                             "app_version": "1.4.1",
                             "provider": "ollama",
                             "model": "qwen3:8b",
-                            "prompt_version": "paper-summary-v8-direct",
+                            "prompt_version": "paper-summary-v9-direct",
                         },
                     },
                 },
@@ -915,12 +951,12 @@ class UiSmokeTests(unittest.TestCase):
                     {
                         "analysis": {
                             "provenance": {
-                                "prompt_version": "paper-summary-v8-direct"
+                                "prompt_version": "paper-summary-v9-direct"
                             }
                         }
                     }
                 ),
-                "요약 v8",
+                "요약 v9",
             )
             widget.table.selectionModel().select(
                 widget.table.model().index(1, 0),

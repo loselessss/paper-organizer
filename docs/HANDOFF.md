@@ -4,8 +4,9 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: v1.5.0 교차 모델 벤치마크 후보 추가 완료
-- 이번 회차 범위: Phi-4 Mini, Gemma 3 4B QAT, Ministral 3 3B 다운로드·카탈로그·벤치마크 연동
+- 상태: v1.6.0 Ollama 모델 관리 UX 개선 및 OCR 분석 8B 하한 적용
+- 이번 회차 범위: 설치 모델 6종 벤치마크, 모델 관리 창 개선, OCR 문서 8B 제한,
+  영어·한국어 요약 프롬프트 및 결과 검증 분리
 
 ---
 
@@ -74,7 +75,7 @@ GUI 실행은 다음과 같습니다.
   → BackgroundAnalysisService.run_next()   한 편씩 AI 분석
        · 반복 머리말·쪽번호·OCR 잡음을 제거하고 논문 구역별 문단 컨텍스트 구성
        · 4B 이하는 구역별 요약→최종 요약, 8B 이상은 전체 구역 직접 요약
-       · 요약 + 분류·제목·저자·연도·저널명 정정 (field_sources = "ai:<provider>")
+       · 첫 페이지 서지 추출 + 요약·분류 정정 (field_sources = "ai:<provider>")
        · 분류가 바뀌면 paperpack을 새 분야 폴더로 이동
   → 검색 색인(index/search.sqlite) 증분 갱신
 ```
@@ -128,8 +129,17 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 실패합니다. `search_index.py`처럼 `contextlib.closing`으로 감싸세요.
 
 **요약 응답 스키마는 필드가 정확히 일치해야 합니다.**
-`SummaryData.from_mapping()`이 `set(raw) != expected`로 검사합니다. 스키마에
-필드를 하나 추가하면 provider 3개와 관련 테스트 픽스처를 모두 고쳐야 합니다.
+최종 응답은 `SummaryData.from_mapping()`이 `set(raw) != expected`로 검사합니다.
+계층형 중간 응답에는 구조화 스키마를 보내지 않고 짧은 평문 근거만 받습니다.
+중간 단계에 JSON이나 최종 분류·서지 필드를 다시 넣지 마세요. 최종 스키마를
+바꾸면 provider 3개와 관련 테스트 픽스처를 모두 고쳐야 합니다. 4B 이하의
+`advanced_analysis=False` 요청은 기여·한계가 없는 축소 스키마를 사용하고,
+`SummaryData.from_mapping()`이 두 값을 빈 튜플로 정규화합니다.
+
+제목·저자·연도·저널은 요약 스키마에 넣지 않습니다.
+`BibliographyRequest`가 첫 페이지에 작은 4필드 스키마를 별도로 요청하고,
+`_validate_bibliography()`가 원문에 실제로 있는 값만 통과시킵니다.
+ResearchGate 등 배포 플랫폼 차단 목록은 입력 정리와 검증에 함께 적용됩니다.
 
 **요약 전처리는 PaperPack 본문을 바꾸지 않습니다.**
 `application/summary_preprocessing.py`가 AI로 보낼 임시 컨텍스트만 구역별로
@@ -170,8 +180,9 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 `tests/benchmark/README.md`의 실행기로 Qwen3와 Phi-4 Mini, Gemma 3 4B QAT,
 Ministral 3 3B 등 설치된 후보 모델을 돌린 뒤
 `model_summary.csv`, `paper_scores.csv`, `recommendation.json`을 비교합니다.
-특히 OCR 3편의 처리 시간, `critical_negations` 보존, `forbidden_hits`를 우선
-봅니다. 결과 파일은 Git에 올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만
+OCR 문서는 모델 비교에서 제외합니다. 텍스트 레이어 6편의
+`critical_negations` 보존과 `forbidden_hits`를 우선 봅니다. 결과 파일은 Git에
+올리지 말고, 채택할 모델/컨텍스트 정책과 재현 명령만
 문서화하세요.
 
 설치 앱의 정밀 벤치마크 연결은 나중 단계입니다. 기본 사양 추천 모델을 기준으로

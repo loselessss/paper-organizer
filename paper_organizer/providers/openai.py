@@ -6,11 +6,16 @@ from typing import Any, Mapping
 
 from .base import (
     ApiKeySource,
+    BIBLIOGRAPHY_SCHEMA,
+    BibliographyRequest,
+    BibliographyResult,
     SEARCH_ANSWER_INSTRUCTIONS,
     SEARCH_ANSWER_SCHEMA,
     SEARCH_PLAN_INSTRUCTIONS,
     SEARCH_PLAN_SCHEMA,
-    SUMMARY_SCHEMA,
+    SummaryData,
+    bibliography_instructions,
+    summary_response_schema,
     system_instructions,
     JsonHttpClient,
     ProviderError,
@@ -21,6 +26,7 @@ from .base import (
     SummaryRequest,
     SummaryResult,
     parse_search_answer_json,
+    parse_bibliography_json,
     parse_search_plan_json,
     parse_summary_json,
     require_api_key,
@@ -61,15 +67,16 @@ class OpenAIProvider:
             "max_output_tokens": request.max_output_tokens,
             "store": False,
             "reasoning": {"effort": "none"},
-            "text": {
+        }
+        if request.stage != "section":
+            payload["text"] = {
                 "format": {
                     "type": "json_schema",
                     "name": "paper_summary",
                     "strict": True,
-                    "schema": SUMMARY_SCHEMA,
+                    "schema": summary_response_schema(request),
                 }
-            },
-        }
+            }
         response = self._http.post_json(
             OPENAI_RESPONSES_URL,
             {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
@@ -83,7 +90,37 @@ class OpenAIProvider:
             provider=self.name,
             model=self.model,
             prompt_version=request.prompt_version,
-            data=parse_summary_json(text),
+            data=(
+                SummaryData.from_section_text(text)
+                if request.stage == "section"
+                else parse_summary_json(
+                    text,
+                    advanced_analysis=request.advanced_analysis,
+                )
+            ),
+            input_tokens=_optional_int(usage.get("input_tokens")),
+            output_tokens=_optional_int(usage.get("output_tokens")),
+        )
+
+    def extract_bibliography(
+        self, request: BibliographyRequest
+    ) -> BibliographyResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_response(
+            instructions=bibliography_instructions(request),
+            user_input=request.document_text,
+            schema_name="paper_bibliography",
+            schema=BIBLIOGRAPHY_SCHEMA,
+            max_output_tokens=request.max_output_tokens,
+        )
+        usage = response.get("usage")
+        usage = usage if isinstance(usage, Mapping) else {}
+        return BibliographyResult(
+            provider=self.name,
+            model=self.model,
+            prompt_version=request.prompt_version,
+            data=parse_bibliography_json(_collect_output_text(response)),
             input_tokens=_optional_int(usage.get("input_tokens")),
             output_tokens=_optional_int(usage.get("output_tokens")),
         )

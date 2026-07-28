@@ -6,6 +6,7 @@ from urllib.request import Request
 
 from paper_organizer.providers import (
     AnthropicProvider,
+    BibliographyRequest,
     CloudConsentRequiredError,
     OllamaProvider,
     OpenAIProvider,
@@ -20,24 +21,26 @@ from paper_organizer.providers.http import (
     UrllibJsonHttpClient,
     _CredentialSafeRedirectHandler,
 )
-from paper_organizer.providers.base import parse_summary_json
+from paper_organizer.providers.base import parse_bibliography_json, parse_summary_json
 
 
 SUMMARY = {
-    "summary_ko": "요약",
+    "summary": "요약",
     "research_question": "질문",
     "methods": ["방법"],
     "contributions": ["기여"],
     "limitations": ["한계"],
     "keywords": ["키워드"],
-    "title": "Directed evolution of a thermostable enzyme",
-    "authors": ["A. Researcher"],
-    "year": "2019",
-    "venue": "Journal of Molecular Biology",
     "category": "생물공학",
     "subcategory": "단백질공학",
     "meta_tags": ["directed evolution", "enzyme engineering"],
     "suggested_category": "",
+}
+BIBLIOGRAPHY = {
+    "title": "Directed evolution of a thermostable enzyme",
+    "authors": ["A. Researcher"],
+    "year": "2019",
+    "venue": "Journal of Molecular Biology",
 }
 SEARCH_PLAN = {
     "search_queries": ["thermostable enzyme", "directed evolution"],
@@ -82,12 +85,194 @@ class ProviderTests(unittest.TestCase):
             + json.dumps(SUMMARY, ensure_ascii=False)
             + "\n```\n"
         )
-        self.assertEqual(parsed.title, SUMMARY["title"])
+        self.assertEqual(parsed.title, "")
         self.assertEqual(parsed.methods, ("방법",))
+
+    def test_bibliography_parser_requires_exact_small_schema(self):
+        parsed = parse_bibliography_json(json.dumps(BIBLIOGRAPHY))
+        self.assertEqual(parsed.title, BIBLIOGRAPHY["title"])
+        self.assertEqual(parsed.authors, ("A. Researcher",))
 
     def test_summary_parser_rejects_truncated_json(self):
         with self.assertRaisesRegex(ProviderError, "invalid JSON"):
-            parse_summary_json('{"summary_ko": "unfinished"')
+            parse_summary_json('{"summary": "unfinished"')
+
+    def test_section_summary_uses_plain_text_for_every_provider(self):
+        section = "Section evidence with exact numeric values."
+        cases = (
+            (
+                OpenAIProvider,
+                FakeHttpClient(
+                    {
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": section,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                "openai",
+            ),
+            (
+                AnthropicProvider,
+                FakeHttpClient(
+                    {
+                        "content": [
+                            {"type": "text", "text": section}
+                        ]
+                    }
+                ),
+                "anthropic",
+            ),
+            (
+                OllamaProvider,
+                FakeHttpClient(
+                    {"message": {"content": section}}
+                ),
+                "ollama",
+            ),
+        )
+        for provider_class, client, provider_name in cases:
+            with self.subTest(provider=provider_name):
+                provider = (
+                    provider_class("secret", http_client=client)
+                    if provider_name != "ollama"
+                    else provider_class("qwen3:4b", http_client=client)
+                )
+                result = provider.summarize(
+                    SummaryRequest(
+                        "paper section",
+                        cloud_consent=provider_name != "ollama",
+                        stage="section",
+                    )
+                )
+                payload = client.calls[0]["payload"]
+                if provider_name == "openai":
+                    self.assertNotIn("text", payload)
+                elif provider_name == "anthropic":
+                    self.assertNotIn("output_config", payload)
+                else:
+                    self.assertNotIn("format", payload)
+                self.assertEqual(result.data.summary, section)
+                self.assertEqual(result.data.methods, ())
+
+    def test_bibliography_uses_dedicated_small_schema_for_every_provider(self):
+        encoded = json.dumps(BIBLIOGRAPHY)
+        cases = (
+            (
+                OpenAIProvider("secret", http_client=FakeHttpClient(
+                    {
+                        "output": [{
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": encoded}],
+                        }]
+                    }
+                )),
+                True,
+            ),
+            (
+                AnthropicProvider("secret", http_client=FakeHttpClient(
+                    {"content": [{"type": "text", "text": encoded}]}
+                )),
+                True,
+            ),
+            (
+                OllamaProvider("qwen3:4b", http_client=FakeHttpClient(
+                    {"message": {"content": encoded}}
+                )),
+                False,
+            ),
+        )
+        for provider, cloud_consent in cases:
+            with self.subTest(provider=provider.name):
+                result = provider.extract_bibliography(
+                    BibliographyRequest(
+                        "First-page identity text",
+                        cloud_consent=cloud_consent,
+                    )
+                )
+                payload = provider._http.calls[0]["payload"]
+                if provider.name == "openai":
+                    schema = payload["text"]["format"]["schema"]
+                elif provider.name == "anthropic":
+                    schema = payload["output_config"]["format"]["schema"]
+                else:
+                    schema = payload["format"]
+                self.assertEqual(
+                    schema["required"],
+                    ["title", "authors", "year", "venue"],
+                )
+                self.assertEqual(result.data.venue, BIBLIOGRAPHY["venue"])
+                instructions = (
+                    payload["messages"][0]["content"]
+                    if provider.name == "ollama"
+                    else (
+                        payload["instructions"]
+                        if provider.name == "openai"
+                        else payload["system"]
+                    )
+                )
+                self.assertIn("ResearchGate", instructions)
+                self.assertIn("Reviews and meta-analyses still have authors", instructions)
+
+    def test_compact_summary_omits_advanced_fields_for_every_provider(self):
+        compact = {
+            name: value
+            for name, value in SUMMARY.items()
+            if name not in {"contributions", "limitations"}
+        }
+        encoded = json.dumps(compact)
+        cases = (
+            (
+                OpenAIProvider("secret", http_client=FakeHttpClient(
+                    {
+                        "output": [{
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": encoded}],
+                        }]
+                    }
+                )),
+                True,
+            ),
+            (
+                AnthropicProvider("secret", http_client=FakeHttpClient(
+                    {"content": [{"type": "text", "text": encoded}]}
+                )),
+                True,
+            ),
+            (
+                OllamaProvider("qwen3:4b", http_client=FakeHttpClient(
+                    {"message": {"content": encoded}}
+                )),
+                False,
+            ),
+        )
+        for provider, cloud_consent in cases:
+            with self.subTest(provider=provider.name):
+                result = provider.summarize(
+                    SummaryRequest(
+                        "paper evidence",
+                        cloud_consent=cloud_consent,
+                        advanced_analysis=False,
+                    )
+                )
+                payload = provider._http.calls[0]["payload"]
+                if provider.name == "openai":
+                    schema = payload["text"]["format"]["schema"]
+                elif provider.name == "anthropic":
+                    schema = payload["output_config"]["format"]["schema"]
+                else:
+                    schema = payload["format"]
+                self.assertNotIn("contributions", schema["properties"])
+                self.assertNotIn("limitations", schema["properties"])
+                self.assertEqual(result.data.contributions, ())
+                self.assertEqual(result.data.limitations, ())
 
     def test_openai_supports_search_plan_and_grounded_answer(self):
         plan_client = FakeHttpClient(
@@ -227,6 +412,13 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(
             call["payload"]["text"]["format"]["type"], "json_schema"
         )
+        schema = call["payload"]["text"]["format"]["schema"]
+        self.assertIn("summary", schema["required"])
+        self.assertNotIn("summary_ko", schema["properties"])
+        self.assertNotIn("title", schema["properties"])
+        self.assertNotIn("authors", schema["properties"])
+        self.assertNotIn("year", schema["properties"])
+        self.assertNotIn("venue", schema["properties"])
         self.assertEqual(result.provider, "openai")
         self.assertEqual(result.data.methods, ("방법",))
         self.assertEqual(result.input_tokens, 10)
@@ -276,17 +468,9 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["payload"]["format"]["type"], "object")
         self.assertFalse(client.calls[0]["payload"]["think"])
         self.assertEqual(client.calls[0]["payload"]["options"]["num_ctx"], 24_576)
-        self.assertIn(
-            "copy those fields verbatim",
-            client.calls[0]["payload"]["messages"][0]["content"],
-        )
-        self.assertIn(
-            "never treat a review article as authorless",
-            client.calls[0]["payload"]["messages"][0]["content"].casefold(),
-        )
-        self.assertIn(
-            "for patents",
-            client.calls[0]["payload"]["messages"][0]["content"].casefold(),
+        self.assertNotIn(
+            "title",
+            client.calls[0]["payload"]["format"]["properties"],
         )
 
     def test_invalid_provider_shape_is_rejected(self):

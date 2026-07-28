@@ -2,17 +2,70 @@ import json
 import unittest
 from pathlib import Path
 
-from tests.benchmark.tools.run_models import DEFAULT_MODELS
-from tests.benchmark.tools.score_output import score_summary, token_overlap
+from tests.benchmark.tools.run_models import (
+    DEFAULT_MODELS,
+    PRIVATE_RUNNER,
+    _documents,
+    private_benchmark_command,
+)
+from tests.benchmark.tools.score_output import (
+    score_bibliography,
+    score_summary,
+    token_overlap,
+)
 
 
 class BenchmarkToolTests(unittest.TestCase):
+    def test_default_benchmark_command_targets_private_papers(self):
+        command = private_benchmark_command(
+            ["qwen3:0.6b"],
+            language="source",
+            resume=True,
+        )
+
+        self.assertEqual(Path(command[1]), PRIVATE_RUNNER)
+        self.assertIn("qwen3:0.6b", command)
+        self.assertIn("--resume", command)
+
+    def test_bibliography_score_checks_title_authors_year_and_venue(self):
+        truth = {
+            "title": "Exact Paper Title",
+            "authors": ["Mina Vale", "Theo Karst"],
+            "year": "2026",
+            "venue": "Journal of Synthetic Results",
+        }
+        output = json.dumps(
+            {
+                "title": "Exact Paper Title",
+                "authors": ["Mina Vale", "Theo Karst"],
+                "year": "2026",
+                "venue": "ResearchGate",
+            }
+        )
+
+        score = score_bibliography(truth, output)
+
+        self.assertEqual(score["score_100"], 75.0)
+        self.assertFalse(score["field_matches"]["venue"])
+        self.assertTrue(score["field_matches"]["authors"])
+
     def test_cross_family_candidates_are_in_default_model_matrix(self):
         self.assertIn("phi4-mini", DEFAULT_MODELS)
         self.assertIn("gemma3:4b-it-qat", DEFAULT_MODELS)
         self.assertIn(
             "ministral-3:3b-instruct-2512-q4_K_M",
             DEFAULT_MODELS,
+        )
+
+    def test_model_benchmark_excludes_ocr_documents(self):
+        documents = _documents(set())
+
+        self.assertEqual(len(documents), 6)
+        self.assertFalse(
+            any(
+                str(document.get("difficulty", "")).startswith("ocr_")
+                for document in documents
+            )
         )
 
     def test_token_overlap_is_case_and_whitespace_insensitive(self):

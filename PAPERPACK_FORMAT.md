@@ -48,7 +48,7 @@ content JSON to 64 MiB.
 ## Metadata and content
 
 `metadata/paper.json` is the editable canonical record. It contains identity,
-bibliography, classification, Korean summary, contributions, limitations,
+bibliography, classification, language-selected summary, contributions, limitations,
 experimental details, curation, and provenance fields.
 
 `content/content.json` contains page-, section-, and chunk-level extracted text used

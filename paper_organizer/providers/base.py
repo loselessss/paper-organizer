@@ -12,36 +12,55 @@ from paper_organizer.infra.secrets import validate_api_key
 SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "summary_ko": {"type": "string"},
+        "summary": {"type": "string", "maxLength": 1_200},
         "research_question": {"type": "string"},
         "methods": {"type": "array", "items": {"type": "string"}},
         "contributions": {"type": "array", "items": {"type": "string"}},
         "limitations": {"type": "array", "items": {"type": "string"}},
         "keywords": {"type": "array", "items": {"type": "string"}},
-        "title": {"type": "string"},
-        "authors": {"type": "array", "items": {"type": "string"}},
-        "year": {"type": "string"},
-        "venue": {"type": "string"},
         "category": {"type": "string"},
         "subcategory": {"type": "string"},
         "meta_tags": {"type": "array", "items": {"type": "string"}},
         "suggested_category": {"type": "string"},
     },
     "required": [
-        "summary_ko",
+        "summary",
         "research_question",
         "methods",
         "contributions",
         "limitations",
         "keywords",
-        "title",
-        "authors",
-        "year",
-        "venue",
         "category",
         "subcategory",
         "meta_tags",
         "suggested_category",
+    ],
+    "additionalProperties": False,
+}
+
+BIBLIOGRAPHY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "authors": {"type": "array", "items": {"type": "string"}},
+        "year": {"type": "string"},
+        "venue": {"type": "string"},
+    },
+    "required": ["title", "authors", "year", "venue"],
+    "additionalProperties": False,
+}
+
+BASIC_SUMMARY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        name: definition
+        for name, definition in SUMMARY_SCHEMA["properties"].items()
+        if name not in {"contributions", "limitations"}
+    },
+    "required": [
+        name
+        for name in SUMMARY_SCHEMA["required"]
+        if name not in {"contributions", "limitations"}
     ],
     "additionalProperties": False,
 }
@@ -88,30 +107,28 @@ SYSTEM_INSTRUCTIONS = (
     "You analyze academic papers from section-labeled paragraph context. "
     "Use only the supplied document text. Keep Introduction, Materials and Methods, "
     "Results, and Discussion claims distinct. Treat REGEX-VALIDATED CANDIDATES as "
-    "candidates that must still agree with the paper. Write summary_ko as three to "
-    "five short paragraphs separated by blank lines, not as one wall of text. "
+    "candidates that must still agree with the paper. Write summary as three to five "
+    "short paragraphs separated by blank lines, not as one wall of text. "
     "Preserve technical names accurately. "
     "If evidence is missing, use an empty string or empty list instead of guessing. "
-    "Also correct the bibliography from the document: title is the paper's own "
-    "title, authors are the listed authors, year is the four-digit publication "
-    "year as a string, and venue is the journal or conference name. The extracted "
-    "title may be inaccurate, so independently identify the exact title printed "
-    "in the document. Return that title in its original language: an English paper "
-    "must keep its English title. Never translate, romanize, summarize, or rewrite "
-    "the title, author names, or venue; copy those fields verbatim from the source "
-    "document, preserving spelling, word order, and punctuation. "
     "Do not summarize or analyze reference, bibliography, or works-cited entries, "
     "and never use them as evidence for the paper's findings or authorship. "
-    "Every article type, including narrative reviews, systematic reviews, and "
-    "meta-analyses, has a byline: extract all authors shown in that byline. Never "
-    "treat a review article as authorless and never copy cited-reference authors. "
-    "For patents, put inventors in authors and always return an empty venue; a "
-    "patent office, applicant, assignee, or publication number is not a journal. "
-    "Classify the paper into one university department-level category and a "
-    "narrower subcategory, both written in Korean. Return about five concise, "
-    "searchable meta_tags that describe the paper's topic, method, material, or "
+    "Return about five concise, searchable meta_tags that describe the paper's "
+    "topic, method, material, or "
     "application. Preserve established technical terms and do not use cited "
     "authors or reference titles as tags."
+)
+
+BIBLIOGRAPHY_INSTRUCTIONS = (
+    "Extract bibliographic identity only from the supplied first PDF page. Return "
+    "the exact title in its original language, every byline author or patent "
+    "inventor, the four-digit publication year, and the journal or conference name. "
+    "Copy spelling and punctuation from the page; never translate, romanize, shorten, "
+    "or rewrite these values. Reviews and meta-analyses still have authors. Never use "
+    "authors or titles from cited references. ResearchGate, Academia.edu, PubMed, "
+    "Google Scholar, Semantic Scholar, institutional repositories, publisher download "
+    "banners, web domains, database names, patent offices, applicants, and assignees "
+    "are distribution metadata, not a venue. Use empty values rather than guessing."
 )
 
 SEARCH_PLAN_INSTRUCTIONS = (
@@ -160,13 +177,13 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v8-direct"
+    prompt_version: str = "paper-summary-v9-direct"
     allowed_categories: tuple[str, ...] = ()
     context_window: int | None = None
     output_language: str = "ko"
     stage: str = "direct"
-    title_retry: bool = False
     json_retry: bool = False
+    language_retry: bool = False
     advanced_analysis: bool = True
 
     def validate(self) -> None:
@@ -183,12 +200,38 @@ class SummaryRequest:
             raise ValueError("output_language must be ko or source")
         if self.stage not in {"direct", "section", "synthesis"}:
             raise ValueError("stage must be direct, section or synthesis")
-        if not isinstance(self.title_retry, bool):
-            raise ValueError("title_retry must be a boolean")
         if not isinstance(self.json_retry, bool):
             raise ValueError("json_retry must be a boolean")
+        if not isinstance(self.language_retry, bool):
+            raise ValueError("language_retry must be a boolean")
         if not isinstance(self.advanced_analysis, bool):
             raise ValueError("advanced_analysis must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyRequest:
+    document_text: str
+    cloud_consent: bool = False
+    max_output_tokens: int = 500
+    prompt_version: str = "paper-bibliography-v1"
+    context_window: int | None = None
+    is_patent: bool = False
+    retry: bool = False
+
+    def validate(self) -> None:
+        if not self.document_text.strip():
+            raise ValueError("document_text cannot be empty")
+        if not 128 <= self.max_output_tokens <= 4_000:
+            raise ValueError("max_output_tokens must be between 128 and 4000")
+        if (
+            self.context_window is not None
+            and not 4_096 <= self.context_window <= 262_144
+        ):
+            raise ValueError("context_window must be between 4096 and 262144")
+        if not isinstance(self.is_patent, bool):
+            raise ValueError("is_patent must be a boolean")
+        if not isinstance(self.retry, bool):
+            raise ValueError("retry must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,38 +396,59 @@ class SearchAnswerResult:
 def system_instructions(request: SummaryRequest) -> str:
     """Append the caller's category list so the model picks from it."""
 
-    language = (
-        "Translate the explanatory fields, including summary_ko, research_question, "
-        "methods, contributions, and limitations, into natural Korean. Keep established "
-        "technical names in their source form where translation would reduce precision."
-        if request.output_language == "ko"
-        else "Keep the explanatory fields, including summary_ko, research_question, "
-        "methods, contributions, and limitations, in the paper's original language. "
-        "For an English paper, do not translate them into Korean."
-    )
-    stage = ""
     if request.stage == "section":
-        stage = (
-            " This is an intermediate pass over exactly one labeled paper section. "
-            "Extract concise evidence from only that section. Keep numeric values and "
-            "negations exact. Do not infer facts from other sections. Use empty values "
-            "for bibliography or classification fields not visible in this section."
+        language = (
+            "Write the evidence summary in natural Korean."
+            if request.output_language == "ko"
+            else (
+                "Write the evidence summary only in the paper's original language. "
+                "For an English paper, write only English and no Korean translation."
+            )
         )
-    elif request.stage == "synthesis":
+        retry = (
+            " The previous response used the wrong language. Rewrite the complete "
+            "plain-text response in the requested language."
+            if request.language_retry
+            else ""
+        )
+        return (
+            f"{language} Use only the supplied labeled paper section. Return plain "
+            "text only, not JSON or markdown. In at most 120 words, preserve the "
+            "research purpose, methods, findings, numeric values, and negations that "
+            "are actually present. Do not infer from other sections. Ignore reference, "
+            f"bibliography, and works-cited entries.{retry}"
+        )
+
+    if request.output_language == "ko":
+        language = (
+            "OUTPUT LANGUAGE CONTRACT — KOREAN: Write summary, research_question, "
+            "methods, contributions, limitations, keywords, and meta_tags in natural "
+            "Korean. Keep established technical names in their source form only when "
+            "translation would reduce precision. Do not answer those fields in English."
+        )
+        language_reminder = (
+            " FINAL LANGUAGE CHECK: The explanatory fields must be Korean."
+        )
+    else:
+        language = (
+            "OUTPUT LANGUAGE CONTRACT — ORIGINAL: Write summary, research_question, "
+            "methods, contributions, limitations, keywords, and meta_tags only in the "
+            "paper's original language. When the paper is English, all those fields "
+            "must be English and must contain no Korean translation. Korean is permitted "
+            "only in category, subcategory, and suggested_category."
+        )
+        language_reminder = (
+            " FINAL LANGUAGE CHECK: For an English paper, every explanatory field must "
+            "be English; do not output Korean outside the three classification fields."
+        )
+    stage = ""
+    if request.stage == "synthesis":
         stage = (
-            " This is the final pass over JSON evidence summaries produced independently "
+            " This is the final pass over evidence summaries produced independently "
             "from paper sections. Reconcile them into one coherent paper summary. Preserve "
             "numeric values and negations, distinguish results from discussion, and never "
             "invent details omitted by every section summary."
         )
-    retry = (
-        " The previous response incorrectly translated or rewrote the paper title. "
-        "Retry the complete JSON response, but copy title character-for-character "
-        "from the source evidence in its original language. An English source title "
-        "must contain no Korean translation."
-        if request.title_retry
-        else ""
-    )
     json_retry = (
         " The previous response was not one complete valid JSON object. Retry "
         "the entire response using exactly the requested schema. Output JSON "
@@ -393,32 +457,100 @@ def system_instructions(request: SummaryRequest) -> str:
         if request.json_retry
         else ""
     )
+    language_retry = (
+        " The previous response violated the OUTPUT LANGUAGE CONTRACT. Rewrite the "
+        "complete JSON response in the requested language. Do not reuse explanatory "
+        "sentences written in the wrong language."
+        if request.language_retry
+        else ""
+    )
     analysis_scope = (
         ""
         if request.advanced_analysis
-        else " Do not infer contributions or limitations; return empty arrays for both."
+        else " Do not infer contributions or limitations; those fields are omitted."
     )
     allowed = [name.strip() for name in request.allowed_categories if name.strip()]
-    if not allowed:
-        return (
-            f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{json_retry}"
-            f"{analysis_scope}"
+    if allowed:
+        classification = (
+            " Choose category from exactly this Korean classification list: "
+            f"{', '.join(allowed)}. If one fits, return it in category and return "
+            "an empty suggested_category. If none fits, return empty category and "
+            "subcategory strings and propose one concise Korean university "
+            "department-level name in suggested_category. Never add a category on "
+            "the user's behalf."
+        )
+    else:
+        classification = (
+            " Classify the paper into one Korean university department-level category "
+            "and a narrower Korean subcategory."
         )
     return (
-        f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{json_retry}"
-        f"{analysis_scope} "
-        "Choose category from exactly this list: "
-        f"{', '.join(allowed)}. If one fits, return it in category and return "
-        "an empty suggested_category. If none fits, return empty category and "
-        "subcategory strings and propose one concise Korean university "
-        "department-level name in suggested_category. Never add a category on "
-        "the user's behalf."
+        f"{language} {SYSTEM_INSTRUCTIONS}{stage}{json_retry}"
+        f"{language_retry}{analysis_scope}{classification}{language_reminder}"
     )
+
+
+def bibliography_instructions(request: BibliographyRequest) -> str:
+    patent = (
+        " This document is a patent. Put inventors in authors and always return an "
+        "empty venue."
+        if request.is_patent
+        else ""
+    )
+    retry = (
+        " The previous response contained missing or unverifiable values. Retry the "
+        "complete JSON object and copy only values visibly printed on this page."
+        if request.retry
+        else ""
+    )
+    return f"{BIBLIOGRAPHY_INSTRUCTIONS}{patent}{retry}"
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyData:
+    title: str
+    authors: tuple[str, ...]
+    year: str
+    venue: str
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "BibliographyData":
+        expected = set(BIBLIOGRAPHY_SCHEMA["required"])
+        if set(raw) != expected:
+            missing = sorted(expected - set(raw))
+            extra = sorted(set(raw) - expected)
+            raise ProviderError(
+                f"Invalid bibliography fields; missing={missing}, extra={extra}"
+            )
+        for name in ("title", "year", "venue"):
+            if not isinstance(raw[name], str):
+                raise ProviderError(f"Bibliography field '{name}' must be a string")
+        authors = raw["authors"]
+        if not isinstance(authors, list) or any(
+            not isinstance(author, str) for author in authors
+        ):
+            raise ProviderError("Bibliography field 'authors' must be a string array")
+        return cls(
+            title=raw["title"],
+            authors=tuple(authors),
+            year=raw["year"],
+            venue=raw["venue"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyResult:
+    provider: str
+    model: str
+    prompt_version: str
+    data: BibliographyData
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SummaryData:
-    summary_ko: str
+    summary: str
     research_question: str
     methods: tuple[str, ...]
     contributions: tuple[str, ...]
@@ -434,19 +566,22 @@ class SummaryData:
     suggested_category: str = ""
 
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any]) -> "SummaryData":
-        expected = set(SUMMARY_SCHEMA["required"])
+    def from_mapping(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        advanced_analysis: bool = True,
+    ) -> "SummaryData":
+        schema = SUMMARY_SCHEMA if advanced_analysis else BASIC_SUMMARY_SCHEMA
+        expected = set(schema["required"])
         if set(raw) != expected:
             missing = sorted(expected - set(raw))
             extra = sorted(set(raw) - expected)
             raise ProviderError(f"Invalid summary fields; missing={missing}, extra={extra}")
         strings: dict[str, str] = {}
         for name in (
-            "summary_ko",
+            "summary",
             "research_question",
-            "title",
-            "year",
-            "venue",
             "category",
             "subcategory",
             "suggested_category",
@@ -455,21 +590,33 @@ class SummaryData:
                 raise ProviderError(f"Summary field '{name}' must be a string")
             strings[name] = raw[name]
         arrays: dict[str, tuple[str, ...]] = {}
-        for name in (
-            "methods",
-            "contributions",
-            "limitations",
-            "keywords",
-            "authors",
-            "meta_tags",
-        ):
+        array_names = ["methods", "keywords", "meta_tags"]
+        if advanced_analysis:
+            array_names[1:1] = ["contributions", "limitations"]
+        for name in array_names:
             value = raw[name]
             if not isinstance(value, list) or any(
                 not isinstance(item, str) for item in value
             ):
                 raise ProviderError(f"Summary field '{name}' must be a string array")
             arrays[name] = tuple(value)
-        return cls(**strings, **arrays)
+        return cls(
+            **strings,
+            contributions=arrays.pop("contributions", ()),
+            limitations=arrays.pop("limitations", ()),
+            **arrays,
+        )
+
+    @classmethod
+    def from_section_text(cls, text: str) -> "SummaryData":
+        return cls(
+            summary=text.strip(),
+            research_question="",
+            methods=(),
+            contributions=(),
+            limitations=(),
+            keywords=(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,6 +634,10 @@ class SummaryProvider(Protocol):
     model: str
     is_cloud: bool
 
+    def extract_bibliography(
+        self, request: BibliographyRequest
+    ) -> BibliographyResult: ...
+
     def summarize(self, request: SummaryRequest) -> SummaryResult: ...
 
     def plan_search(self, request: SearchPlanRequest) -> SearchPlanResult: ...
@@ -494,7 +645,17 @@ class SummaryProvider(Protocol):
     def answer_search(self, request: SearchAnswerRequest) -> SearchAnswerResult: ...
 
 
-def parse_summary_json(text: str) -> SummaryData:
+def summary_response_schema(request: SummaryRequest) -> Mapping[str, Any]:
+    """Use the compact final schema when advanced fields are disabled."""
+
+    return SUMMARY_SCHEMA if request.advanced_analysis else BASIC_SUMMARY_SCHEMA
+
+
+def parse_summary_json(
+    text: str,
+    *,
+    advanced_analysis: bool = True,
+) -> SummaryData:
     try:
         raw = json.loads(text)
     except json.JSONDecodeError:
@@ -503,7 +664,12 @@ def parse_summary_json(text: str) -> SummaryData:
             raise ProviderError("Provider returned invalid JSON") from None
     if not isinstance(raw, dict):
         raise ProviderError("Provider summary must be a JSON object")
-    return SummaryData.from_mapping(raw)
+    return SummaryData.from_mapping(raw, advanced_analysis=advanced_analysis)
+
+
+def parse_bibliography_json(text: str) -> BibliographyData:
+    raw = _parse_json_object(text, "bibliography")
+    return BibliographyData.from_mapping(raw)
 
 
 def _extract_json_object(text: str) -> Mapping[str, Any] | None:

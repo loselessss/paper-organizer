@@ -62,6 +62,43 @@ class PaperPackTests(unittest.TestCase):
             self.assertEqual(load_paperpack_metadata(pack)["title"], "Before")
             self.assertEqual(load_paperpack_content(pack)["chunks"][0]["text"], "DMEM")
 
+    def test_create_migrates_legacy_summary_field_without_persisting_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf = root / "paper.pdf"
+            pdf.write_bytes(PDF_BYTES)
+            pack = root / "paper.paperpack"
+            create_paperpack(
+                pack,
+                pdf,
+                {
+                    "description": {"summary_ko": "기존 요약"},
+                    "analysis": {"summary_ko": "기존 AI 요약"},
+                    "curation": {
+                        "field_sources": {
+                            "description.summary_ko": "user",
+                        },
+                        "locked_fields": ["description.summary_ko"],
+                    },
+                },
+            )
+
+            metadata = load_paperpack_metadata(pack)
+            self.assertEqual(metadata["description"]["summary"], "기존 요약")
+            self.assertEqual(metadata["analysis"]["summary"], "기존 AI 요약")
+            self.assertNotIn("summary_ko", metadata["description"])
+            self.assertEqual(
+                metadata["curation"]["field_sources"],
+                {"description.summary": "user"},
+            )
+            self.assertEqual(
+                metadata["curation"]["locked_fields"],
+                ["description.summary"],
+            )
+            with zipfile.ZipFile(pack) as archive:
+                raw = json.loads(archive.read(METADATA_ENTRY))
+            self.assertNotIn("summary_ko", json.dumps(raw, ensure_ascii=False))
+
     def test_import_keeps_source_pdf_by_default(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

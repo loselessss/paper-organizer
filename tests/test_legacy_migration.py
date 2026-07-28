@@ -74,6 +74,8 @@ class LegacyMigrationTests(unittest.TestCase):
             metadata = load_paperpack_metadata(pack)
             self.assertEqual(metadata["file"]["relative_path"], "papers/Science/paper.paperpack")
             self.assertEqual(metadata["file"]["storage_format"], "paperpack-zip-v1")
+            self.assertEqual(metadata["description"]["summary"], "")
+            self.assertNotIn("summary_ko", metadata["description"])
             self.assertEqual(load_paperpack_content(pack)["chunks"][0]["text"], "paper")
             index = json.loads((root / "index" / "library.json").read_text(encoding="utf-8"))
             self.assertEqual(index["file_count"], 1)

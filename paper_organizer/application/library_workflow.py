@@ -115,7 +115,7 @@ class EditablePaperMetadata:
     category: str = "Uncategorized"
     subcategory: str = "General"
     tags: list[str] = field(default_factory=list)
-    summary_ko: str = ""
+    summary: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,7 +556,7 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
         category=str(classification.get("category") or "Uncategorized"),
         subcategory=str(classification.get("subcategory") or "General"),
         tags=[str(value) for value in classification.get("tags", [])],
-        summary_ko=str(description.get("summary_ko", "")),
+        summary=str(description.get("summary", "")),
     )
 
 
@@ -1101,7 +1101,7 @@ class LibraryWorkflowController:
             category=item.metadata.category,
             subcategory=item.metadata.subcategory,
             tags=list(item.metadata.tags),
-            summary_ko=item.metadata.summary_ko,
+            summary=item.metadata.summary,
         )
         page_texts = list(item.page_texts)
         if not page_texts:
@@ -1476,7 +1476,7 @@ class LibraryWorkflowController:
         record["analysis"] = {
             "status": "completed",
             "analysis_level": execution.preview.mode.value,
-            "summary_ko": data.summary_ko,
+            "summary": data.summary,
             "research_question": data.research_question,
             "methods": list(data.methods),
             "contributions": list(data.contributions),
@@ -1494,7 +1494,7 @@ class LibraryWorkflowController:
         locked = set(curation.get("locked_fields", []))
         sources = curation.setdefault("field_sources", {})
         values = {
-            "summary_ko": data.summary_ko,
+            "summary": data.summary,
             "research_question": data.research_question,
             "methods": list(data.methods),
             "keywords": list(data.keywords),
@@ -2099,7 +2099,7 @@ class LibraryWorkflowController:
                             "ai_tags", []
                         )
                     ],
-                    metadata.summary_ko,
+                    metadata.summary,
                     json.dumps(
                         entry.record.get("experimental_details", {}),
                         ensure_ascii=False,
@@ -2407,7 +2407,7 @@ class LibraryWorkflowController:
                     "classification.category": "user",
                     "classification.subcategory": "user",
                     "classification.tags": "user",
-                    "description.summary_ko": "user",
+                    "description.summary": "user",
                 },
                 "last_edited_at": _now_iso(),
                 "last_edited_by": "user",
@@ -2478,7 +2478,7 @@ def _apply_metadata(record: dict[str, Any], metadata: EditablePaperMetadata) -> 
             "tags": metadata.tags,
         }
     )
-    record.setdefault("description", {})["summary_ko"] = metadata.summary_ko.strip()
+    record.setdefault("description", {})["summary"] = metadata.summary.strip()
 
 
 def _new_sidecar(
@@ -2558,7 +2558,7 @@ def _new_sidecar(
             "classification.category",
             "classification.subcategory",
             "classification.tags",
-            "description.summary_ko",
+            "description.summary",
         )
     }
     if (

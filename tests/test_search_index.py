@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -80,6 +81,34 @@ class SearchIndexTests(unittest.TestCase):
         controller.scan()
         controller.scan()
         return controller, library
+
+    def test_stale_summary_column_is_rebuilt_as_disposable_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = search_index_path(root)
+            target.parent.mkdir(parents=True)
+            connection = sqlite3.connect(target)
+            connection.execute(
+                "CREATE TABLE works (file_id TEXT PRIMARY KEY, summary_ko TEXT)"
+            )
+            connection.execute(
+                "CREATE VIRTUAL TABLE pages USING fts5(file_id, page, text)"
+            )
+            connection.commit()
+            connection.close()
+
+            indexed, problems = rebuild_search_index(root)
+
+            self.assertEqual(indexed, 0)
+            self.assertEqual(problems, ())
+            connection = sqlite3.connect(target)
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(works)")
+            }
+            connection.close()
+            self.assertIn("summary", columns)
+            self.assertNotIn("summary_ko", columns)
 
     def test_body_text_is_searchable_after_auto_organize(self):
         with tempfile.TemporaryDirectory() as temp:

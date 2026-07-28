@@ -10,6 +10,7 @@ from paper_organizer.application.library_workflow import LibraryWorkflowControll
 from paper_organizer.application.summary_service import (
     ImmediateSummaryController,
     SummaryMode,
+    ollama_model_supports_ocr,
 )
 from paper_organizer.infra.ollama_runtime import (
     OllamaRuntimeInspector,
@@ -117,6 +118,17 @@ class BackgroundAnalysisService:
         next_item = pending[0]
         queued_path = Path(next_item.path)
         if self._workflow.paperpack_needs_ocr(queued_path):
+            if (
+                settings.summary_provider == "ollama"
+                and not ollama_model_supports_ocr(settings.selected_model)
+            ):
+                return AnalysisRunEvent(
+                    "waiting",
+                    "OCR 문서는 8B 이상 Ollama 모델에서만 분석합니다. "
+                    "AI 설정에서 8B 모델을 선택하세요.",
+                    next_item.queue_id,
+                    next_item.title,
+                )
             if on_start is not None:
                 on_start(
                     AnalysisRunEvent(

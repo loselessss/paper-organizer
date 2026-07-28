@@ -33,7 +33,7 @@ def record(file_id: str, relative_path: str, variant: str) -> dict:
             "tags": ["culture"],
         },
         "description": {
-            "summary_ko": "세포 배양 조건을 비교한다.",
+            "summary": "세포 배양 조건을 비교한다.",
             "keywords": ["A549"],
         },
         "experimental_details": {

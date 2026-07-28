@@ -16,9 +16,11 @@ from paper_organizer.core.paperpack import load_paperpack_metadata, update_paper
 from paper_organizer.core.search_index import search
 from paper_organizer.infra.settings import load_settings, save_settings
 from paper_organizer.providers.base import (
+    BibliographyRequest,
     SummaryData,
     SummaryRequest,
     SummaryResult,
+    bibliography_instructions,
     system_instructions,
 )
 
@@ -55,7 +57,7 @@ def execution(
 ) -> SummaryExecution:
     data = SummaryData(
         **{
-            "summary_ko": "AI 요약",
+            "summary": "AI 요약",
             "research_question": "질문",
             "methods": ("방법",),
             "contributions": ("기여",),
@@ -108,8 +110,12 @@ class SystemInstructionTests(unittest.TestCase):
     def test_instructions_stay_unchanged_without_a_category_list(self):
         plain = system_instructions(SummaryRequest(document_text="text"))
         self.assertNotIn("Choose category from", plain)
-        self.assertIn("an English paper must keep its English title", plain)
-        self.assertIn("independently identify the exact title", plain)
+        self.assertNotIn("exact title", plain)
+        bibliography = bibliography_instructions(
+            BibliographyRequest(document_text="first page")
+        )
+        self.assertIn("exact title in its original language", bibliography)
+        self.assertIn("every byline author", bibliography)
 
 
 class AiClassificationTests(unittest.TestCase):
@@ -193,7 +199,7 @@ class AiClassificationTests(unittest.TestCase):
             self.assertEqual(record["bibliography"]["title"], "사람이 고친 제목")
             self.assertEqual(record["classification"]["category"], "화학")
             self.assertEqual(final.parent.parent.name, "화학")
-            self.assertEqual(record["analysis"]["summary_ko"], "AI 요약")
+            self.assertEqual(record["analysis"]["summary"], "AI 요약")
 
     def test_paperpack_stays_when_ai_returns_no_category(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -225,7 +231,7 @@ class AiClassificationTests(unittest.TestCase):
                 pack,
                 execution(
                     pdf,
-                    summary_ko="첫 요약",
+                    summary="첫 요약",
                     meta_tags=("효소공학", "바이오촉매", "효소공학"),
                 ),
             )
@@ -235,14 +241,14 @@ class AiClassificationTests(unittest.TestCase):
                 moved,
                 execution(
                     moved_pdf,
-                    summary_ko="새 요약",
+                    summary="새 요약",
                     meta_tags=("열안정성", "단백질 설계"),
                 ),
             )
 
             final = next((library / "papers").rglob("*.paperpack"))
             record = load_paperpack_metadata(final)
-            self.assertEqual(record["description"]["summary_ko"], "새 요약")
+            self.assertEqual(record["description"]["summary"], "새 요약")
             self.assertEqual(record["classification"]["tags"], ["내 태그"])
             self.assertEqual(
                 record["classification"]["ai_tags"],
@@ -316,7 +322,7 @@ class AiClassificationTests(unittest.TestCase):
             self.assertEqual(item.status, "organized_pending_analysis")
             self.assertEqual(item.priority, 1)
             self.assertEqual(
-                load_paperpack_metadata(entry.sidecar_path)["analysis"]["summary_ko"],
+                load_paperpack_metadata(entry.sidecar_path)["analysis"]["summary"],
                 "AI 요약",
             )
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the synthetic corpus through installed Ollama models and compare results."""
+"""Run private papers by default, or the synthetic corpus when explicitly requested."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -46,6 +47,26 @@ DEFAULT_MODELS = (
     "qwen3:8b",
 )
 BENCHMARK_ROOT = Path(__file__).resolve().parent.parent
+PRIVATE_RUNNER = REPOSITORY_ROOT / "tests" / "Real" / "run_private_benchmark.py"
+
+
+def private_benchmark_command(
+    models: list[str],
+    *,
+    language: str,
+    resume: bool,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(PRIVATE_RUNNER),
+        "--models",
+        *models,
+        "--languages",
+        language,
+    ]
+    if resume:
+        command.append("--resume")
+    return command
 
 
 class _NoSecrets:
@@ -102,7 +123,11 @@ def _documents(requested: set[str]) -> list[dict[str, Any]]:
     manifest = json.loads(
         (BENCHMARK_ROOT / "manifest.json").read_text(encoding="utf-8")
     )
-    documents = list(manifest["documents"])
+    documents = [
+        item
+        for item in manifest["documents"]
+        if not str(item.get("difficulty", "")).startswith("ocr_")
+    ]
     if requested:
         documents = [
             item for item in documents if item["document_id"] in requested
@@ -209,6 +234,11 @@ def _write_comparison(
             "input_tokens",
             "output_tokens",
             "score_100",
+            "bibliography_score_100",
+            "bibliography_title",
+            "bibliography_authors",
+            "bibliography_year",
+            "bibliography_venue",
             "raw_points",
             "penalty_points",
             "mean_token_coverage",
@@ -221,6 +251,8 @@ def _write_comparison(
     writer.writeheader()
     for result in rows:
         score = result.get("score") or {}
+        bibliography = score.get("bibliography") or {}
+        bibliography_fields = bibliography.get("field_matches") or {}
         writer.writerow(
             {
                 "model": result["model"],
@@ -232,6 +264,11 @@ def _write_comparison(
                 "input_tokens": result.get("input_tokens", ""),
                 "output_tokens": result.get("output_tokens", ""),
                 "score_100": score.get("score_100", ""),
+                "bibliography_score_100": bibliography.get("score_100", ""),
+                "bibliography_title": bibliography_fields.get("title", ""),
+                "bibliography_authors": bibliography_fields.get("authors", ""),
+                "bibliography_year": bibliography_fields.get("year", ""),
+                "bibliography_venue": bibliography_fields.get("venue", ""),
                 "raw_points": score.get("raw_points", ""),
                 "penalty_points": score.get("penalty_points", ""),
                 "mean_token_coverage": score.get("mean_token_coverage", ""),
@@ -381,6 +418,11 @@ def _write_comparison(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="비공개 사용자 논문 대신 저장소의 합성 논문을 사용합니다.",
+    )
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--documents", nargs="*", default=[])
     parser.add_argument("--mode", choices=("quick", "full"), default="full")
@@ -401,6 +443,22 @@ def main() -> int:
         help="이미 성공 결과가 있는 모델/문서는 건너뜁니다.",
     )
     args = parser.parse_args()
+    if not args.synthetic:
+        if not PRIVATE_RUNNER.is_file():
+            parser.error(
+                "기본 비공개 벤치마크 실행기가 없습니다. tests/Real에 사용자 "
+                "논문과 run_private_benchmark.py를 두거나 --synthetic을 사용하세요."
+            )
+        command = private_benchmark_command(
+            args.models,
+            language=args.language,
+            resume=args.resume,
+        )
+        return subprocess.run(
+            command,
+            cwd=str(REPOSITORY_ROOT),
+            check=False,
+        ).returncode
     documents = _documents(set(args.documents))
     output_dir = args.output.expanduser().resolve()
     rows: list[dict[str, Any]] = []

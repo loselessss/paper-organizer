@@ -63,7 +63,7 @@ def execution(path: Path, mode=SummaryMode.QUICK):
         model="qwen3:4b",
         prompt_version="paper-summary-v1",
         data=SummaryData(
-            summary_ko="AI 요약",
+            summary="AI 요약",
             research_question="질문",
             methods=("방법",),
             contributions=("기여",),
@@ -254,7 +254,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             root = Path(temp)
             settings_path = root / "settings.json"
             save_settings(
-                AppSettings(selected_model="qwen3:4b", background_analysis_enabled=True),
+                AppSettings(selected_model="qwen3:8b", background_analysis_enabled=True),
                 settings_path,
             )
             workflow = FakeWorkflow(root / "paper.paperpack")
@@ -283,6 +283,34 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertFalse(workflow.claimed)
         self.assertEqual(summary.modes, [])
 
+    def test_full_ocr_waits_for_an_8b_ollama_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            workflow.needs_ocr = True
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "waiting")
+        self.assertIn("8B 이상", event.message)
+        self.assertEqual(workflow.ocr_completed, [])
+        self.assertFalse(workflow.claimed)
+
     def test_paperpack_result_keeps_curated_summary_and_saves_ai_analysis(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -299,10 +327,10 @@ class BackgroundAnalysisTests(unittest.TestCase):
             pack = papers / "paper.paperpack"
             metadata = {
                 "schema_version": 2,
-                "description": {"summary_ko": "사용자 요약", "methods": []},
+                "description": {"summary": "사용자 요약", "methods": []},
                 "curation": {
                     "revision": 1,
-                    "field_sources": {"description.summary_ko": "user"},
+                    "field_sources": {"description.summary": "user"},
                     "locked_fields": [],
                 },
                 "workflow": {},
@@ -319,9 +347,9 @@ class BackgroundAnalysisTests(unittest.TestCase):
             workflow.apply_analysis_result(pack, execution(pdf))
             saved = load_paperpack_metadata(pack)
 
-        self.assertEqual(saved["description"]["summary_ko"], "사용자 요약")
+        self.assertEqual(saved["description"]["summary"], "사용자 요약")
         self.assertEqual(saved["description"]["methods"], ["방법"])
-        self.assertEqual(saved["analysis"]["summary_ko"], "AI 요약")
+        self.assertEqual(saved["analysis"]["summary"], "AI 요약")
         self.assertEqual(saved["workflow"]["analysis_status"], "completed")
 
 

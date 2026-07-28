@@ -225,7 +225,7 @@ class ImmediateSummaryWidget(QWidget):
         )
         paragraphs = "".join(
             f"<p>{esc(value)}</p>"
-            for value in data.summary_ko.split("\n\n")
+            for value in data.summary.split("\n\n")
             if value.strip()
         )
         self.output.setHtml(

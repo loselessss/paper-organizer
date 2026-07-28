@@ -2,6 +2,9 @@
 
 from .anthropic import AnthropicProvider
 from .base import (
+    BibliographyData,
+    BibliographyRequest,
+    BibliographyResult,
     CloudConsentRequiredError,
     ProviderError,
     SearchAnswerData,
@@ -22,6 +25,9 @@ from .policy import CloudRequestPolicy, cloud_request_policy
 
 __all__ = [
     "AnthropicProvider",
+    "BibliographyData",
+    "BibliographyRequest",
+    "BibliographyResult",
     "CloudConsentRequiredError",
     "CloudRequestPolicy",
     "OllamaProvider",

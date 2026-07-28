@@ -16,27 +16,28 @@ from paper_organizer.application.summary_service import (
     prepare_text_summary,
     run_prepared_summary,
     _paragraphize_summary,
-    _title_needs_original_language_retry,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError, ProviderError
 
 
 SUMMARY = {
-    "summary_ko": "시험용 요약",
+    "summary": "시험용 요약",
     "research_question": "시험 질문",
     "methods": ["시험 방법"],
     "contributions": ["시험 기여"],
     "limitations": ["시험 한계"],
     "keywords": ["시험"],
-    "title": "Test Paper Title",
-    "authors": ["시험 저자"],
-    "year": "2026",
-    "venue": "시험 저널",
     "category": "생물공학",
     "subcategory": "단백질공학",
     "meta_tags": ["효소공학", "단백질 설계"],
     "suggested_category": "",
+}
+BIBLIOGRAPHY = {
+    "title": "Test Paper Title",
+    "authors": ["시험 저자"],
+    "year": "2026",
+    "venue": "시험 저널",
 }
 
 
@@ -52,14 +53,42 @@ class MemorySecretStore:
 
 
 class FakeHttpClient:
-    def __init__(self):
+    def __init__(self, summary=None, bibliography=None):
         self.calls: list[dict[str, Any]] = []
+        self.summary = summary or SUMMARY
+        self.bibliography = bibliography or BIBLIOGRAPHY
 
     def post_json(self, url, headers, payload, timeout_seconds):
         self.calls.append({"url": url, "headers": headers, "payload": payload})
+        schema = (
+            payload.get("format")
+            if url.endswith("/api/chat")
+            else payload.get("text", {}).get("format", {}).get("schema")
+        )
+        is_section = not isinstance(schema, dict)
+        response_summary = (
+            dict(self.bibliography)
+            if isinstance(schema, dict)
+            and set(schema.get("required", ()))
+            == {"title", "authors", "year", "venue"}
+            else dict(self.summary)
+        )
+        if isinstance(schema, dict):
+            allowed_fields = set(schema.get("required", ()))
+            response_summary = {
+                name: value
+                for name, value in response_summary.items()
+                if name in allowed_fields
+            }
+        response_text = (
+            self.summary.get("summary", SUMMARY["summary"])
+            + " 본문 근거와 실험 결과를 충분히 정리합니다."
+            if is_section
+            else json.dumps(response_summary)
+        )
         if url.endswith("/api/chat"):
             return {
-                "message": {"content": json.dumps(SUMMARY)},
+                "message": {"content": response_text},
                 "prompt_eval_count": 100,
                 "eval_count": 20,
             }
@@ -68,7 +97,7 @@ class FakeHttpClient:
                 {
                     "type": "message",
                     "content": [
-                        {"type": "output_text", "text": json.dumps(SUMMARY)}
+                        {"type": "output_text", "text": response_text}
                     ],
                 }
             ],
@@ -142,7 +171,7 @@ class SummaryServiceTests(unittest.TestCase):
 
             def post_json(self, url, headers, payload, timeout_seconds):
                 self.calls += 1
-                return {"message": {"content": '{"summary_ko": "unfinished"'}}
+                return {"message": {"content": '{"summary": "unfinished"'}}
 
         settings = AppSettings(
             summary_provider="ollama",
@@ -166,38 +195,7 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(client.calls, 2)
 
-    def test_translated_korean_title_is_retried_for_english_source(self):
-        self.assertTrue(
-            _title_needs_original_language_retry(
-                "번역된 논문 제목",
-                "English scientific source text. " * 20,
-            )
-        )
-        self.assertFalse(
-            _title_needs_original_language_retry(
-                "한국어 논문 제목",
-                "한국어 원문입니다. " * 20,
-            )
-        )
-
-    def test_title_script_mismatch_retries_final_json_once(self):
-        first = dict(SUMMARY, title="번역된 논문 제목")
-        corrected = dict(SUMMARY, title="An Original English Title")
-
-        class SequenceClient:
-            def __init__(self):
-                self.calls = []
-                self.responses = [first, corrected]
-
-            def post_json(self, url, headers, payload, timeout_seconds):
-                self.calls.append({"url": url, "headers": headers, "payload": payload})
-                value = self.responses.pop(0)
-                return {
-                    "message": {"content": json.dumps(value)},
-                    "prompt_eval_count": 10,
-                    "eval_count": 5,
-                }
-
+    def test_bibliography_is_extracted_separately_from_first_page(self):
         settings = AppSettings(
             summary_provider="ollama",
             selected_model="qwen3:8b",
@@ -205,12 +203,12 @@ class SummaryServiceTests(unittest.TestCase):
         prepared = prepare_text_summary(
             Path("paper.paperpack"),
             [
-                "An Original English Title\nA. Author\nSynthetic Journal\n"
-                "Introduction\n" + "English scientific evidence. " * 40,
+                "Test Paper Title\n시험 저자\n시험 저널\n2026\n"
+                "Introduction\n" + "시험용 본문 근거입니다. " * 40,
             ],
             settings,
         )
-        client = SequenceClient()
+        client = FakeHttpClient()
         execution = run_prepared_summary(
             prepared,
             settings,
@@ -218,11 +216,49 @@ class SummaryServiceTests(unittest.TestCase):
             http_client=client,
         )
         self.assertEqual(len(client.calls), 2)
-        self.assertIn(
-            "previous response incorrectly translated",
-            client.calls[1]["payload"]["messages"][0]["content"].casefold(),
+        self.assertEqual(
+            client.calls[0]["payload"]["format"]["required"],
+            ["title", "authors", "year", "venue"],
         )
-        self.assertEqual(execution.result.data.title, "An Original English Title")
+        self.assertNotIn("title", client.calls[1]["payload"]["format"]["properties"])
+        self.assertEqual(execution.result.data.title, "Test Paper Title")
+        self.assertEqual(execution.result.data.authors, ("시험 저자",))
+        self.assertEqual(execution.result.data.year, "2026")
+        self.assertEqual(execution.result.data.venue, "시험 저널")
+        self.assertEqual(
+            execution.bibliography_verified_fields,
+            ("title", "authors", "year", "venue"),
+        )
+
+    def test_distribution_platform_is_rejected_as_venue(self):
+        client = FakeHttpClient(
+            bibliography=dict(BIBLIOGRAPHY, venue="ResearchGate")
+        )
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "Downloaded from ResearchGate\nTest Paper Title\n시험 저자\n"
+                "시험 저널\n2026\nIntroduction\n" + "시험 본문입니다. " * 50,
+            ],
+            settings,
+        )
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(execution.result.data.venue, "")
+        self.assertEqual(execution.bibliography_retry_count, 1)
+        self.assertNotIn("venue", execution.bibliography_verified_fields)
+        bibliography_prompt = client.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("ResearchGate", bibliography_prompt)
 
     def test_small_ollama_model_uses_section_then_synthesis_and_hides_advanced_fields(self):
         settings = AppSettings(
@@ -232,7 +268,7 @@ class SummaryServiceTests(unittest.TestCase):
         prepared = prepare_text_summary(
             Path("paper.paperpack"),
             [
-                "An Original English Title\nA. Author\nSynthetic Journal\n"
+                "Test Paper Title\n시험 저자\n시험 저널\n2026\n"
                 "Abstract\n" + "Abstract evidence. " * 40,
                 "Introduction\n" + "Question evidence. " * 40,
                 "Materials and Methods\n" + "Method evidence. " * 40,
@@ -252,15 +288,29 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
         self.assertEqual(
-            len(client.calls), len(prepared.section_contexts) + 1
+            len(client.calls), len(prepared.section_contexts) + 2
         )
         self.assertIn(
-            "intermediate pass",
-            client.calls[0]["payload"]["messages"][0]["content"],
+            "plain text only",
+            client.calls[1]["payload"]["messages"][0]["content"],
         )
         self.assertIn(
             "final pass",
             client.calls[-1]["payload"]["messages"][0]["content"],
+        )
+        for call in client.calls[1:-1]:
+            self.assertNotIn("format", call["payload"])
+        self.assertGreater(
+            len(client.calls[-1]["payload"]["format"]["required"]),
+            1,
+        )
+        self.assertNotIn(
+            "contributions",
+            client.calls[-1]["payload"]["format"]["properties"],
+        )
+        self.assertNotIn(
+            "limitations",
+            client.calls[-1]["payload"]["format"]["properties"],
         )
         self.assertEqual(execution.result.data.contributions, ())
         self.assertEqual(execution.result.data.limitations, ())
@@ -376,7 +426,7 @@ class SummaryServiceTests(unittest.TestCase):
             path = Path(temp) / "paper.pdf"
             make_pdf(path, page_count=4)
             settings = AppSettings(
-                summary_provider="ollama", selected_model="qwen-test"
+                summary_provider="ollama", selected_model="qwen3:8b"
             )
             prepared = prepare_summary(path, settings, SummaryMode.FULL)
 
@@ -526,7 +576,7 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
         self.assertTrue(still_exists)
-        self.assertEqual(execution.result.data.summary_ko, "시험용 요약")
+        self.assertEqual(execution.result.data.summary, "시험용 요약")
         self.assertEqual(execution.provenance["analysis_level"], "quick")
 
     def test_custom_research_categories_are_sent_to_ai(self):
@@ -553,7 +603,11 @@ class SummaryServiceTests(unittest.TestCase):
         )
 
         instructions = client.calls[0]["payload"]["instructions"]
-        self.assertIn("Choose category from exactly this list: 고문서과학", instructions)
+        self.assertIn(
+            "Choose category from exactly this Korean classification list: "
+            "고문서과학",
+            instructions,
+        )
         self.assertNotIn("균류생태학, 고문서과학", instructions)
 
     def test_source_language_setting_is_sent_to_provider(self):
@@ -569,7 +623,17 @@ class SummaryServiceTests(unittest.TestCase):
             settings,
             SummaryMode.FULL,
         )
-        client = FakeHttpClient()
+        source_summary = {
+            **SUMMARY,
+            "summary": "This paper reports the main experimental result.",
+            "research_question": "Does the treatment improve the result?",
+            "methods": ["The authors performed a controlled experiment."],
+            "contributions": ["The treatment improved the measured outcome."],
+            "limitations": ["The experiment was performed at laboratory scale."],
+            "keywords": ["controlled experiment"],
+            "meta_tags": ["laboratory study"],
+        }
+        client = FakeHttpClient(source_summary)
 
         execution = run_prepared_summary(
             prepared,
@@ -580,7 +644,163 @@ class SummaryServiceTests(unittest.TestCase):
 
         instructions = client.calls[0]["payload"]["instructions"]
         self.assertIn("paper's original language", instructions)
+        self.assertIn("OUTPUT LANGUAGE CONTRACT — ORIGINAL", instructions)
+        self.assertIn("Korean is permitted only in category", instructions)
         self.assertEqual(execution.provenance["output_language"], "source")
+
+    def test_source_language_violation_is_retried_once(self):
+        english = {
+            **SUMMARY,
+            "summary": "This paper reports an experimental result.",
+            "research_question": "Does the treatment improve the result?",
+            "methods": ["The authors performed a controlled experiment."],
+            "contributions": ["The treatment improved the measured outcome."],
+            "limitations": ["The experiment was performed at laboratory scale."],
+            "keywords": ["controlled experiment"],
+            "meta_tags": ["laboratory study"],
+        }
+        korean = {
+            **english,
+            "summary": "이 논문은 실험 결과를 한국어로 요약했습니다.",
+        }
+
+        class LanguageSequenceClient:
+            def __init__(self):
+                self.calls = []
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append(payload)
+                value = korean if len(self.calls) == 1 else english
+                return {
+                    "message": {"content": json.dumps(value)},
+                    "prompt_eval_count": 10,
+                    "eval_count": 5,
+                }
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+            summary_language="source",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = LanguageSequenceClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(execution.language_retry_count, 1)
+        self.assertEqual(execution.provenance["language_retry_count"], 1)
+        self.assertIn(
+            "previous response violated the OUTPUT LANGUAGE CONTRACT",
+            client.calls[1]["messages"][0]["content"],
+        )
+        self.assertEqual(execution.result.data.summary, english["summary"])
+
+    def test_repeated_source_language_violation_is_rejected(self):
+        korean = {
+            **SUMMARY,
+            "summary": "이 논문은 영어 원문을 한국어로 번역했습니다.",
+            "research_question": "이 결과는 어떤 의미가 있습니까?",
+            "methods": ["통제된 실험을 수행했습니다."],
+            "contributions": ["측정 결과를 개선했습니다."],
+            "limitations": ["실험실 규모의 연구입니다."],
+            "keywords": ["통제 실험"],
+            "meta_tags": ["실험 연구"],
+        }
+        client = FakeHttpClient(korean)
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+            summary_language="source",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        with self.assertRaisesRegex(
+            ProviderError,
+            "논문 원문 언어 요약 지시",
+        ):
+            run_prepared_summary(
+                prepared,
+                settings,
+                MemorySecretStore(),
+                http_client=client,
+            )
+
+        self.assertEqual(len(client.calls), 2)
+
+    def test_korean_language_violation_is_retried_once(self):
+        english = {
+            **SUMMARY,
+            "summary": "This paper reports an experimental result.",
+            "research_question": "Does the treatment improve the result?",
+            "methods": ["The authors performed a controlled experiment."],
+            "contributions": ["The treatment improved the measured outcome."],
+            "limitations": ["The experiment was performed at laboratory scale."],
+            "keywords": ["controlled experiment"],
+            "meta_tags": ["laboratory study"],
+        }
+        korean = {
+            **SUMMARY,
+            "summary": "이 논문은 주요 실험 결과를 한국어로 설명합니다.",
+            "research_question": "처리 조건이 측정 결과를 개선합니까?",
+            "methods": ["연구진은 통제된 실험을 수행했습니다."],
+            "contributions": ["처리 조건이 측정 결과를 개선했습니다."],
+            "limitations": ["실험실 규모에서만 검증했습니다."],
+            "keywords": ["통제 실험"],
+            "meta_tags": ["실험 연구"],
+        }
+
+        class LanguageSequenceClient:
+            def __init__(self):
+                self.calls = []
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append(payload)
+                value = english if len(self.calls) == 1 else korean
+                return {
+                    "message": {"content": json.dumps(value)},
+                    "prompt_eval_count": 10,
+                    "eval_count": 5,
+                }
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+            summary_language="ko",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = LanguageSequenceClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(execution.language_retry_count, 1)
+        self.assertEqual(execution.result.data.summary, korean["summary"])
 
     def test_provider_change_requires_new_preview(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -609,7 +829,7 @@ class SummaryServiceTests(unittest.TestCase):
             document.save(path)
             document.close()
             settings = AppSettings(
-                summary_provider="ollama", selected_model="qwen-test"
+                summary_provider="ollama", selected_model="qwen3:8b"
             )
             recognized = [
                 "Recognized patent claims and description. " * 30,
@@ -637,7 +857,7 @@ class SummaryServiceTests(unittest.TestCase):
             document.save(path)
             document.close()
             settings = AppSettings(
-                summary_provider="ollama", selected_model="qwen-test"
+                summary_provider="ollama", selected_model="qwen3:8b"
             )
             with patch(
                 "paper_organizer.application.background_ocr.ocr_page_texts",
@@ -662,6 +882,26 @@ class SummaryServiceTests(unittest.TestCase):
                 "paper_organizer.application.background_ocr.ocr_page_texts"
             ) as ocr:
                 with self.assertRaisesRegex(SummaryPreparationError, "2페이지 미만"):
+                    prepare_summary(path, settings)
+            ocr.assert_not_called()
+
+    def test_ollama_model_below_8b_is_excluded_before_ocr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "scan.pdf"
+            document = fitz.open()
+            document.new_page()
+            document.new_page()
+            document.save(path)
+            document.close()
+            settings = AppSettings(
+                summary_provider="ollama", selected_model="qwen3:4b"
+            )
+            with patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts"
+            ) as ocr:
+                with self.assertRaisesRegex(
+                    SummaryPreparationError, "8B 이상 Ollama 모델"
+                ):
                     prepare_summary(path, settings)
             ocr.assert_not_called()
 

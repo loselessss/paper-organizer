@@ -112,6 +112,70 @@ def _expected_values(ground_truth: Mapping[str, Any], field: str) -> list[str]:
     return []
 
 
+def _output_mapping(output_text: str) -> Mapping[str, Any]:
+    try:
+        value = json.loads(output_text)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, Mapping) else {}
+
+
+def _author_names(value: Any) -> set[str]:
+    if isinstance(value, str):
+        value = value.split("|", 1)[0]
+        raw_names = re.split(r"\s*(?:,|\band\b|&)\s*", value)
+    elif isinstance(value, (list, tuple)):
+        raw_names = [str(item) for item in value]
+    else:
+        raw_names = []
+    return {
+        normalize(name).strip(" ,;")
+        for name in raw_names
+        if normalize(name).strip(" ,;")
+    }
+
+
+def score_bibliography(
+    ground_truth: Mapping[str, Any],
+    output_text: str,
+) -> dict[str, Any]:
+    """Score exact bibliographic identity independently from summary quality."""
+
+    output = _output_mapping(output_text)
+    expected_authors = _author_names(ground_truth.get("authors"))
+    output_authors = _author_names(output.get("authors"))
+    expected = {
+        "title": normalize(str(ground_truth.get("title") or "")),
+        "authors": expected_authors,
+        "year": normalize(str(ground_truth.get("year") or "")),
+        "venue": normalize(str(ground_truth.get("venue") or "")),
+    }
+    actual = {
+        "title": normalize(str(output.get("title") or "")),
+        "authors": output_authors,
+        "year": normalize(str(output.get("year") or "")),
+        "venue": normalize(str(output.get("venue") or "")),
+    }
+    evaluated = [
+        name
+        for name in ("title", "authors", "year", "venue")
+        if expected[name]
+    ]
+    matches = {
+        name: bool(actual[name]) and actual[name] == expected[name]
+        for name in evaluated
+    }
+    return {
+        "score_100": (
+            round(100 * sum(matches.values()) / len(evaluated), 2)
+            if evaluated
+            else None
+        ),
+        "evaluated_fields": evaluated,
+        "field_matches": matches,
+    }
+
+
 def score_summary(
     ground_truth: Mapping[str, Any],
     output_text: str,
@@ -183,6 +247,7 @@ def score_summary(
         "forbidden_hits": forbidden_hits,
         "group_scores": group_scores,
         "forbidden_claims": forbidden,
+        "bibliography": score_bibliography(ground_truth, output_text),
     }
 
 
