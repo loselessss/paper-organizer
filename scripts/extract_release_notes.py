@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 
@@ -49,6 +50,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     text = args.changelog.read_text(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print(extract_release_notes(text, args.version), end="")
     return 0
 
