@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import fitz
 
+from paper_organizer import __version__
 from paper_organizer.application.summary_service import (
     ImmediateSummaryController,
     SummaryMode,
@@ -18,7 +19,7 @@ from paper_organizer.application.summary_service import (
     _title_needs_original_language_retry,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
-from paper_organizer.providers import CloudConsentRequiredError
+from paper_organizer.providers import CloudConsentRequiredError, ProviderError
 
 
 SUMMARY = {
@@ -89,6 +90,82 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_invalid_json_is_retried_once_with_stricter_instructions(self):
+        class InvalidThenValidClient:
+            def __init__(self):
+                self.calls = []
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append(payload)
+                content = (
+                    "This is not JSON."
+                    if len(self.calls) == 1
+                    else json.dumps(SUMMARY)
+                )
+                return {
+                    "message": {"content": content},
+                    "prompt_eval_count": 10,
+                    "eval_count": 5,
+                }
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = InvalidThenValidClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(len(client.calls), 2)
+        retry_instructions = client.calls[1]["messages"][0]["content"]
+        self.assertIn("previous response was not one complete valid JSON", retry_instructions)
+        self.assertEqual(execution.json_retry_count, 1)
+        self.assertEqual(execution.provenance["json_retry_count"], 1)
+        self.assertEqual(execution.provenance["app_version"], __version__)
+        self.assertTrue(execution.result.prompt_version.endswith("-json-retry"))
+
+    def test_repeated_invalid_json_reports_a_korean_recovery_hint(self):
+        class AlwaysInvalidClient:
+            def __init__(self):
+                self.calls = 0
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls += 1
+                return {"message": {"content": '{"summary_ko": "unfinished"'}}
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = AlwaysInvalidClient()
+
+        with self.assertRaisesRegex(ProviderError, "두 번 연속"):
+            run_prepared_summary(
+                prepared,
+                settings,
+                MemorySecretStore(),
+                http_client=client,
+            )
+
+        self.assertEqual(client.calls, 2)
+
     def test_translated_korean_title_is_retried_for_english_source(self):
         self.assertTrue(
             _title_needs_original_language_retry(

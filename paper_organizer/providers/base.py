@@ -166,6 +166,7 @@ class SummaryRequest:
     output_language: str = "ko"
     stage: str = "direct"
     title_retry: bool = False
+    json_retry: bool = False
     advanced_analysis: bool = True
 
     def validate(self) -> None:
@@ -184,6 +185,8 @@ class SummaryRequest:
             raise ValueError("stage must be direct, section or synthesis")
         if not isinstance(self.title_retry, bool):
             raise ValueError("title_retry must be a boolean")
+        if not isinstance(self.json_retry, bool):
+            raise ValueError("json_retry must be a boolean")
         if not isinstance(self.advanced_analysis, bool):
             raise ValueError("advanced_analysis must be a boolean")
 
@@ -382,6 +385,14 @@ def system_instructions(request: SummaryRequest) -> str:
         if request.title_retry
         else ""
     )
+    json_retry = (
+        " The previous response was not one complete valid JSON object. Retry "
+        "the entire response using exactly the requested schema. Output JSON "
+        "only: no markdown fence, commentary, prefix, suffix, or omitted field. "
+        "Use empty strings or arrays when evidence is unavailable."
+        if request.json_retry
+        else ""
+    )
     analysis_scope = (
         ""
         if request.advanced_analysis
@@ -389,9 +400,13 @@ def system_instructions(request: SummaryRequest) -> str:
     )
     allowed = [name.strip() for name in request.allowed_categories if name.strip()]
     if not allowed:
-        return f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{analysis_scope}"
+        return (
+            f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{json_retry}"
+            f"{analysis_scope}"
+        )
     return (
-        f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{analysis_scope} "
+        f"{SYSTEM_INSTRUCTIONS} {language}{stage}{retry}{json_retry}"
+        f"{analysis_scope} "
         "Choose category from exactly this list: "
         f"{', '.join(allowed)}. If one fits, return it in category and return "
         "an empty suggested_category. If none fits, return empty category and "
@@ -482,11 +497,28 @@ class SummaryProvider(Protocol):
 def parse_summary_json(text: str) -> SummaryData:
     try:
         raw = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ProviderError("Provider returned invalid JSON") from exc
+    except json.JSONDecodeError:
+        raw = _extract_json_object(text)
+        if raw is None:
+            raise ProviderError("Provider returned invalid JSON") from None
     if not isinstance(raw, dict):
         raise ProviderError("Provider summary must be a JSON object")
     return SummaryData.from_mapping(raw)
+
+
+def _extract_json_object(text: str) -> Mapping[str, Any] | None:
+    """Recover one complete object wrapped in prose or a markdown fence."""
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text, offset)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
 
 
 def parse_search_plan_json(text: str) -> SearchPlanData:

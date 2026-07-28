@@ -20,6 +20,7 @@ from paper_organizer.providers.http import (
     UrllibJsonHttpClient,
     _CredentialSafeRedirectHandler,
 )
+from paper_organizer.providers.base import parse_summary_json
 
 
 SUMMARY = {
@@ -75,6 +76,19 @@ class FakeHttpClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_summary_parser_recovers_json_wrapped_in_markdown(self):
+        parsed = parse_summary_json(
+            "Here is the result:\n```json\n"
+            + json.dumps(SUMMARY, ensure_ascii=False)
+            + "\n```\n"
+        )
+        self.assertEqual(parsed.title, SUMMARY["title"])
+        self.assertEqual(parsed.methods, ("방법",))
+
+    def test_summary_parser_rejects_truncated_json(self):
+        with self.assertRaisesRegex(ProviderError, "invalid JSON"):
+            parse_summary_json('{"summary_ko": "unfinished"')
+
     def test_openai_supports_search_plan_and_grounded_answer(self):
         plan_client = FakeHttpClient(
             {

@@ -12,6 +12,7 @@ from typing import Callable
 
 import fitz
 
+from paper_organizer import __version__
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
@@ -20,7 +21,13 @@ from paper_organizer.application.summary_preprocessing import (
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 from paper_organizer.infra.settings import default_settings_path, load_settings
-from paper_organizer.providers.base import JsonHttpClient, SummaryRequest, SummaryResult
+from paper_organizer.providers.base import (
+    JsonHttpClient,
+    ProviderError,
+    SummaryProvider,
+    SummaryRequest,
+    SummaryResult,
+)
 from paper_organizer.providers.registry import build_provider
 
 
@@ -75,10 +82,12 @@ class PreparedSummary:
 class SummaryExecution:
     preview: SummaryPreview
     result: SummaryResult
+    json_retry_count: int = 0
 
     @property
     def provenance(self) -> dict[str, object]:
         return {
+            "app_version": __version__,
             "provider": self.result.provider,
             "model": self.result.model,
             "prompt_version": self.result.prompt_version,
@@ -89,6 +98,7 @@ class SummaryExecution:
             "included_sections": list(self.preview.included_sections),
             "output_language": self.preview.output_language,
             "summary_strategy": self.preview.summary_strategy,
+            "json_retry_count": self.json_retry_count,
         }
 
 
@@ -308,11 +318,14 @@ def run_prepared_summary(
         and len(prepared.section_contexts) > 1
     )
     request_options["advanced_analysis"] = not hierarchical
+    json_retry_count = 0
     if hierarchical:
         partial_options = dict(request_options)
         partial_options["allowed_categories"] = ()
-        partials = [
-            provider.summarize(
+        partials: list[SummaryResult] = []
+        for context in prepared.section_contexts:
+            partial, retried = _summarize_with_json_retry(
+                provider,
                 SummaryRequest(
                     document_text=context,
                     max_output_tokens=900,
@@ -321,11 +334,12 @@ def run_prepared_summary(
                     **partial_options,
                 )
             )
-            for context in prepared.section_contexts
-        ]
+            partials.append(partial)
+            json_retry_count += retried
         synthesis_text = _render_section_summaries(partials)
         final_input = synthesis_text
-        result = provider.summarize(
+        result, retried = _summarize_with_json_retry(
+            provider,
             SummaryRequest(
                 document_text=synthesis_text,
                 prompt_version="paper-summary-v8-hierarchical",
@@ -333,6 +347,7 @@ def run_prepared_summary(
                 **request_options,
             )
         )
+        json_retry_count += retried
         input_tokens = _sum_optional_tokens(
             [partial.input_tokens for partial in partials]
             + [result.input_tokens]
@@ -348,7 +363,8 @@ def run_prepared_summary(
         )
     else:
         final_input = prepared.document_text
-        result = provider.summarize(
+        result, retried = _summarize_with_json_retry(
+            provider,
             SummaryRequest(
                 document_text=prepared.document_text,
                 prompt_version="paper-summary-v8-direct",
@@ -356,10 +372,12 @@ def run_prepared_summary(
                 **request_options,
             )
         )
+        json_retry_count += retried
     if _title_needs_original_language_retry(
         result.data.title, prepared.document_text
     ):
-        retry = provider.summarize(
+        retry, retried = _summarize_with_json_retry(
+            provider,
             SummaryRequest(
                 document_text=final_input,
                 prompt_version="paper-summary-v8-title-retry",
@@ -368,6 +386,7 @@ def run_prepared_summary(
                 **request_options,
             )
         )
+        json_retry_count += retried
         result = replace(
             retry,
             input_tokens=_sum_optional_tokens(
@@ -388,7 +407,49 @@ def run_prepared_summary(
             result,
             data=replace(result.data, summary_ko=normalized_summary),
         )
-    return SummaryExecution(preview=prepared.preview, result=result)
+    return SummaryExecution(
+        preview=prepared.preview,
+        result=result,
+        json_retry_count=json_retry_count,
+    )
+
+
+def _summarize_with_json_retry(
+    provider: SummaryProvider,
+    request: SummaryRequest,
+) -> tuple[SummaryResult, int]:
+    try:
+        return provider.summarize(request), 0
+    except ProviderError as exc:
+        if request.json_retry or not _is_summary_format_error(exc):
+            raise
+    retry_request = replace(
+        request,
+        prompt_version=f"{request.prompt_version}-json-retry",
+        json_retry=True,
+    )
+    try:
+        return provider.summarize(retry_request), 1
+    except ProviderError as exc:
+        if _is_summary_format_error(exc):
+            raise ProviderError(
+                "AI가 두 번 연속 올바른 JSON 형식을 만들지 못했습니다. "
+                "같은 논문을 다시 시도하거나 더 큰 모델을 선택하세요."
+            ) from None
+        raise
+
+
+def _is_summary_format_error(error: ProviderError) -> bool:
+    message = str(error).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "invalid json",
+            "summary must be a json object",
+            "invalid summary fields",
+            "summary field",
+        )
+    )
 
 
 def _allowed_categories(settings: AppSettings) -> tuple[str, ...]:

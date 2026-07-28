@@ -816,7 +816,10 @@ class UiSmokeTests(unittest.TestCase):
             EditablePaperMetadata,
             LibraryEntry,
         )
-        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+        from paper_organizer.ui.library_workflow_widget import (
+            LibraryWidget,
+            _analysis_version_label,
+        )
 
         with tempfile.TemporaryDirectory() as temp:
             paperpack = Path(temp) / "paper.paperpack"
@@ -829,7 +832,16 @@ class UiSmokeTests(unittest.TestCase):
                 source_variant="publisher",
                 record={
                     "description": {"summary_ko": "분석 요약"},
-                    "analysis": {"status": "completed"},
+                    "analysis": {
+                        "status": "completed",
+                        "completed_at": "2026-07-28T12:00:00+09:00",
+                        "provenance": {
+                            "app_version": "1.4.1",
+                            "provider": "ollama",
+                            "model": "qwen3:8b",
+                            "prompt_version": "paper-summary-v8-direct",
+                        },
+                    },
                 },
             )
             second_pack = Path(temp) / "paper-two.paperpack"
@@ -893,7 +905,23 @@ class UiSmokeTests(unittest.TestCase):
             widget._submit_search()
             self.assertEqual(controller.search_queries, ["thermostable enzyme"])
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
-            self.assertEqual(widget.table.item(0, 5).text(), "분석 완료")
+            self.assertEqual(
+                widget.table.item(0, 5).text(),
+                "분석 완료 (v1.4.1)",
+            )
+            self.assertIn("앱 v1.4.1", widget.analysis_view.toPlainText())
+            self.assertEqual(
+                _analysis_version_label(
+                    {
+                        "analysis": {
+                            "provenance": {
+                                "prompt_version": "paper-summary-v8-direct"
+                            }
+                        }
+                    }
+                ),
+                "요약 v8",
+            )
             widget.table.selectionModel().select(
                 widget.table.model().index(1, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows,

@@ -51,6 +51,31 @@ from paper_organizer.integrations.spdf_bridge import open_pdf
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
 
 
+def _analysis_version_label(record: dict) -> str:
+    analysis = record.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    provenance = analysis.get("provenance")
+    if not isinstance(provenance, dict):
+        root_provenance = record.get("provenance")
+        provenance = (
+            root_provenance.get("summary")
+            if isinstance(root_provenance, dict)
+            else {}
+        )
+    if not isinstance(provenance, dict):
+        return ""
+    app_version = str(provenance.get("app_version") or "").strip()
+    if app_version:
+        return f"v{app_version.removeprefix('v')}"
+    prompt_version = str(provenance.get("prompt_version") or "")
+    marker = "paper-summary-v"
+    if marker not in prompt_version:
+        return ""
+    suffix = prompt_version.split(marker, 1)[1]
+    number = suffix.split("-", 1)[0]
+    return f"요약 v{number}" if number.isdigit() else ""
+
+
 class _ReviewQueueTable(QTableWidget):
     """Drag selected review rows to the analysis queue by stable file ID."""
 
@@ -1439,6 +1464,9 @@ class LibraryWidget(QWidget):
                 if queue_item
                 else status_labels.get(stored_status, "미등록")
             )
+            version_label = _analysis_version_label(entry.record)
+            if analysis_status == "분석 완료" and version_label:
+                analysis_status += f" ({version_label})"
             if str(
                 entry.record.get("analysis", {}).get("suggested_category") or ""
             ).strip():
@@ -1602,9 +1630,25 @@ class LibraryWidget(QWidget):
             "provenance", {}
         ).get("summary")
         if isinstance(provenance, dict) and provenance.get("provider"):
+            version_bits = [
+                value
+                for value in (
+                    (
+                        f"앱 v{str(provenance.get('app_version')).removeprefix('v')}"
+                        if provenance.get("app_version")
+                        else ""
+                    ),
+                    str(provenance.get("prompt_version") or ""),
+                )
+                if value
+            ]
+            version_text = (
+                f" · {esc(' · '.join(version_bits))}" if version_bits else ""
+            )
             sections.append(
                 "<p style='color:#777'>"
                 f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
+                f"{version_text}"
                 f" · {esc(analysis.get('completed_at', ''))}</p>"
             )
         self.analysis_view.setHtml("".join(sections))
