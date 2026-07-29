@@ -88,6 +88,14 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(summary_language="automatic").validate()
 
+    def test_summary_timeout_is_generous_and_bounded(self):
+        self.assertEqual(AppSettings().summary_timeout_seconds, 900)
+        AppSettings(summary_timeout_seconds=3600).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(summary_timeout_seconds=59).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(summary_timeout_seconds=3601).validate()
+
     def test_skipped_update_version_must_be_text(self):
         with self.assertRaises(ValueError):
             AppSettings(skipped_update_version=123).validate()

@@ -1,5 +1,4 @@
-# 입력 폴더·라이브러리·자동 감시 주기를 설정하는 다이얼로그 (수집 화면에서 분리)
-"""Folder and low-power watch settings moved out of the collection tab."""
+"""Configure summary watch folders, automation and research categories."""
 
 from __future__ import annotations
 
@@ -38,14 +37,14 @@ class FolderSettingsDialog(QDialog):
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setWindowTitle("폴더·감시·연구분야 설정")
+        self.setWindowTitle("요약 감시 옵션")
         self.setMinimumWidth(560)
 
         root = QVBoxLayout(self)
         form = QFormLayout()
         library_row, self.library_edit = self._path_row(self._browse_library)
 
-        watch_group = QGroupBox("논문·특허 감시 폴더")
+        watch_group = QGroupBox("요약할 논문·특허 감시 폴더")
         watch_layout = QVBoxLayout(watch_group)
         self.watch_list = QListWidget()
         self.watch_list.setSelectionMode(QAbstractItemView.ExtendedSelection)

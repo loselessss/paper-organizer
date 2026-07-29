@@ -18,15 +18,21 @@ def build_provider(
 ) -> SummaryProvider:
     settings.validate()
     if settings.summary_provider == "ollama":
-        return OllamaProvider(settings.selected_model, http_client=http_client)
+        return OllamaProvider(
+            settings.selected_model,
+            http_client=http_client,
+            timeout_seconds=settings.summary_timeout_seconds,
+        )
     if settings.summary_provider == "openai":
         return OpenAIProvider(
             lambda: secret_store.get("openai"),
             settings.openai_model,
             http_client=http_client,
+            timeout_seconds=settings.summary_timeout_seconds,
         )
     return AnthropicProvider(
         lambda: secret_store.get("anthropic"),
         settings.anthropic_model,
         http_client=http_client,
+        timeout_seconds=settings.summary_timeout_seconds,
     )

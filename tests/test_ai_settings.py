@@ -35,6 +35,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 cloud_monthly_budget_usd=0,
                 model_profile="quality",
                 summary_language="source",
+                summary_timeout_seconds=1500,
             )
             saved = json.loads(path.read_text(encoding="utf-8"))
 
@@ -44,6 +45,8 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertIsNone(view.cloud_monthly_budget_usd)
         self.assertEqual(view.model_profile, "quality")
         self.assertEqual(view.summary_language, "source")
+        self.assertEqual(view.summary_timeout_seconds, 1500)
+        self.assertEqual(saved["summary_timeout_seconds"], 1500)
         self.assertNotIn("api_key", saved)
 
     def test_key_status_is_masked_and_key_can_be_deleted(self):

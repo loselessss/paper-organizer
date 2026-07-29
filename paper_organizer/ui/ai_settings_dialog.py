@@ -46,12 +46,22 @@ class AiSettingsDialog(QDialog):
     def __init__(self, controller: AiSettingsController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setWindowTitle("요약 AI 설정")
-        self.resize(720, 690)
+        self.setWindowTitle("요약 엔진 옵션")
+        self.resize(760, 760)
         self._scan_worker: _HardwareScanWorker | None = None
         self._recommended_model = ""
 
         root = QVBoxLayout(self)
+        engine_group = QGroupBox("요약 엔진 옵션")
+        engine_layout = QVBoxLayout(engine_group)
+        self.engine_changes_label = QLabel(
+            "<b>앱 1.6 요약 엔진 변경점</b><br>"
+            "작은 모델은 구역별 근거를 먼저 요약한 뒤 통합하고, 8B 이상은 정리된 "
+            "전체 구역을 직접 분석합니다. 서지정보 분리 추출·출력 언어 검증·JSON "
+            "복구도 적용됩니다. <span style='color:#666;'>내부 프롬프트 v9</span>"
+        )
+        self.engine_changes_label.setWordWrap(True)
+        engine_layout.addWidget(self.engine_changes_label)
         form = QFormLayout()
         self.provider_combo = QComboBox()
         self.model_edit = QLineEdit()
@@ -72,6 +82,17 @@ class AiSettingsDialog(QDialog):
         self.language_combo = QComboBox()
         self.language_combo.addItem("한국어로 번역", "ko")
         self.language_combo.addItem("논문 원문 언어 유지", "source")
+        self.language_combo.setToolTip(
+            "제목·저자·저널 같은 서지정보는 원문 표기를 유지하고, "
+            "요약·핵심 결과 같은 설명 필드의 언어를 선택합니다."
+        )
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(60, 3600)
+        self.timeout_spin.setSuffix("초")
+        self.timeout_spin.setSingleStep(60)
+        self.timeout_spin.setToolTip(
+            "AI 요청 한 번의 최대 대기 시간입니다. 느린 로컬 모델에는 900초 이상을 권장합니다."
+        )
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("보수적", "conservative")
         self.profile_combo.addItem("표준", "standard")
@@ -89,13 +110,15 @@ class AiSettingsDialog(QDialog):
         form.addRow("키 상태", self.key_status)
         form.addRow("API 키", key_buttons)
         form.addRow("클라우드 동의", self.consent_check)
-        form.addRow("요약 출력 언어", self.language_combo)
+        form.addRow("요약 언어", self.language_combo)
+        form.addRow("요약 제한 시간", self.timeout_spin)
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
         form.addRow("월간 앱 비용 한도", self.budget_spin)
-        root.addLayout(form)
+        engine_layout.addLayout(form)
+        root.addWidget(engine_group)
 
-        local_group = QGroupBox("로컬 AI 사양 및 모델 추천")
+        local_group = QGroupBox("로컬 모델 선택 및 관리")
         local_layout = QVBoxLayout(local_group)
         local_form = QFormLayout()
         self.model_profile_combo = QComboBox()
@@ -181,6 +204,7 @@ class AiSettingsDialog(QDialog):
         self.consent_check.setChecked(view.cloud_processing_consent)
         language_index = self.language_combo.findData(view.summary_language)
         self.language_combo.setCurrentIndex(max(0, language_index))
+        self.timeout_spin.setValue(view.summary_timeout_seconds)
         profile_index = self.profile_combo.findData(view.cloud_request_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         settings = self._controller.settings()
@@ -413,9 +437,10 @@ class AiSettingsDialog(QDialog):
                 cloud_monthly_budget_usd=self.budget_spin.value(),
                 model_profile=self.model_profile_combo.currentData(),
                 summary_language=self.language_combo.currentData(),
+                summary_timeout_seconds=self.timeout_spin.value(),
             )
         except Exception as exc:
-            QMessageBox.warning(self, "AI 설정 저장 실패", str(exc))
+            QMessageBox.warning(self, "요약 엔진 설정 저장 실패", str(exc))
             return
         self.accept()
 

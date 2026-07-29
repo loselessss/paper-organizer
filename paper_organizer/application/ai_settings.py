@@ -59,6 +59,7 @@ class AiSettingsView:
     recommendation_profile: str
     last_hardware_scan_at: str
     summary_language: str
+    summary_timeout_seconds: int
 
 
 class AiSettingsController:
@@ -110,6 +111,7 @@ class AiSettingsController:
             ),
             last_hardware_scan_at=settings.last_hardware_scan_at,
             summary_language=settings.summary_language,
+            summary_timeout_seconds=settings.summary_timeout_seconds,
         )
 
     def settings(self) -> AppSettings:
@@ -148,6 +150,7 @@ class AiSettingsController:
         cloud_monthly_budget_usd: float,
         model_profile: str | None = None,
         summary_language: str | None = None,
+        summary_timeout_seconds: int | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
         if normalized_provider not in PROVIDER_LABELS:
@@ -165,6 +168,8 @@ class AiSettingsController:
             settings.model_profile = model_profile
         if summary_language is not None:
             settings.summary_language = summary_language
+        if summary_timeout_seconds is not None:
+            settings.summary_timeout_seconds = summary_timeout_seconds
         if normalized_provider == "ollama":
             settings.selected_model = normalized_model
         elif normalized_provider == "openai":

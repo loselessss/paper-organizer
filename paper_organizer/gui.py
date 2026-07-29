@@ -20,14 +20,19 @@ def main() -> int:
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
     from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
+    from paper_organizer.ui.single_instance import SingleInstanceGuard
     from paper_organizer.ui.startup_splash import StartupLoader, create_splash
 
     start_in_background = "--background" in sys.argv[1:]
     qt_argv = [argument for argument in sys.argv if argument != "--background"]
     app = QApplication.instance() or QApplication(qt_argv)
+    single_instance = SingleInstanceGuard()
+    if not single_instance.acquire():
+        return 0
     from paper_organizer.application.background_ocr import stop_active_ocr_workers
 
     app.aboutToQuit.connect(stop_active_ocr_workers)
+    app.aboutToQuit.connect(single_instance.close)
     lifecycle = LifecycleSettingsController()
     was_first_run = lifecycle.first_run_required()
     if was_first_run:
@@ -50,7 +55,16 @@ def main() -> int:
     splash = create_splash()
     splash.show()
     app.processEvents()
-    runtime: dict[str, object] = {}
+    runtime: dict[str, object] = {"single_instance": single_instance}
+
+    def activate_running_window() -> None:
+        window = runtime.get("window")
+        if window is None:
+            runtime["activate_when_ready"] = True
+            return
+        window.show_from_external_request()
+
+    single_instance.activation_requested.connect(activate_running_window)
 
     def show_window(snapshot=None, error: str = "") -> None:
         if "window" in runtime:
@@ -71,7 +85,12 @@ def main() -> int:
         elif error:
             window.statusBar().showMessage(f"시작 색인 읽기 경고: {error}")
         runtime["window"] = window
-        if start_in_background and window.start_in_background():
+        activate_when_ready = bool(runtime.pop("activate_when_ready", False))
+        if (
+            start_in_background
+            and not activate_when_ready
+            and window.start_in_background()
+        ):
             splash.close()
         else:
             window.show()

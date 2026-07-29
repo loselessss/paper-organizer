@@ -139,10 +139,12 @@ class PaperOrganizerWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         settings_menu = self.menuBar().addMenu("설정")
+        watch_settings_menu = settings_menu.addMenu("요약 감시 옵션")
+        engine_settings_menu = settings_menu.addMenu("요약 엔진 옵션")
         if self._library_workflow is not None:
-            folder_action = QAction("폴더·감시·연구분야 설정...", self)
+            folder_action = QAction("감시 폴더·자동 보관·연구분야...", self)
             folder_action.triggered.connect(self.show_folder_settings)
-            settings_menu.addAction(folder_action)
+            watch_settings_menu.addAction(folder_action)
         if self._library_workflow is not None:
             tools_menu = self.menuBar().addMenu("도구")
             export_action = QAction("PDF 환원 (일괄 추출)...", self)
@@ -162,16 +164,20 @@ class PaperOrganizerWindow(QMainWindow):
             reindex_action = QAction("검색 색인 재구축", self)
             reindex_action.triggered.connect(self.rebuild_search_index)
             tools_menu.addAction(reindex_action)
-        self._create_ai_menu(settings_menu)
+        self._create_ai_menu(engine_settings_menu)
         self._create_shortcuts()
         self._create_help_menu()
         if self._lifecycle is not None:
             lifecycle_action = QAction("시작 및 종료 설정...", self)
             lifecycle_action.triggered.connect(self.show_lifecycle_settings)
-            settings_menu.addAction(lifecycle_action)
+            watch_settings_menu.addAction(lifecycle_action)
             self._create_system_tray()
-        if not settings_menu.actions():
-            settings_menu.menuAction().setVisible(False)
+        watch_settings_menu.menuAction().setVisible(
+            bool(watch_settings_menu.actions())
+        )
+        engine_settings_menu.menuAction().setVisible(
+            bool(engine_settings_menu.actions())
+        )
         self._analysis_status_label = QLabel("")
         self._analysis_progress_bar = QProgressBar()
         self._analysis_progress_bar.setRange(0, 0)
@@ -216,8 +222,7 @@ class PaperOrganizerWindow(QMainWindow):
             f"재요약 {count}건을 분석 대기열에 넣었습니다.", 8000
         )
 
-    def _create_ai_menu(self, settings_menu: QMenu) -> None:
-        menu = settings_menu.addMenu("AI")
+    def _create_ai_menu(self, menu: QMenu) -> None:
         self._provider_group = QActionGroup(self)
         self._provider_group.setExclusive(True)
         self._provider_actions: dict[str, QAction] = {}
@@ -238,7 +243,7 @@ class PaperOrganizerWindow(QMainWindow):
         summary_action.triggered.connect(self.show_immediate_summary)
         menu.addAction(summary_action)
         menu.addSeparator()
-        ai_settings_action = QAction("요약 AI 설정...", self)
+        ai_settings_action = QAction("제공자·모델·언어·제한 시간...", self)
         ai_settings_action.triggered.connect(self.show_ai_settings)
         menu.addAction(ai_settings_action)
         models_action = QAction("Ollama 모델 관리...", self)
@@ -309,7 +314,7 @@ class PaperOrganizerWindow(QMainWindow):
             return
         message = f"요약 AI 제공자를 {view.provider_label}(으)로 변경했습니다."
         if view.key_required and not view.key_configured:
-            message += " API 키를 '요약 AI 설정'에서 등록하세요."
+            message += " API 키를 '요약 엔진 옵션'에서 등록하세요."
         if view.provider == "ollama" and not view.model:
             message += " Ollama 모델을 먼저 선택하세요."
         self.statusBar().showMessage(message)
@@ -441,11 +446,16 @@ class PaperOrganizerWindow(QMainWindow):
         dialog = LifecyclePreferencesDialog(
             self._lifecycle, first_run=False, parent=self
         )
-        if dialog.exec_() and self._tray is not None:
-            if self._lifecycle.settings().close_behavior == "quit":
-                self._tray.hide()
-            elif QSystemTrayIcon.isSystemTrayAvailable():
-                self._show_tray()
+        if not dialog.exec_():
+            return
+        if self._lifecycle.settings().close_behavior == "quit":
+            if self._tray is not None:
+                self._dispose_tray()
+            return
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            if self._tray is None:
+                self._create_system_tray()
+            self._show_tray()
 
     def _create_system_tray(self) -> None:
         self._dispose_tray()
@@ -490,6 +500,11 @@ class PaperOrganizerWindow(QMainWindow):
         self.activateWindow()
         if self._available_update is not None:
             QTimer.singleShot(0, self._show_available_update)
+
+    def show_from_external_request(self) -> None:
+        """Raise the existing window when another app launch is attempted."""
+
+        self._show_from_tray()
 
     def check_for_updates(self, manual: bool = True) -> None:
         if self._pending_installer is not None and self._pending_installer.is_file():

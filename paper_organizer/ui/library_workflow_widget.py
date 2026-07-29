@@ -465,7 +465,7 @@ class CollectionReviewWidget(QWidget):
         action_row = QHBoxLayout()
         self.scan_button = QPushButton("새 PDF 검색")
         self.scan_button.clicked.connect(lambda: self.scan_now(True))
-        self.settings_button = QPushButton("폴더·감시·연구분야 설정…")
+        self.settings_button = QPushButton("요약 감시 옵션…")
         self.settings_button.clicked.connect(self._show_folder_settings)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)

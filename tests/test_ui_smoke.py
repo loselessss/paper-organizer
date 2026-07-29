@@ -77,6 +77,10 @@ class UiSmokeTests(unittest.TestCase):
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
+            self.assertEqual(dialog.windowTitle(), "요약 엔진 옵션")
+            self.assertEqual(dialog.language_combo.currentData(), "ko")
+            self.assertEqual(dialog.timeout_spin.value(), 900)
+            self.assertIn("앱 1.6 요약 엔진 변경점", dialog.engine_changes_label.text())
             self.assertTrue(dialog.model_edit.isReadOnly())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
@@ -143,7 +147,13 @@ class UiSmokeTests(unittest.TestCase):
                 for action in window.menuBar().actions()
                 if action.text() == "설정"
             )
-            self.assertIn("AI", [action.text() for action in settings_menu.actions()])
+            settings_categories = [
+                action.text() for action in settings_menu.actions()
+            ]
+            self.assertEqual(
+                settings_categories,
+                ["요약 감시 옵션", "요약 엔진 옵션"],
+            )
             checked = [
                 action.text()
                 for action in window._provider_group.actions()
@@ -153,6 +163,7 @@ class UiSmokeTests(unittest.TestCase):
             from paper_organizer.ui.folder_settings_dialog import FolderSettingsDialog
 
             folder_dialog = FolderSettingsDialog(workflow_controller)
+            self.assertEqual(folder_dialog.windowTitle(), "요약 감시 옵션")
             self.assertEqual(folder_dialog.watch_list.count(), 1)
             self.assertTrue(
                 folder_dialog.watch_list.item(0).text().endswith("Downloads")
@@ -1025,6 +1036,29 @@ class UiSmokeTests(unittest.TestCase):
             window.show()
             self.app.processEvents()
             self.assertTrue(window.close())
+
+    def test_second_gui_instance_notifies_the_first_instead_of_adding_a_tray(self):
+        from uuid import uuid4
+
+        from paper_organizer.ui.single_instance import SingleInstanceGuard
+
+        server_name = f"paper-organizer-test-{uuid4().hex}"
+        first = SingleInstanceGuard(server_name)
+        second = SingleInstanceGuard(server_name)
+        activated: list[bool] = []
+        first.activation_requested.connect(lambda: activated.append(True))
+        try:
+            self.assertTrue(first.acquire())
+            self.assertFalse(second.acquire())
+            for _ in range(10):
+                self.app.processEvents()
+                if activated:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(activated, [True])
+        finally:
+            second.close()
+            first.close()
 
 
 if __name__ == "__main__":
