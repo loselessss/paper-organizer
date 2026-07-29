@@ -254,7 +254,11 @@ class BackgroundAnalysisService:
             should_keep_runtime = (
                 keep_runtime() if callable(keep_runtime) else keep_runtime
             )
-            if settings.summary_provider == "ollama" and not should_keep_runtime:
+            if (
+                settings.summary_provider == "ollama"
+                and settings.ollama_residency_mode == "unload"
+                and not should_keep_runtime
+            ):
                 from paper_organizer.infra.ollama_installer import stop_managed_runtime
 
                 stop_managed_runtime()

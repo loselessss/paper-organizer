@@ -82,6 +82,14 @@ class SettingsTests(unittest.TestCase):
     def test_background_analysis_is_enabled_by_default(self):
         self.assertTrue(AppSettings().background_analysis_enabled)
 
+    def test_ollama_residency_settings_are_validated(self):
+        AppSettings(
+            ollama_residency_mode="30m",
+            ollama_resident_model="qwen3:4b",
+        ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(ollama_residency_mode="forever").validate()
+
     def test_summary_language_is_validated(self):
         AppSettings(summary_language="ko").validate()
         AppSettings(summary_language="source").validate()

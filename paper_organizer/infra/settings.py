@@ -36,6 +36,8 @@ class AppSettings:
     background_analysis_enabled: bool = True
     model_profile: str = "auto"
     selected_model: str = ""
+    ollama_residency_mode: str = "auto"
+    ollama_resident_model: str = ""
     recommended_model: str = ""
     model_catalog_version: str = ""
     last_hardware_scan_at: str = ""
@@ -107,6 +109,16 @@ class AppSettings:
             raise ValueError("focus_categories must be selected research categories")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
+        if self.ollama_residency_mode not in {
+            "auto",
+            "unload",
+            "5m",
+            "30m",
+            "always",
+        }:
+            raise ValueError("Unsupported ollama_residency_mode")
+        if not isinstance(self.ollama_resident_model, str):
+            raise ValueError("ollama_resident_model must be a string")
         if not isinstance(self.hardware_profile, dict):
             raise ValueError("hardware_profile must be a JSON object")
         if (

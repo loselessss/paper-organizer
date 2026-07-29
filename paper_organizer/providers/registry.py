@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from paper_organizer.core.ollama_residency import resolve_ollama_keep_alive
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 
@@ -18,10 +19,19 @@ def build_provider(
 ) -> SummaryProvider:
     settings.validate()
     if settings.summary_provider == "ollama":
+        memory_total_gb = settings.hardware_profile.get("memory_total_gb")
+        if not isinstance(memory_total_gb, (int, float)):
+            memory_total_gb = None
         return OllamaProvider(
             settings.selected_model,
             http_client=http_client,
             timeout_seconds=settings.summary_timeout_seconds,
+            keep_alive=resolve_ollama_keep_alive(
+                settings.ollama_residency_mode,
+                settings.ollama_resident_model,
+                settings.selected_model,
+                memory_total_gb,
+            ),
         )
     if settings.summary_provider == "openai":
         return OpenAIProvider(

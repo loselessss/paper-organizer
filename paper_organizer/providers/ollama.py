@@ -42,11 +42,13 @@ class OllamaProvider:
         http_client: JsonHttpClient | None = None,
         endpoint: str = "http://127.0.0.1:11434/api/chat",
         timeout_seconds: float = 300,
+        keep_alive: int | str | None = None,
     ) -> None:
         self.model = model.strip()
         self._http = http_client or UrllibJsonHttpClient()
         self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
+        self._keep_alive = keep_alive
         if not self.model:
             raise ValueError("Ollama model cannot be empty")
 
@@ -65,6 +67,7 @@ class OllamaProvider:
             ],
             "options": options,
         }
+        self._apply_keep_alive(payload)
         if request.stage != "section":
             payload["format"] = summary_response_schema(request)
         response = self._http.post_json(
@@ -155,22 +158,28 @@ class OllamaProvider:
         schema: Mapping[str, Any],
         options: Mapping[str, Any],
     ) -> Mapping[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "stream": False,
+            "think": False,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "format": schema,
+            "options": dict(options),
+        }
+        self._apply_keep_alive(payload)
         return self._http.post_json(
             self._endpoint,
             {"Content-Type": "application/json"},
-            {
-                "model": self.model,
-                "stream": False,
-                "think": False,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "format": schema,
-                "options": dict(options),
-            },
+            payload,
             self._timeout_seconds,
         )
+
+    def _apply_keep_alive(self, payload: dict[str, Any]) -> None:
+        if self._keep_alive is not None:
+            payload["keep_alive"] = self._keep_alive
 
 
 def _optional_int(value: Any) -> int | None:

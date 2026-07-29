@@ -254,6 +254,8 @@ class OllamaModelManagerService:
         selection_cleared = _model_key(settings.selected_model) == _model_key(entry.model_id)
         if selection_cleared:
             settings.selected_model = ""
+        if _model_key(settings.ollama_resident_model) == _model_key(entry.model_id):
+            settings.ollama_resident_model = ""
         save_settings(settings, self._settings_path)
         return selection_cleared
 

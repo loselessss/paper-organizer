@@ -24,6 +24,10 @@ from PyQt5.QtWidgets import (
 
 from paper_organizer.application.ai_settings import AiSettingsController
 from paper_organizer.core.model_recommendation import model_usage_guidance
+from paper_organizer.core.ollama_residency import (
+    OLLAMA_RESIDENCY_CHOICES,
+    residency_description,
+)
 from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
 
@@ -158,9 +162,22 @@ class AiSettingsDialog(QDialog):
         self.hardware_status.setWordWrap(True)
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
+        self.residency_combo = QComboBox()
+        for value, label in OLLAMA_RESIDENCY_CHOICES:
+            self.residency_combo.addItem(label, value)
+        self.resident_model_combo = QComboBox()
+        self.residency_guidance = QLabel("")
+        self.residency_guidance.setWordWrap(True)
+        self.residency_guidance.setStyleSheet(
+            "background: #eef6ff; border: 1px solid #aec9e8; "
+            "border-radius: 4px; padding: 7px; color: #173f68;"
+        )
         local_form.addRow("활성 모델", model_row)
         local_form.addRow("", self.model_status)
         local_form.addRow("용도 / 주의", self.model_guidance)
+        local_form.addRow("상주 옵션", self.residency_combo)
+        local_form.addRow("상주 모델", self.resident_model_combo)
+        local_form.addRow("상주 설명", self.residency_guidance)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
@@ -200,6 +217,12 @@ class AiSettingsDialog(QDialog):
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         self.model_combo.currentIndexChanged.connect(self._model_changed)
+        self.residency_combo.currentIndexChanged.connect(
+            self._update_residency_guidance
+        )
+        self.resident_model_combo.currentIndexChanged.connect(
+            self._update_residency_guidance
+        )
         self.model_refresh_button.clicked.connect(self._reload_ollama_models)
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
         self.key_save_button.clicked.connect(self._save_key)
@@ -222,6 +245,16 @@ class AiSettingsDialog(QDialog):
         self.provider_combo.setCurrentIndex(selected_index)
         self.provider_combo.blockSignals(False)
         self._populate_model_combo(view.provider, view.model)
+        if view.provider != "ollama":
+            self._populate_resident_model_combo(
+                (),
+                view.ollama_resident_model
+                or self._controller.model_for_provider("ollama"),
+            )
+        residency_index = self.residency_combo.findData(
+            view.ollama_residency_mode
+        )
+        self.residency_combo.setCurrentIndex(max(0, residency_index))
         self.consent_check.setChecked(view.cloud_processing_consent)
         language_index = self.language_combo.findData(view.summary_language)
         self.language_combo.setCurrentIndex(max(0, language_index))
@@ -250,6 +283,7 @@ class AiSettingsDialog(QDialog):
             )
         self._refresh_key_status()
         self._profile_changed()
+        self._update_residency_guidance()
 
     def _provider_changed(self) -> None:
         provider = self.provider_combo.currentData()
@@ -285,6 +319,10 @@ class AiSettingsDialog(QDialog):
             index = self.model_combo.findData(selected)
             self.model_combo.setCurrentIndex(index)
             self.model_combo.setEnabled(bool(models))
+            self._populate_resident_model_combo(
+                models,
+                self._controller.view().ollama_resident_model or selected,
+            )
         else:
             self.model_combo.setEnabled(True)
             self.model_combo.addItem(selected)
@@ -295,6 +333,38 @@ class AiSettingsDialog(QDialog):
                 line_edit.setPlaceholderText("클라우드 모델 ID")
         self.model_combo.blockSignals(False)
         self._update_model_guidance()
+
+    def _populate_resident_model_combo(
+        self,
+        models: tuple[str, ...],
+        selected: str,
+    ) -> None:
+        self.resident_model_combo.blockSignals(True)
+        self.resident_model_combo.clear()
+        choices = list(models)
+        if selected and not any(
+            _same_ollama_model(selected, model) for model in choices
+        ):
+            choices.append(selected)
+        for model in choices:
+            self.resident_model_combo.addItem(model, model)
+        index = next(
+            (
+                item
+                for item in range(self.resident_model_combo.count())
+                if _same_ollama_model(
+                    str(self.resident_model_combo.itemData(item) or ""),
+                    selected,
+                )
+            ),
+            -1,
+        )
+        if index < 0 and self.resident_model_combo.count():
+            index = 0
+        self.resident_model_combo.setCurrentIndex(index)
+        self.resident_model_combo.setEnabled(bool(choices))
+        self.resident_model_combo.blockSignals(False)
+        self._update_residency_guidance()
 
     def _reload_ollama_models(self) -> None:
         if self.provider_combo.currentData() != "ollama":
@@ -339,6 +409,19 @@ class AiSettingsDialog(QDialog):
             )
             return
         self.model_guidance.clear()
+
+    def _update_residency_guidance(self) -> None:
+        settings = self._controller.settings()
+        memory = settings.hardware_profile.get("memory_total_gb")
+        if not isinstance(memory, (int, float)):
+            memory = None
+        self.residency_guidance.setText(
+            residency_description(
+                str(self.residency_combo.currentData() or "auto"),
+                str(self.resident_model_combo.currentData() or ""),
+                memory,
+            )
+        )
 
     def _current_model(self) -> str:
         if self.provider_combo.currentData() == "ollama":
@@ -467,6 +550,7 @@ class AiSettingsDialog(QDialog):
                 f"환각 위험 {usage.hallucination_risk}{installed}{warning}"
             )
         self.model_candidates.setPlainText("\n".join(lines))
+        self._update_residency_guidance()
 
     def _hardware_scan_failed(self, message: str) -> None:
         self.hardware_status.setText(f"사양 검사 실패: {message}")
@@ -498,6 +582,16 @@ class AiSettingsDialog(QDialog):
         if self.provider_combo.currentData() == "ollama":
             selected = "" if selection_cleared else self._current_model()
             self._populate_model_combo("ollama", selected)
+            return
+        try:
+            models = self._controller.installed_ollama_models()
+        except Exception:
+            models = ()
+        view = self._controller.view()
+        self._populate_resident_model_combo(
+            models,
+            view.ollama_resident_model,
+        )
 
     def _save_preferences(self) -> None:
         if self._scan_worker is not None and self._scan_worker.isRunning():
@@ -518,6 +612,10 @@ class AiSettingsDialog(QDialog):
                 model_profile=self.model_profile_combo.currentData(),
                 summary_language=self.language_combo.currentData(),
                 summary_timeout_seconds=self.timeout_spin.value(),
+                ollama_residency_mode=self.residency_combo.currentData(),
+                ollama_resident_model=str(
+                    self.resident_model_combo.currentData() or ""
+                ),
             )
         except Exception as exc:
             QMessageBox.warning(self, "요약 엔진 설정 저장 실패", str(exc))
@@ -533,3 +631,10 @@ class AiSettingsDialog(QDialog):
             )
             return
         super().reject()
+
+
+def _same_ollama_model(left: str, right: str) -> bool:
+    return (
+        left.strip().casefold().removesuffix(":latest")
+        == right.strip().casefold().removesuffix(":latest")
+    )

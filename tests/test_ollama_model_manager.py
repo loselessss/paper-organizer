@@ -284,6 +284,7 @@ class OllamaModelManagerTests(unittest.TestCase):
             save_settings(
                 AppSettings(
                     selected_model="qwen3:4b",
+                    ollama_resident_model="qwen3:4b",
                     managed_ollama_models=["qwen3:4b"],
                 ),
                 settings_path,
@@ -302,6 +303,7 @@ class OllamaModelManagerTests(unittest.TestCase):
         self.assertTrue(cleared)
         self.assertEqual(fake_client.deleted, ["qwen3:4b"])
         self.assertEqual(saved.selected_model, "")
+        self.assertEqual(saved.ollama_resident_model, "")
         self.assertEqual(saved.managed_ollama_models, [])
 
     def test_existing_shared_model_can_be_verified_without_becoming_managed(self):

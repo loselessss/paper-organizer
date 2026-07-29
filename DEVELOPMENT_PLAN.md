@@ -684,6 +684,13 @@ Paper Organizer 설치본에는 요약용 LLM 가중치를 포함하지 않는�
 표시한다. 이 안내는 초기에는 파라미터 등급별 보수적 정책을 사용하고, 이후 실제
 벤치마크가 쌓이면 모델·양자화별 측정 결과로 교체한다.
 
+같은 화면에서 Ollama 모델 상주 정책과 상주 대상 모델을 따로 선택한다. 정책은
+`자동`, `사용 후 즉시 해제`, `5분 유지`, `30분 유지`, `계속 상주`를 제공한다.
+상주는 앱 시작 시 선적재하는 뜻이 아니라 첫 요청 뒤 모델을 메모리에 유지하는
+시간이며, 선택한 모델 하나만 상주 대상으로 둔다. 자동 정책은 저장된 RAM과 모델
+크기를 기준으로 보수적으로 결정하고, 32GB RAM에서 4B 이하 모델은 30분 유지할 수
+있다. 계속 상주는 RAM·VRAM을 계속 차지한다는 설명을 선택 항목 바로 아래 표시한다.
+
 #### 첫 실행과 다운로드 흐름
 
 1. Paper Organizer와 sPDF를 먼저 설치한다. 요약 모델이 없어도 PDF 보기·정리·일반 검색은 사용할 수 있다.
@@ -913,7 +920,7 @@ Qt 비의존 코어와 GUI를 분리한다. 파일 처리와 검색은 단위 �
 
 ### 8.1 sPDF 저장소 추적과 자동 업데이트
 
-sPDF는 별도 저장소 `https://github.com/loselessss/sPDF.git`의 `main` 브랜치를 유지한다. 작성 시점 기준 앱 버전은 `1.5.3`이며, Paper Organizer는 `vendor/spdf` Git submodule로 이를 포함한다.
+sPDF는 별도 저장소 `https://github.com/loselessss/sPDF.git`의 `main` 브랜치를 유지한다. 작성 시점 기준 앱 버전은 `1.6.1`이며, Paper Organizer는 `vendor/spdf` Git submodule로 이를 포함한다.
 
 ```ini
 [submodule "vendor/spdf"]

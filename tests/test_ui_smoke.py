@@ -90,6 +90,9 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("일반 요약", dialog.model_guidance.text())
             self.assertIn("기여·한계 미지원", dialog.model_guidance.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
+            self.assertEqual(dialog.residency_combo.currentData(), "auto")
+            self.assertEqual(dialog.resident_model_combo.count(), 2)
+            self.assertIn("미리 적재하지 않으며", dialog.residency_guidance.text())
             self.assertEqual(
                 dialog.manage_models_button.text(),
                 "Ollama 설치·삭제…",

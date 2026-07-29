@@ -47,6 +47,8 @@ class AiSettingsControllerTests(unittest.TestCase):
                 model_profile="quality",
                 summary_language="source",
                 summary_timeout_seconds=1500,
+                ollama_residency_mode="30m",
+                ollama_resident_model="qwen3:4b",
             )
             saved = json.loads(path.read_text(encoding="utf-8"))
 
@@ -57,7 +59,10 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertEqual(view.model_profile, "quality")
         self.assertEqual(view.summary_language, "source")
         self.assertEqual(view.summary_timeout_seconds, 1500)
+        self.assertEqual(view.ollama_residency_mode, "30m")
+        self.assertEqual(view.ollama_resident_model, "qwen3:4b")
         self.assertEqual(saved["summary_timeout_seconds"], 1500)
+        self.assertEqual(saved["ollama_residency_mode"], "30m")
         self.assertNotIn("api_key", saved)
 
     def test_key_status_is_masked_and_key_can_be_deleted(self):

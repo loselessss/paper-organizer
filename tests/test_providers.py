@@ -79,6 +79,27 @@ class FakeHttpClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_ollama_keep_alive_is_sent_to_every_request_shape(self):
+        summary_client = FakeHttpClient(
+            {"message": {"content": json.dumps(SUMMARY)}}
+        )
+        search_client = FakeHttpClient(
+            {"message": {"content": json.dumps(SEARCH_PLAN)}}
+        )
+        OllamaProvider(
+            "qwen3:4b",
+            http_client=summary_client,
+            keep_alive="30m",
+        ).summarize(SummaryRequest("paper"))
+        OllamaProvider(
+            "qwen3:4b",
+            http_client=search_client,
+            keep_alive="30m",
+        ).plan_search(SearchPlanRequest("question"))
+
+        self.assertEqual(summary_client.calls[0]["payload"]["keep_alive"], "30m")
+        self.assertEqual(search_client.calls[0]["payload"]["keep_alive"], "30m")
+
     def test_summary_parser_recovers_json_wrapped_in_markdown(self):
         parsed = parse_summary_json(
             "Here is the result:\n```json\n"

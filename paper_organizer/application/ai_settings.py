@@ -61,6 +61,8 @@ class AiSettingsView:
     last_hardware_scan_at: str
     summary_language: str
     summary_timeout_seconds: int
+    ollama_residency_mode: str
+    ollama_resident_model: str
 
 
 class AiSettingsController:
@@ -115,6 +117,8 @@ class AiSettingsController:
             last_hardware_scan_at=settings.last_hardware_scan_at,
             summary_language=settings.summary_language,
             summary_timeout_seconds=settings.summary_timeout_seconds,
+            ollama_residency_mode=settings.ollama_residency_mode,
+            ollama_resident_model=settings.ollama_resident_model,
         )
 
     def settings(self) -> AppSettings:
@@ -154,6 +158,8 @@ class AiSettingsController:
         model_profile: str | None = None,
         summary_language: str | None = None,
         summary_timeout_seconds: int | None = None,
+        ollama_residency_mode: str | None = None,
+        ollama_resident_model: str | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
         if normalized_provider not in PROVIDER_LABELS:
@@ -173,6 +179,10 @@ class AiSettingsController:
             settings.summary_language = summary_language
         if summary_timeout_seconds is not None:
             settings.summary_timeout_seconds = summary_timeout_seconds
+        if ollama_residency_mode is not None:
+            settings.ollama_residency_mode = ollama_residency_mode
+        if ollama_resident_model is not None:
+            settings.ollama_resident_model = ollama_resident_model.strip()
         if normalized_provider == "ollama":
             settings.selected_model = normalized_model
         elif normalized_provider == "openai":

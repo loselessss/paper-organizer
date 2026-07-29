@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import fitz
 
@@ -180,6 +181,35 @@ class FakeWorkflow:
 
 
 class BackgroundAnalysisTests(unittest.TestCase):
+    def test_managed_ollama_stops_only_for_immediate_unload_policy(self):
+        for mode, should_stop in (("unload", True), ("auto", False)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                settings_path = root / "settings.json"
+                save_settings(
+                    AppSettings(
+                        selected_model="qwen3:4b",
+                        background_analysis_enabled=True,
+                        ollama_residency_mode=mode,
+                    ),
+                    settings_path,
+                )
+                workflow = FakeWorkflow(root / "paper.paperpack")
+                service = BackgroundAnalysisService(
+                    workflow,
+                    FakeSummary(execution(root / "paper.pdf")),
+                    MemorySecrets(),
+                    settings_path,
+                    ollama=FakeOllama(),
+                )
+
+                with mock.patch(
+                    "paper_organizer.infra.ollama_installer.stop_managed_runtime"
+                ) as stop_runtime:
+                    service.run_next()
+
+                self.assertEqual(stop_runtime.called, should_stop)
+
     def test_unavailable_ollama_waits_without_claiming_queue(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
