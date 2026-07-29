@@ -64,7 +64,17 @@ class AiSettingsDialog(QDialog):
         engine_layout.addWidget(self.engine_changes_label)
         form = QFormLayout()
         self.provider_combo = QComboBox()
-        self.model_edit = QLineEdit()
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_refresh_button = QPushButton("새로고침")
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.addWidget(self.model_combo, 1)
+        model_layout.addWidget(self.model_refresh_button)
+        self.model_status = QLabel("")
+        self.model_status.setWordWrap(True)
+        self.model_status.setStyleSheet("color: #666;")
         self.key_status = QLabel()
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.Password)
@@ -106,7 +116,8 @@ class AiSettingsDialog(QDialog):
         self.budget_spin.setSpecialValueText("앱 자체 제한 없음")
 
         form.addRow("제공자", self.provider_combo)
-        form.addRow("모델", self.model_edit)
+        form.addRow("모델", model_row)
+        form.addRow("", self.model_status)
         form.addRow("키 상태", self.key_status)
         form.addRow("API 키", key_buttons)
         form.addRow("클라우드 동의", self.consent_check)
@@ -137,14 +148,11 @@ class AiSettingsDialog(QDialog):
         self.hardware_status.setWordWrap(True)
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
-        self.use_recommendation_button = QPushButton("추천 모델 선택 → 설치/검증")
-        self.manage_models_button = QPushButton("다른 모델 선택·설치·삭제…")
-        self.use_recommendation_button.setEnabled(False)
+        self.manage_models_button = QPushButton("Ollama 모델 설치·삭제…")
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
-        local_form.addRow("선택", self.use_recommendation_button)
-        local_form.addRow("설치/삭제", self.manage_models_button)
+        local_form.addRow("모델 관리", self.manage_models_button)
         local_layout.addLayout(local_form)
         self.model_candidates = QPlainTextEdit()
         self.model_candidates.setReadOnly(True)
@@ -154,8 +162,8 @@ class AiSettingsDialog(QDialog):
         )
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
-            "추천 → 모델 선택 → 설치 또는 검증 → 활성 모델 저장 순서로 이어집니다. "
-            "다운로드와 삭제는 용량을 확인하고 사용자가 승인한 경우에만 실행합니다."
+            "설치된 모델은 위 모델 목록에서 고르는 즉시 활성 모델로 저장됩니다. "
+            "새 모델 다운로드와 삭제는 모델 관리에서 사용자가 승인한 경우에만 실행합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
@@ -164,8 +172,7 @@ class AiSettingsDialog(QDialog):
 
         note = QLabel(
             "API 키는 설정 JSON에 저장하지 않고 Windows 자격 증명 저장소에 "
-            "보관합니다. 클라우드 전송 전에는 즉시 요약 화면에서 실제 페이지와 "
-            "예상 토큰을 다시 확인할 수 있습니다."
+            "보관합니다. 클라우드 분석은 위의 지속 전송 동의를 켠 경우에만 실행됩니다."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #666;")
@@ -179,11 +186,12 @@ class AiSettingsDialog(QDialog):
         root.addWidget(buttons)
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
+        self.model_combo.currentIndexChanged.connect(self._model_changed)
+        self.model_refresh_button.clicked.connect(self._reload_ollama_models)
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
         self.key_save_button.clicked.connect(self._save_key)
         self.key_delete_button.clicked.connect(self._delete_key)
         self.hardware_scan_button.clicked.connect(self._scan_hardware)
-        self.use_recommendation_button.clicked.connect(self._use_recommendation)
         self.manage_models_button.clicked.connect(
             lambda: self._open_model_manager()
         )
@@ -200,7 +208,7 @@ class AiSettingsDialog(QDialog):
                 selected_index = index
         self.provider_combo.setCurrentIndex(selected_index)
         self.provider_combo.blockSignals(False)
-        self.model_edit.setText(view.model)
+        self._populate_model_combo(view.provider, view.model)
         self.consent_check.setChecked(view.cloud_processing_consent)
         language_index = self.language_combo.findData(view.summary_language)
         self.language_combo.setCurrentIndex(max(0, language_index))
@@ -227,36 +235,78 @@ class AiSettingsDialog(QDialog):
                 f"저장된 추천: {view.recommended_model}"
                 f" ({profile_note}사양 재검사 권장)"
             )
-            self.use_recommendation_button.setEnabled(True)
-            self.use_recommendation_button.setText(
-                "추천 모델 선택 → 설치/검증"
-            )
-        self._update_model_edit_state()
         self._refresh_key_status()
         self._profile_changed()
 
     def _provider_changed(self) -> None:
         provider = self.provider_combo.currentData()
         if provider:
-            self.model_edit.setText(self._controller.model_for_provider(provider))
-        self._update_model_edit_state()
+            self._populate_model_combo(
+                provider,
+                self._controller.model_for_provider(provider),
+            )
         self.key_edit.clear()
         self._refresh_key_status()
         self._profile_changed()
 
-    def _update_model_edit_state(self) -> None:
-        is_ollama = self.provider_combo.currentData() == "ollama"
-        self.model_edit.setReadOnly(is_ollama)
-        self.model_edit.setPlaceholderText(
-            "아래 모델 관리에서 선택"
-            if is_ollama
-            else "클라우드 모델 ID"
+    def _populate_model_combo(self, provider: str, selected: str) -> None:
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        is_ollama = provider == "ollama"
+        self.model_combo.setEditable(not is_ollama)
+        self.model_refresh_button.setVisible(is_ollama)
+        if is_ollama:
+            try:
+                models = self._controller.installed_ollama_models()
+            except Exception as exc:
+                models = ()
+                self.model_status.setText(f"설치 모델을 불러오지 못했습니다: {exc}")
+            else:
+                self.model_status.setText(
+                    f"설치된 모델 {len(models)}개 · 선택하면 즉시 적용됩니다."
+                    if models
+                    else "설치된 모델이 없습니다. 아래 모델 관리에서 먼저 설치하세요."
+                )
+            for model in models:
+                self.model_combo.addItem(model, model)
+            index = self.model_combo.findData(selected)
+            self.model_combo.setCurrentIndex(index)
+            self.model_combo.setEnabled(bool(models))
+        else:
+            self.model_combo.setEnabled(True)
+            self.model_combo.addItem(selected)
+            self.model_combo.setCurrentText(selected)
+            self.model_status.setText("클라우드 모델 ID는 저장 버튼을 누를 때 적용됩니다.")
+            line_edit = self.model_combo.lineEdit()
+            if line_edit is not None:
+                line_edit.setPlaceholderText("클라우드 모델 ID")
+        self.model_combo.blockSignals(False)
+
+    def _reload_ollama_models(self) -> None:
+        if self.provider_combo.currentData() != "ollama":
+            return
+        self._populate_model_combo(
+            "ollama",
+            self._controller.model_for_provider("ollama"),
         )
-        self.model_edit.setToolTip(
-            "Ollama 모델은 검증을 마친 뒤 모델 관리 창에서 선택합니다."
-            if is_ollama
-            else ""
-        )
+
+    def _model_changed(self) -> None:
+        if self.provider_combo.currentData() != "ollama":
+            return
+        model = self.model_combo.currentData()
+        if not model:
+            return
+        try:
+            self._controller.select_ollama_model(str(model))
+        except Exception as exc:
+            QMessageBox.warning(self, "Ollama 모델 적용 실패", str(exc))
+            return
+        self.model_status.setText(f"{model} 적용 완료")
+
+    def _current_model(self) -> str:
+        if self.provider_combo.currentData() == "ollama":
+            return str(self.model_combo.currentData() or "")
+        return self.model_combo.currentText().strip()
 
     def _refresh_key_status(self) -> None:
         provider = self.provider_combo.currentData()
@@ -320,7 +370,6 @@ class AiSettingsDialog(QDialog):
         self.hardware_scan_button.setEnabled(False)
         self.hardware_status.setText("CPU·RAM·GPU·디스크와 Ollama를 검사하는 중…")
         self.recommendation_status.setText("추천 계산 중…")
-        self.use_recommendation_button.setEnabled(False)
         worker = _HardwareScanWorker(
             self._controller,
             self.model_profile_combo.currentData(),
@@ -358,7 +407,6 @@ class AiSettingsDialog(QDialog):
             self.recommendation_status.setText(
                 "현재 안전 여유 기준으로 추천할 로컬 모델이 없습니다."
             )
-            self.use_recommendation_button.setEnabled(False)
         else:
             self._recommended_model = chosen.spec.model_id
             state = "설치됨" if chosen.installed else f"다운로드 약 {chosen.spec.download_gb:g}GB"
@@ -366,12 +414,6 @@ class AiSettingsDialog(QDialog):
             self.recommendation_status.setText(
                 f"{chosen.spec.label} ({chosen.rating}, {state}) · "
                 + explanation
-            )
-            self.use_recommendation_button.setEnabled(True)
-            self.use_recommendation_button.setText(
-                "추천 모델 검증 후 선택"
-                if chosen.installed
-                else "추천 모델 설치 후 선택"
             )
         lines: list[str] = []
         for candidate in recommendation.candidates:
@@ -387,18 +429,13 @@ class AiSettingsDialog(QDialog):
     def _hardware_scan_failed(self, message: str) -> None:
         self.hardware_status.setText(f"사양 검사 실패: {message}")
         self.recommendation_status.setText("추천을 계산하지 못했습니다.")
-        self.use_recommendation_button.setEnabled(False)
-
-    def _use_recommendation(self) -> None:
-        if not self._recommended_model:
-            return
-        ollama_index = self.provider_combo.findData("ollama")
-        if ollama_index >= 0:
-            self.provider_combo.setCurrentIndex(ollama_index)
-        self._open_model_manager(self._recommended_model)
 
     def _open_model_manager(self, initial_model: str = "") -> None:
-        preferred = initial_model or self.model_edit.text().strip()
+        preferred = (
+            initial_model
+            or self._recommended_model
+            or self._controller.model_for_provider("ollama")
+        )
         dialog = OllamaModelDialog(
             self._controller,
             self,
@@ -413,11 +450,12 @@ class AiSettingsDialog(QDialog):
         ollama_index = self.provider_combo.findData("ollama")
         if ollama_index >= 0:
             self.provider_combo.setCurrentIndex(ollama_index)
-        self.model_edit.setText(model)
+        self._populate_model_combo("ollama", model)
 
     def _model_deleted(self, model: str, selection_cleared: bool) -> None:
-        if selection_cleared or self.model_edit.text().strip().casefold() == model.casefold():
-            self.model_edit.clear()
+        if self.provider_combo.currentData() == "ollama":
+            selected = "" if selection_cleared else self._current_model()
+            self._populate_model_combo("ollama", selected)
 
     def _save_preferences(self) -> None:
         if self._scan_worker is not None and self._scan_worker.isRunning():
@@ -430,7 +468,7 @@ class AiSettingsDialog(QDialog):
         try:
             self._controller.save_preferences(
                 provider=self.provider_combo.currentData(),
-                model=self.model_edit.text(),
+                model=self._current_model(),
                 cloud_processing_consent=self.consent_check.isChecked(),
                 cloud_request_profile=self.profile_combo.currentData(),
                 cloud_max_parallel_requests=self.parallel_spin.value(),

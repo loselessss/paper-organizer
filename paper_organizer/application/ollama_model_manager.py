@@ -122,6 +122,24 @@ class OllamaModelManagerService:
             error=runtime.error,
         )
 
+    def installed_models(self) -> tuple[str, ...]:
+        """Return installed models that this app permits as summary engines."""
+
+        runtime = self._runtime.inspect()
+        if not runtime.reachable:
+            message = runtime.error or "Ollama에 연결할 수 없습니다."
+            raise RuntimeError(message)
+        return tuple(
+            sorted(
+                (
+                    model.name
+                    for model in runtime.models
+                    if _installed_model_is_selectable(model)
+                ),
+                key=str.casefold,
+            )
+        )
+
     def plan_install(self, model: str) -> OllamaInstallPlan:
         model_id = validate_model_name(model)
         snapshot = self.snapshot()

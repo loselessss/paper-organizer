@@ -31,7 +31,7 @@ from .ollama_model_manager import (
 )
 from .summary_service import (
     PreparedSummary,
-    ImmediateSummaryController,
+    SummaryController,
     SummaryExecution,
     SummaryMode,
     SummaryPreview,
@@ -91,7 +91,7 @@ __all__ = [
     "SearchCandidate",
     "SearchProviderView",
     "requires_ai_search",
-    "ImmediateSummaryController",
+    "SummaryController",
     "SummaryExecution",
     "SummaryMode",
     "SummaryPreview",

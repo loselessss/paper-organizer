@@ -185,6 +185,9 @@ class AiSettingsController:
     def ollama_model_snapshot(self):
         return self._model_manager.snapshot()
 
+    def installed_ollama_models(self) -> tuple[str, ...]:
+        return self._model_manager.installed_models()
+
     def plan_ollama_install(self, model: str):
         return self._model_manager.plan_install(model)
 

@@ -1,4 +1,4 @@
-"""Prepare PDF text safely and run an immediate summary without moving files."""
+"""Prepare paper text and run the structured summary engine."""
 
 from __future__ import annotations
 
@@ -129,8 +129,8 @@ class SummaryExecution:
         }
 
 
-class ImmediateSummaryController:
-    """State boundary used by the widget; it never exposes the secret store."""
+class SummaryController:
+    """Run the shared summary engine without exposing the secret store."""
 
     def __init__(
         self,

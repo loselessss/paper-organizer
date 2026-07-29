@@ -29,7 +29,6 @@ from paper_organizer.application.conversational_search import (
 )
 from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
-from paper_organizer.application.summary_service import ImmediateSummaryController
 from paper_organizer.application.update_service import (
     AvailableUpdate,
     GitHubUpdateService,
@@ -37,7 +36,6 @@ from paper_organizer.application.update_service import (
 from paper_organizer.application.update_schedule import UpdateCheckSchedule
 
 from .ai_settings_dialog import AiSettingsDialog
-from .immediate_summary_widget import ImmediateSummaryDialog
 from .library_workflow_widget import (
     AnalysisQueueWidget,
     CollectionReviewWidget,
@@ -57,7 +55,6 @@ class PaperOrganizerWindow(QMainWindow):
     def __init__(
         self,
         ai_settings: AiSettingsController,
-        immediate_summary: ImmediateSummaryController,
         library_workflow: LibraryWorkflowController | None = None,
         lifecycle: LifecycleSettingsController | None = None,
         background_analysis: BackgroundAnalysisService | None = None,
@@ -66,7 +63,6 @@ class PaperOrganizerWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self._ai_settings = ai_settings
-        self._immediate_summary = immediate_summary
         self._lifecycle = lifecycle
         self._conversational_search = conversational_search
         self._force_quit = False
@@ -238,11 +234,6 @@ class PaperOrganizerWindow(QMainWindow):
             self._provider_actions[choice.provider] = action
             menu.addAction(action)
         menu.addSeparator()
-        summary_action = QAction("즉시 요약...", self)
-        summary_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        summary_action.triggered.connect(self.show_immediate_summary)
-        menu.addAction(summary_action)
-        menu.addSeparator()
         ai_settings_action = QAction("제공자·모델·언어·제한 시간...", self)
         ai_settings_action.triggered.connect(self.show_ai_settings)
         menu.addAction(ai_settings_action)
@@ -294,7 +285,6 @@ class PaperOrganizerWindow(QMainWindow):
             "F5: 새 PDF 검색\n"
             "Ctrl+F: 라이브러리 검색\n"
             "Ctrl+Shift+F: 자연어로 논문 찾기\n"
-            "Ctrl+Shift+S: 즉시 요약\n"
             "Ctrl+A: 표 전체 선택\n"
             "Esc: 대화상자 닫기",
         )
@@ -343,26 +333,6 @@ class PaperOrganizerWindow(QMainWindow):
 
     def show_ollama_models(self) -> None:
         OllamaModelDialog(self._ai_settings, self).exec_()
-
-    def show_immediate_summary(self, path: str = "") -> None:
-        resume_background = bool(
-            self.queue_widget is not None
-            and self.queue_widget.is_background_running()
-        )
-        if resume_background and not self.queue_widget.pause_background_analysis():
-            QMessageBox.information(
-                self,
-                "백그라운드 분석 마무리 중",
-                "현재 논문 분석이 끝난 뒤 백그라운드 작업이 멈춥니다. "
-                "완료 후 즉시 요약을 다시 열어 주세요.",
-            )
-            return
-        dialog = ImmediateSummaryDialog(self._immediate_summary, self)
-        if path:
-            dialog.select_pdf(path)
-        dialog.exec_()
-        if resume_background and self.queue_widget is not None:
-            self.queue_widget.start_background_analysis()
 
     def show_natural_search(self, question: str = "") -> None:
         if self._conversational_search is None:

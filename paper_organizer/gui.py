@@ -16,7 +16,7 @@ def main() -> int:
     )
     from paper_organizer.application.lifecycle import LifecycleSettingsController
     from paper_organizer.application.library_workflow import LibraryWorkflowController
-    from paper_organizer.application.summary_service import ImmediateSummaryController
+    from paper_organizer.application.summary_service import SummaryController
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
     from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
@@ -41,7 +41,7 @@ def main() -> int:
             return 0
     secret_store = default_secret_store()
     ai_settings = AiSettingsController(secret_store)
-    summary = ImmediateSummaryController(secret_store)
+    summary = SummaryController(secret_store)
     workflow = LibraryWorkflowController()
     background_analysis = BackgroundAnalysisService(
         workflow,
@@ -71,7 +71,6 @@ def main() -> int:
             return
         window = PaperOrganizerWindow(
             ai_settings,
-            summary,
             workflow,
             lifecycle=lifecycle,
             background_analysis=background_analysis,

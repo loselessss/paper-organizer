@@ -48,9 +48,6 @@ class UiSmokeTests(unittest.TestCase):
 
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer import __version__
-        from paper_organizer.application.summary_service import (
-            ImmediateSummaryController,
-        )
         from paper_organizer.application.library_workflow import (
             EditablePaperMetadata,
             LibraryWorkflowController,
@@ -59,21 +56,21 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
         from paper_organizer.ui.ollama_model_dialog import _download_detail
-        from paper_organizer.ui.immediate_summary_widget import ImmediateSummaryDialog
         from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
             store = MemorySecretStore()
             ai_controller = AiSettingsController(store, path)
-            summary_controller = ImmediateSummaryController(store, path)
             workflow_controller = LibraryWorkflowController(path)
-            dialog = AiSettingsDialog(ai_controller)
+            with mock.patch.object(
+                ai_controller,
+                "installed_ollama_models",
+                return_value=("qwen3:1.7b", "qwen3:4b"),
+            ):
+                dialog = AiSettingsDialog(ai_controller)
             model_dialog = OllamaModelDialog(ai_controller)
-            summary_dialog = ImmediateSummaryDialog(summary_controller)
-            window = PaperOrganizerWindow(
-                ai_controller, summary_controller, workflow_controller
-            )
+            window = PaperOrganizerWindow(ai_controller, workflow_controller)
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
@@ -81,16 +78,19 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)
             self.assertIn("앱 1.6 요약 엔진 변경점", dialog.engine_changes_label.text())
-            self.assertTrue(dialog.model_edit.isReadOnly())
+            self.assertFalse(dialog.model_combo.isEditable())
+            self.assertEqual(dialog.model_combo.count(), 2)
+            dialog.model_combo.setCurrentIndex(
+                dialog.model_combo.findData("qwen3:4b")
+            )
+            self.assertEqual(
+                ai_controller.settings().selected_model,
+                "qwen3:4b",
+            )
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
-                dialog.use_recommendation_button.text(),
-                "추천 모델 선택 → 설치/검증",
-            )
-            self.assertFalse(dialog.use_recommendation_button.isEnabled())
-            self.assertEqual(
                 dialog.manage_models_button.text(),
-                "다른 모델 선택·설치·삭제…",
+                "Ollama 모델 설치·삭제…",
             )
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
@@ -113,9 +113,6 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("남음", download_text)
             self.assertFalse(
                 bool(model_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
-            )
-            self.assertFalse(
-                bool(summary_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
             )
             self.assertEqual(window.tabs.count(), 2)
             self.assertEqual(
@@ -1001,7 +998,6 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer.application.library_workflow import LibraryWorkflowController
         from paper_organizer.application.lifecycle import LifecycleSettingsController
-        from paper_organizer.application.summary_service import ImmediateSummaryController
         from paper_organizer.ui.main_window import PaperOrganizerWindow
 
         with tempfile.TemporaryDirectory() as temp:
@@ -1015,7 +1011,6 @@ class UiSmokeTests(unittest.TestCase):
             )
             window = PaperOrganizerWindow(
                 AiSettingsController(secret_store, path),
-                ImmediateSummaryController(secret_store, path),
                 LibraryWorkflowController(path),
                 lifecycle=lifecycle,
             )

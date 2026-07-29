@@ -9,7 +9,7 @@ import fitz
 
 from paper_organizer import __version__
 from paper_organizer.application.summary_service import (
-    ImmediateSummaryController,
+    SummaryController,
     SummaryMode,
     SummaryPreparationError,
     prepare_summary,
@@ -361,7 +361,7 @@ class SummaryServiceTests(unittest.TestCase):
                 settings,
             )
             starts = []
-            controller = ImmediateSummaryController(
+            controller = SummaryController(
                 MemorySecretStore(),
                 settings_path,
                 ollama_starter=lambda: bool(starts.append(True) or True),
@@ -390,7 +390,7 @@ class SummaryServiceTests(unittest.TestCase):
                 ["Main academic content and evidence. " * 30],
                 settings,
             )
-            controller = ImmediateSummaryController(
+            controller = SummaryController(
                 MemorySecretStore(),
                 settings_path,
                 ollama_starter=lambda: False,

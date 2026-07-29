@@ -8,7 +8,7 @@ from typing import Callable
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import (
-    ImmediateSummaryController,
+    SummaryController,
     SummaryMode,
     ollama_model_supports_ocr,
 )
@@ -45,7 +45,7 @@ class BackgroundAnalysisService:
     def __init__(
         self,
         workflow: LibraryWorkflowController,
-        summary: ImmediateSummaryController,
+        summary: SummaryController,
         secret_store: SecretStore,
         settings_path: Path | None = None,
         ollama: OllamaRuntimeInspector | None = None,

@@ -178,6 +178,25 @@ class OllamaModelClientTests(unittest.TestCase):
 
 
 class OllamaModelManagerTests(unittest.TestCase):
+    def test_installed_model_choices_exclude_inventory_only_large_models(self):
+        service = OllamaModelManagerService(
+            Path("unused.json"),
+            hardware=FakeHardware(profile()),
+            runtime=FakeRuntime(
+                model("qwen3:4b"),
+                InstalledOllamaModel(
+                    "gemma3:12b",
+                    8.1,
+                    "12.2B",
+                    "Q4_K_M",
+                    "today",
+                ),
+            ),
+            client=FakeClient(),
+        )
+
+        self.assertEqual(service.installed_models(), ("qwen3:4b",))
+
     def test_installed_12b_or_larger_model_is_inventory_only(self):
         with tempfile.TemporaryDirectory() as temp:
             large = InstalledOllamaModel(
