@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from threading import Event
@@ -23,6 +24,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -55,6 +57,44 @@ from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
+_CLAIM_BOUNDARY_RE = re.compile(
+    r"^(?:"
+    r"(?:【|\[)?\s*청구항\s*\d+\s*(?:】|\])?"
+    r"|제\s*\d+\s*항"
+    r"|claims?\s*:?"
+    r"|\d+\s*[.)]"
+    r")",
+    re.IGNORECASE,
+)
+from paper_organizer.core.patent import (
+    looks_like_registration_number,
+    preferred_patent_number,
+)
+
+
+def _format_claims_for_display(value: str) -> str:
+    """Join extraction-only soft wraps while retaining claim boundaries."""
+
+    paragraphs: list[str] = []
+    current = ""
+    for raw_line in str(value or "").replace("\r\n", "\n").splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            if current:
+                paragraphs.append(current)
+                current = ""
+            continue
+        if _CLAIM_BOUNDARY_RE.match(line):
+            if current:
+                paragraphs.append(current)
+            current = line
+        elif current:
+            current = f"{current} {line}"
+        else:
+            current = line
+    if current:
+        paragraphs.append(current)
+    return "\n\n".join(paragraphs)
 
 
 def _analysis_version_label(record: dict) -> str:
@@ -74,15 +114,22 @@ def _analysis_version_label(record: dict) -> str:
     if app_version:
         return f"v{app_version.removeprefix('v')}"
     prompt_version = str(provenance.get("prompt_version") or "")
-    marker = "paper-summary-v"
-    if marker not in prompt_version:
+    marker = next(
+        (
+            value
+            for value in ("paper-summary-v", "patent-summary-v")
+            if value in prompt_version
+        ),
+        "",
+    )
+    if not marker:
         return ""
     suffix = prompt_version.split(marker, 1)[1]
     number = suffix.split("-", 1)[0]
-    return f"요약 v{number}" if number.isdigit() else ""
+    return f"v{number}" if number.isdigit() else ""
 
 
-def _format_library_timestamp(value: str) -> str:
+def _format_library_date(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
@@ -90,7 +137,7 @@ def _format_library_timestamp(value: str) -> str:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is not None:
             parsed = parsed.astimezone()
-        return parsed.strftime("%Y-%m-%d %H:%M")
+        return parsed.strftime("%Y-%m-%d")
     except ValueError:
         return text
 
@@ -324,6 +371,13 @@ class _BackgroundAnalysisWorker(QThread):
         self._stop.set()
         self._wake.set()
 
+    def request_cancel(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        cancel = getattr(self._service, "request_cancel", None)
+        if cancel is not None:
+            cancel()
+
     def request_wake(self) -> None:
         self._wake.set()
 
@@ -346,6 +400,9 @@ class _BackgroundAnalysisWorker(QThread):
             return
         while not self._stop.is_set():
             immediate_this_run = self._immediate_remaining > 0
+            reset_cancel = getattr(self._service, "reset_cancel", None)
+            if reset_cancel is not None:
+                reset_cancel()
             self._processing = True
             result = self._service.run_next(
                 force=immediate_this_run,
@@ -356,17 +413,28 @@ class _BackgroundAnalysisWorker(QThread):
             )
             self._processing = False
             self.event.emit(result)
-            if result.state in {"completed", "failed", "ocr_completed"}:
+            if result.state in {
+                "completed",
+                "translation_completed",
+                "cancelled",
+                "failed",
+                "ocr_completed",
+            }:
                 self.queue_changed.emit()
             if result.state == "disabled":
                 break
             if (
-                result.state in {"completed", "failed"}
+                result.state
+                in {"completed", "translation_completed", "cancelled", "failed"}
                 and immediate_this_run
                 and self._immediate_remaining
             ):
                 self._immediate_remaining -= 1
-            if result.state in {"completed", "failed"} and self._immediate_remaining:
+            if (
+                result.state
+                in {"completed", "translation_completed", "cancelled", "failed"}
+                and self._immediate_remaining
+            ):
                 continue
             if result.state == "ocr_completed":
                 # OCR is only a preparation stage for the same item.
@@ -408,10 +476,12 @@ class MetadataForm(QGroupBox):
         self.tags_edit.setPlaceholderText("쉼표로 구분")
         self._summary = ""
         self._document_type = "paper"
+        self._publication_number = ""
+        self._application_number = ""
         self.authors_label = QLabel("저자")
         self.venue_label = QLabel("저널/학회")
         self.patent_office_label = QLabel("특허청")
-        self.publication_number_label = QLabel("공개번호")
+        self.publication_number_label = QLabel("출원/등록번호")
         self.application_number_label = QLabel("출원번호")
         self.assignee_label = QLabel("출원인/권리자")
         form.addRow("제목", self.title_edit)
@@ -433,7 +503,14 @@ class MetadataForm(QGroupBox):
         self.year_edit.setText(str(value.year or ""))
         self.venue_edit.setText(value.venue)
         self.patent_office_edit.setText(value.patent_office)
-        self.publication_number_edit.setText(value.publication_number)
+        self._publication_number = value.publication_number
+        self._application_number = value.application_number
+        self.publication_number_edit.setText(
+            preferred_patent_number(
+                value.publication_number,
+                value.application_number,
+            )
+        )
         self.application_number_edit.setText(value.application_number)
         self.assignee_edit.setText(value.assignee)
         self.category_edit.setText(value.category)
@@ -452,17 +529,30 @@ class MetadataForm(QGroupBox):
         for label, editor in (
             (self.patent_office_label, self.patent_office_edit),
             (self.publication_number_label, self.publication_number_edit),
-            (self.application_number_label, self.application_number_edit),
             (self.assignee_label, self.assignee_edit),
         ):
             label.setVisible(patent)
             editor.setVisible(patent)
+        self.application_number_label.setVisible(False)
+        self.application_number_edit.setVisible(False)
 
     def metadata(self) -> EditablePaperMetadata:
         year_text = self.year_edit.text().strip()
         if year_text and not year_text.isdigit():
             raise ValueError("연도는 숫자로 입력하세요.")
         split_values = lambda text: [value.strip() for value in text.split(",") if value.strip()]
+        patent_number = self.publication_number_edit.text().strip()
+        publication_number = self._publication_number
+        application_number = self._application_number
+        if self._document_type == "patent":
+            if looks_like_registration_number(publication_number):
+                publication_number = patent_number
+            elif application_number:
+                application_number = patent_number
+            elif publication_number:
+                publication_number = patent_number
+            else:
+                application_number = patent_number
         return EditablePaperMetadata(
             title=self.title_edit.text().strip(),
             authors=split_values(self.authors_edit.text()),
@@ -470,8 +560,8 @@ class MetadataForm(QGroupBox):
             venue=self.venue_edit.text().strip(),
             document_type=self._document_type,
             patent_office=self.patent_office_edit.text().strip(),
-            publication_number=self.publication_number_edit.text().strip(),
-            application_number=self.application_number_edit.text().strip(),
+            publication_number=publication_number,
+            application_number=application_number,
             assignee=self.assignee_edit.text().strip(),
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
@@ -503,6 +593,8 @@ class CollectionReviewWidget(QWidget):
         self.settings_button = QPushButton("요약 감시 옵션…")
         self.settings_button.clicked.connect(self._show_folder_settings)
         self.status_label = QLabel()
+        self.status_label.setMinimumWidth(0)
+        self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.status_label.setWordWrap(True)
         action_row.addWidget(self.scan_button)
         action_row.addWidget(self.settings_button)
@@ -528,6 +620,8 @@ class CollectionReviewWidget(QWidget):
 
         self.detail_label = QLabel("검토할 PDF를 선택하세요.")
         self.detail_label.setWordWrap(True)
+        self.detail_label.setMinimumWidth(0)
+        self.detail_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         root.addWidget(self.detail_label)
         self.form = MetadataForm("이동 전에 수정할 색인")
         self.form.set_metadata(None)
@@ -944,6 +1038,11 @@ class AnalysisQueueWidget(QWidget):
         self.remove_button = QPushButton("선택 항목 큐에서 제외")
         self.retry_button = QPushButton("실패 항목 다시 분석")
         self.background_button = QPushButton("백그라운드 분석 시작")
+        self.immediate_stop_button = QPushButton("즉시 정지")
+        self.immediate_stop_button.setToolTip(
+            "현재 결과를 저장하지 않고 항목을 대기열로 되돌립니다. "
+            "앱이 시작한 Ollama 작업은 즉시 종료합니다."
+        )
         refresh_button.clicked.connect(self.refresh)
         select_all_button.clicked.connect(self.table.selectAll)
         self.priority_button.clicked.connect(self._toggle_priority)
@@ -951,6 +1050,9 @@ class AnalysisQueueWidget(QWidget):
         self.remove_button.clicked.connect(self._remove_selected)
         self.retry_button.clicked.connect(self._retry_selected)
         self.background_button.clicked.connect(self._toggle_background)
+        self.immediate_stop_button.clicked.connect(
+            self.immediate_stop_background_analysis
+        )
         actions.addWidget(refresh_button)
         actions.addWidget(select_all_button)
         actions.addWidget(self.priority_button)
@@ -958,6 +1060,7 @@ class AnalysisQueueWidget(QWidget):
         actions.addWidget(self.remove_button)
         actions.addWidget(self.retry_button)
         actions.addWidget(self.background_button)
+        actions.addWidget(self.immediate_stop_button)
         actions.addStretch(1)
         root.addLayout(actions)
         self.status_label = QLabel()
@@ -990,9 +1093,16 @@ class AnalysisQueueWidget(QWidget):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self._items))
         for row, item in enumerate(self._items):
+            status_text = status_labels.get(item.status, item.status)
+            if item.task_type == "translation":
+                status_text = {
+                    "organized_pending_analysis": "AI 번역 대기",
+                    "analyzing": "AI 번역 중",
+                    "failed": "AI 번역 실패",
+                }.get(item.status, status_text)
             values = [
                 "높음" if item.priority else "보통",
-                status_labels.get(item.status, item.status),
+                status_text,
                 item.title,
                 item.last_error if item.status == "failed" else "",
                 item.path,
@@ -1257,27 +1367,51 @@ class AnalysisQueueWidget(QWidget):
             )
         self._update_background_button()
 
+    def immediate_stop_background_analysis(self) -> None:
+        worker = self._analysis_worker
+        if worker is None or not worker.isRunning():
+            return
+        try:
+            self._controller.set_background_analysis_enabled(False)
+        except Exception as exc:
+            QMessageBox.warning(self, "백그라운드 설정 실패", str(exc))
+            return
+        worker.request_cancel()
+        self.status_label.setText(
+            "즉시 정지 요청됨 · 현재 결과를 버리고 항목을 대기열로 되돌립니다."
+        )
+        self._update_background_button()
+
     def _analysis_event(self, event: AnalysisRunEvent) -> None:
         labels = {
             "started": "분석 중",
+            "translation_started": "AI 번역 중",
             "ocr_started": "OCR 시작",
             "ocr_progress": "OCR 진행",
             "ocr_completed": "OCR 완료",
             "idle": "대기",
             "waiting": "AI 준비 대기",
             "completed": "완료",
+            "translation_completed": "AI 번역 완료",
+            "cancelled": "즉시 정지",
             "failed": "실패",
             "disabled": "중지",
         }
-        if event.state in {"started", "ocr_started", "ocr_progress"}:
+        if event.state in {
+            "started",
+            "translation_started",
+            "ocr_started",
+            "ocr_progress",
+        }:
             self._analysis_running = True
             self._current_analysis_title = event.title
         else:
             self._analysis_running = False
             self._current_analysis_title = ""
         self.status_label.setText(f"{labels.get(event.state, event.state)} · {event.message}")
-        if event.state == "completed":
+        if event.state in {"completed", "translation_completed"}:
             self.library_changed.emit()
+        self._update_background_button()
         self._emit_progress()
 
     def _analysis_worker_finished(self) -> None:
@@ -1295,6 +1429,14 @@ class AnalysisQueueWidget(QWidget):
             "백그라운드 분석 중지" if running else "백그라운드 분석 시작"
         )
         self.background_button.setEnabled(self._background_analysis is not None)
+        self.immediate_stop_button.setEnabled(
+            bool(
+                self._background_analysis is not None
+                and running
+                and self._analysis_worker is not None
+                and self._analysis_worker.is_processing()
+            )
+        )
 
     def is_analysis_busy(self) -> bool:
         return bool(
@@ -1328,31 +1470,10 @@ class AnalysisQueueWidget(QWidget):
         worker.wait(2000)
 
 
-class _LibraryTranslationWorker(QThread):
-    completed = pyqtSignal(str, object)
-    failed = pyqtSignal(str, str)
-
-    def __init__(
-        self,
-        service: LibraryTranslationService,
-        entry: LibraryEntry,
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._service = service
-        self._entry = entry
-
-    def run(self) -> None:
-        path = str(self._entry.sidecar_path.resolve())
-        try:
-            self.completed.emit(path, self._service.translate(self._entry))
-        except Exception as exc:
-            self.failed.emit(path, str(exc))
-
-
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
+    translation_queued = pyqtSignal(int)
     natural_search_requested = pyqtSignal(str)
 
     def __init__(
@@ -1365,7 +1486,6 @@ class LibraryWidget(QWidget):
         super().__init__(parent)
         self._controller = controller
         self._translation_service = translation_service
-        self._translation_worker: _LibraryTranslationWorker | None = None
         self._translation_path = ""
         self._translation_cache: dict[str, LibraryTranslation] = {}
         self._entries: list[LibraryEntry] = []
@@ -1387,19 +1507,26 @@ class LibraryWidget(QWidget):
         self.table.setHorizontalHeaderLabels(
             [
                 "제목",
-                "유형/출처",
                 "저자/발명자",
                 "연도",
                 "분야",
-                "PaperPack 등록 시간",
+                "분석 버전",
+                "번역 상태",
+                "등록일",
                 "분석일",
-                "분석 상태",
             ]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.table.setColumnWidth(2, 72)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
@@ -1432,6 +1559,7 @@ class LibraryWidget(QWidget):
         analysis_layout = QVBoxLayout(analysis_group)
         self.analysis_view = QTextBrowser()
         self.analysis_view.setOpenExternalLinks(False)
+        self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
         analysis_layout.addWidget(self.analysis_view)
         detail_layout.addWidget(analysis_group, 1)
 
@@ -1512,63 +1640,87 @@ class LibraryWidget(QWidget):
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
+        sort_column = self.table.horizontalHeader().sortIndicatorSection()
+        sort_order = self.table.horizontalHeader().sortIndicatorOrder()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self._entries))
+        queue_items = self._controller.analysis_queue()
         queue_by_path = {
             str(Path(item.path).resolve()): item
-            for item in self._controller.analysis_queue()
+            for item in queue_items
+            if item.task_type == "analysis"
         }
-        status_labels = {
-            "pending_review": "검토 대기",
-            "organized_pending_analysis": "분석 대기",
-            "analyzing": "분석 중",
-            "completed": "분석 완료",
-            "failed": "분석 실패",
+        translation_by_path = {
+            str(Path(item.path).resolve()): item
+            for item in queue_items
+            if item.task_type == "translation"
         }
         for row, entry in enumerate(self._entries):
             metadata = entry.metadata
             queue_item = queue_by_path.get(str(entry.sidecar_path.resolve()))
-            source_text = metadata.venue
-            if metadata.document_type == "patent":
-                source_text = " · ".join(
-                    value
-                    for value in (
-                        "특허",
-                        metadata.patent_office,
-                        metadata.publication_number,
-                    )
-                    if value
-                )
             stored_status = str(
                 entry.record.get("workflow", {}).get("analysis_status")
                 or entry.record.get("analysis", {}).get("status")
                 or ""
             )
-            analysis_status = (
-                status_labels.get(queue_item.status, "미등록")
-                if queue_item
-                else status_labels.get(stored_status, "미등록")
-            )
             version_label = _analysis_version_label(entry.record)
-            if analysis_status == "분석 완료" and version_label:
-                analysis_status += f" ({version_label})"
-            if str(
-                entry.record.get("analysis", {}).get("suggested_category") or ""
-            ).strip():
-                analysis_status += " · 분야 승인 필요"
+            analysis_status = (
+                version_label
+                if not queue_item and stored_status == "completed" and version_label
+                else {
+                    "pending_review": "검토",
+                    "organized_pending_analysis": "대기",
+                    "analyzing": "중",
+                    "failed": "실패",
+                }.get(
+                    queue_item.status if queue_item else stored_status,
+                    version_label or "—",
+                )
+            )
+            translation_item = translation_by_path.get(
+                str(entry.sidecar_path.resolve())
+            )
+            translation_status = "—"
+            translations = entry.record.get("translations")
+            translations = translations if isinstance(translations, dict) else {}
+            analysis_translations = translations.get("analysis")
+            analysis_translations = (
+                analysis_translations
+                if isinstance(analysis_translations, dict)
+                else {}
+            )
+            translated = analysis_translations.get("ko")
+            translated = translated if isinstance(translated, dict) else {}
+            if translated.get("text"):
+                translation_status = (
+                    "완료"
+                    if str(translated.get("source_hash") or "")
+                    == analysis_translation_source_hash(entry.record)
+                    else "갱신 필요"
+                )
+            if translation_item is not None:
+                translation_status = {
+                    "organized_pending_analysis": "대기",
+                    "analyzing": "중",
+                    "failed": "실패",
+                }.get(translation_item.status, translation_status)
             values = [
                 metadata.title,
-                source_text,
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",
-                _format_library_timestamp(entry.paperpack_created_at),
-                _format_library_timestamp(entry.analysis_completed_at),
                 analysis_status,
+                translation_status,
+                _format_library_date(entry.paperpack_created_at),
+                _format_library_date(entry.analysis_completed_at),
             ]
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setData(Qt.UserRole, str(entry.sidecar_path.resolve()))
                 self.table.setItem(row, column, cell)
+        self.table.setSortingEnabled(True)
+        if sort_column >= 0:
+            self.table.sortItems(sort_column, sort_order)
         self.status_label.setText(f"라이브러리 문서 {len(self._entries)}개")
         self.reanalyze_all_button.setEnabled(bool(self._entries))
         if self._entries:
@@ -1617,10 +1769,11 @@ class LibraryWidget(QWidget):
             self.search_edit.clear()
             self.search_edit.blockSignals(signals_were_blocked)
         self.refresh(True)
-        for row, entry in enumerate(self._entries):
-            if entry.sidecar_path.resolve() == target:
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            if cell is not None and Path(str(cell.data(Qt.UserRole))).resolve() == target:
                 self.table.selectRow(row)
-                self.table.scrollToItem(self.table.item(row, 0))
+                self.table.scrollToItem(cell)
                 self._selection_changed()
                 return True
         return False
@@ -1680,9 +1833,14 @@ class LibraryWidget(QWidget):
         self._refresh_pdf_edit_actions(entries)
 
     def _update_translation_button(self, entry: LibraryEntry | None) -> None:
-        worker_running = bool(
-            self._translation_worker is not None
-            and self._translation_worker.isRunning()
+        queued = bool(
+            entry
+            and any(
+                item.task_type == "translation"
+                and Path(item.path).resolve() == entry.sidecar_path.resolve()
+                and item.status in {"organized_pending_analysis", "analyzing"}
+                for item in self._controller.analysis_queue()
+            )
         )
         can_translate = bool(
             entry is not None
@@ -1690,9 +1848,9 @@ class LibraryWidget(QWidget):
             and self._translation_service.has_source(entry)
             and not _analysis_failed(entry.record)
         )
-        self.translation_button.setEnabled(can_translate and not worker_running)
-        if worker_running:
-            self.translation_button.setText("AI 번역 중…")
+        self.translation_button.setEnabled(can_translate and not queued)
+        if queued:
+            self.translation_button.setText("AI 번역 대기 중…")
         elif self.translation_button.isChecked():
             self.translation_button.setText("원문 보기")
         elif entry is not None and str(entry.sidecar_path.resolve()) in self._translation_cache:
@@ -1707,59 +1865,32 @@ class LibraryWidget(QWidget):
         path = str(entry.sidecar_path.resolve())
         cached = self._translation_cache.get(path)
         if checked and cached is None:
-            service = self._translation_service
-            if service is None:
+            if self._translation_service is None:
                 self.translation_button.setChecked(False)
                 return
-            worker = _LibraryTranslationWorker(service, entry, self)
-            worker.completed.connect(self._translation_completed)
-            worker.failed.connect(self._translation_failed)
-            worker.finished.connect(self._translation_worker_finished)
-            self._translation_worker = worker
-            self._update_translation_button(entry)
-            worker.start()
-            return
-        self._update_translation_button(entry)
-        self._render_analysis(entry)
-
-    def _translation_completed(
-        self,
-        path: str,
-        translation: LibraryTranslation,
-    ) -> None:
-        self._translation_cache[path] = translation
-        entry = self._selected()
-        if entry is None or str(entry.sidecar_path.resolve()) != path:
-            return
-        self.translation_button.blockSignals(True)
-        self.translation_button.setChecked(True)
-        self.translation_button.blockSignals(False)
-        self._update_translation_button(entry)
-        self._render_analysis(entry)
-        self.metadata_changed.emit()
-
-    def _translation_failed(self, path: str, message: str) -> None:
-        entry = self._selected()
-        if entry is not None and str(entry.sidecar_path.resolve()) == path:
+            try:
+                self._controller.queue_analysis_translation(entry)
+            except Exception as exc:
+                self.translation_button.blockSignals(True)
+                self.translation_button.setChecked(False)
+                self.translation_button.blockSignals(False)
+                QMessageBox.warning(self, "AI 번역 요청 실패", str(exc))
+                return
             self.translation_button.blockSignals(True)
             self.translation_button.setChecked(False)
             self.translation_button.blockSignals(False)
             self._update_translation_button(entry)
-            self._render_analysis(entry)
-        QMessageBox.warning(self, "AI 번역 실패", message)
-
-    def _translation_worker_finished(self) -> None:
-        worker = self._translation_worker
-        self._translation_worker = None
-        if worker is not None:
-            worker.deleteLater()
-        self._update_translation_button(self._selected())
+            self.translation_queued.emit(1)
+            self.refresh(True)
+            self.status_label.setText(
+                "AI 번역을 분석 대기열에 넣었습니다. 다른 AI 작업과 한 건씩 처리합니다."
+            )
+            return
+        self._update_translation_button(entry)
+        self._render_analysis(entry)
 
     def is_translation_busy(self) -> bool:
-        return bool(
-            self._translation_worker is not None
-            and self._translation_worker.isRunning()
-        )
+        return False
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
@@ -1777,7 +1908,7 @@ class LibraryWidget(QWidget):
             )
             provenance = (
                 f"<p style='color:#777'>AI 번역 · {html.escape(provenance)}"
-                f" · {html.escape(_format_library_timestamp(translation.translated_at))}</p>"
+                f" · {html.escape(_format_library_date(translation.translated_at))}</p>"
                 if provenance
                 else "<p style='color:#777'>AI 번역</p>"
             )
@@ -1825,7 +1956,7 @@ class LibraryWidget(QWidget):
             diagnostics = failed_attempt.get("diagnostics") or {}
             if isinstance(diagnostics, dict):
                 kind_labels = {
-                    "json_validation": "JSON 형식·스키마 검증 실패",
+                    "json_validation": "서지정보 입력 형식 검증 실패",
                     "language_validation": "요약 출력 언어 검증 실패",
                     "timeout": "AI 응답 시간 초과",
                     "authentication": "API 인증 또는 키 오류",
@@ -1964,16 +2095,41 @@ class LibraryWidget(QWidget):
             sections.append(f"<h3>요약</h3>{summary_paragraphs}")
         question = description.get("research_question") or ""
         if question:
-            sections.append(f"<h3>연구 질문</h3><p>{esc(question)}</p>")
-        for label, key in (
-            ("방법", "methods"),
-            ("핵심 기여", "contributions"),
-            ("한계", "limitations"),
-            ("키워드", "keywords"),
-        ):
+            question_label = (
+                "기술적 과제"
+                if entry.metadata.document_type == "patent"
+                else "연구 질문"
+            )
+            sections.append(f"<h3>{question_label}</h3><p>{esc(question)}</p>")
+        field_labels = (
+            (
+                ("구현·실시예", "methods"),
+                ("발명의 핵심", "contributions"),
+                ("명시된 제약", "limitations"),
+                ("키워드", "keywords"),
+            )
+            if entry.metadata.document_type == "patent"
+            else (
+                ("방법", "methods"),
+                ("핵심 기여", "contributions"),
+                ("한계", "limitations"),
+                ("키워드", "keywords"),
+            )
+        )
+        for label, key in field_labels:
             values = [str(item) for item in description.get(key) or []]
             if values:
                 sections.append(f"<h3>{label}</h3>{bullets(values)}")
+        patent_claims = str(analysis.get("patent_claims") or "").strip()
+        if entry.metadata.document_type == "patent" and patent_claims:
+            displayed_claims = _format_claims_for_display(patent_claims)
+            sections.append(
+                "<h3>청구항 원문</h3>"
+                "<div style='white-space:pre-wrap; overflow-wrap:anywhere; "
+                "line-height:1.5; font-family:monospace'>"
+                f"{esc(displayed_claims)}"
+                "</div>"
+            )
         classification = entry.record.get("classification", {})
         ai_tags = [str(value) for value in classification.get("ai_tags") or []]
         if ai_tags:
@@ -2224,9 +2380,20 @@ class LibraryWidget(QWidget):
             QMessageBox.warning(self, "일부 sPDF 열기 실패", "\n".join(failures[:10]))
 
     def _open_row(self, row: int) -> None:
-        if not 0 <= row < len(self._entries):
+        cell = self.table.item(row, 0)
+        if cell is None:
             return
-        entry = self._entries[row]
+        path = str(cell.data(Qt.UserRole))
+        entry = next(
+            (
+                value
+                for value in self._entries
+                if str(value.sidecar_path.resolve()) == path
+            ),
+            None,
+        )
+        if entry is None:
+            return
         try:
             editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
             open_pdf(editable_pdf, self)

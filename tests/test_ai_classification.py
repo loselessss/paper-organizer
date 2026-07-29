@@ -53,7 +53,11 @@ def write_pdf(path: Path, pages: list[str]) -> None:
 
 
 def execution(
-    pdf: Path, *, summary_strategy: str = "direct", **overrides
+    pdf: Path,
+    *,
+    summary_strategy: str = "direct",
+    patent_claims_text: str = "",
+    **overrides,
 ) -> SummaryExecution:
     data = SummaryData(
         **{
@@ -94,7 +98,11 @@ def execution(
         prompt_version="paper-summary-v2",
         data=data,
     )
-    return SummaryExecution(preview, result)
+    return SummaryExecution(
+        preview,
+        result,
+        patent_claims_text=patent_claims_text,
+    )
 
 
 class SystemInstructionTests(unittest.TestCase):
@@ -117,6 +125,16 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("exact title in its original language", bibliography)
         self.assertIn("every byline author", bibliography)
 
+    def test_patent_uses_technical_problem_claim_and_effect_instructions(self):
+        instructions = system_instructions(
+            SummaryRequest(document_text="patent", is_patent=True)
+        )
+
+        self.assertIn("patent, not an academic paper", instructions)
+        self.assertIn("technical problem", instructions)
+        self.assertIn("claims", instructions)
+        self.assertIn("legal conclusion", instructions)
+
 
 class AiClassificationTests(unittest.TestCase):
     def test_patent_ignores_ai_journal_venue(self):
@@ -134,6 +152,26 @@ class AiClassificationTests(unittest.TestCase):
         )
 
         self.assertEqual(record["bibliography"]["venue"], "")
+
+    def test_patent_claims_are_saved_verbatim_in_analysis(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, _library, pack = self._organized(root)
+            record = load_paperpack_metadata(pack)
+            record.setdefault("document", {})["type"] = "patent"
+            record.setdefault("detection", {})["document_type"] = "patent"
+            update_paperpack(pack, record, changed_by="test")
+            pdf = controller.materialize_pdf(pack)
+            claims = "CLAIMS\n1. A composition comprising X.\n2. The composition of claim 1."
+
+            controller.apply_analysis_result(
+                pack,
+                execution(pdf, patent_claims_text=claims),
+            )
+
+            moved = next(pack.parent.parent.parent.rglob("*.paperpack"))
+            saved = load_paperpack_metadata(moved)
+            self.assertEqual(saved["analysis"]["patent_claims"], claims)
 
     def _organized(self, root: Path):
         input_dir = root / "downloads"

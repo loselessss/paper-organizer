@@ -9,16 +9,17 @@ import time
 from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (
-    QComboBox,
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
 )
 
@@ -169,28 +170,35 @@ class OllamaModelDialog(QDialog):
         runtime_row.addStretch(1)
         root.addLayout(runtime_row)
 
-        selection_row = QHBoxLayout()
-        self.model_combo = QComboBox()
+        table_header = QHBoxLayout()
+        table_header.addWidget(QLabel("요약 모델 — 행을 선택해 설치·검증·삭제합니다."), 1)
         self.refresh_button = QPushButton("새로고침")
-        selection_row.addWidget(self.model_combo, 1)
-        selection_row.addWidget(self.refresh_button)
-        root.addLayout(selection_row)
+        table_header.addWidget(self.refresh_button)
+        root.addLayout(table_header)
+
+        self.model_table = QTableWidget(0, 6)
+        self.model_table.setHorizontalHeaderLabels(
+            ["추천", "모델", "상태", "용량", "규모·양자화", "용도·강점"]
+        )
+        self.model_table.setAlternatingRowColors(True)
+        self.model_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.model_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.model_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.model_table.setSortingEnabled(True)
+        self.model_table.verticalHeader().setVisible(False)
+        header = self.model_table.horizontalHeader()
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        self.model_table.setToolTip(
+            "설치 여부와 관계없이 모델을 한 표에서 선택합니다. "
+            "설치된 행은 바로 삭제할 수 있습니다."
+        )
+        root.addWidget(self.model_table, 1)
 
         self.model_detail = QLabel("모델을 선택하세요.")
         self.model_detail.setWordWrap(True)
         root.addWidget(self.model_detail)
-
-        installed_label = QLabel(
-            "설치된 모델 — 항목을 선택하면 바로 삭제할 수 있습니다."
-        )
-        root.addWidget(installed_label)
-        self.installed_models = QListWidget()
-        self.installed_models.setAlternatingRowColors(True)
-        self.installed_models.setSelectionMode(QListWidget.SingleSelection)
-        self.installed_models.setToolTip(
-            "삭제할 모델을 이 목록에서 직접 선택하세요."
-        )
-        root.addWidget(self.installed_models, 1)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -219,9 +227,9 @@ class OllamaModelDialog(QDialog):
         root.addWidget(buttons)
 
         self.refresh_button.clicked.connect(self.refresh)
-        self.model_combo.currentIndexChanged.connect(self._selection_changed)
-        self.installed_models.currentItemChanged.connect(
-            self._installed_selection_changed
+        self.model_table.itemSelectionChanged.connect(self._selection_changed)
+        self.model_table.cellDoubleClicked.connect(
+            lambda _row, _column: self._install()
         )
         self.install_button.clicked.connect(self._install)
         self.cancel_button.clicked.connect(self._cancel_download)
@@ -263,9 +271,9 @@ class OllamaModelDialog(QDialog):
             self.progress.setRange(0, 100)
             self.progress.setValue(100)
             self.progress.setFormat(
-                "설치 및 JSON 응답 검증 완료"
+                "설치 및 서지정보 입력 검증 완료"
                 if self._operation == "install"
-                else "JSON 응답 검증 완료"
+                else "서지정보 입력 검증 완료"
             )
             self._controller.select_ollama_model(model.name)
             self.model_verified.emit(model.name)
@@ -409,59 +417,86 @@ class OllamaModelDialog(QDialog):
                 + detail
             )
         self.setup_runtime_button.setVisible(not snapshot.reachable)
-        selected = self._preferred_model or self.model_combo.currentData()
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
+        current = self._selected_entry()
+        selected = self._preferred_model or (
+            current.model_id if current is not None else ""
+        )
+        sorting = self.model_table.isSortingEnabled()
+        self.model_table.setSortingEnabled(False)
+        self.model_table.blockSignals(True)
+        self.model_table.setRowCount(0)
         for entry in snapshot.entries:
-            if not entry.selectable:
-                continue
-            state = "설치됨" if entry.installed else "미설치"
+            row = self.model_table.rowCount()
+            self.model_table.insertRow(row)
+            recommendation = (
+                f"★ {entry.recommendation_rank}"
+                if entry.recommendation_rank is not None
+                else ""
+            )
+            if entry.installed:
+                owner = "앱 관리" if entry.managed_by_app else "공유/기존"
+                state = f"설치됨 · {owner}"
+                if not entry.selectable:
+                    state += " · 선택 제외"
+            else:
+                state = "미설치" if entry.selectable else "선택 제외"
             size = (
-                f"실제 {entry.installed_size_gb:g}GB"
+                f"{entry.installed_size_gb:g}GB"
                 if entry.installed
                 else f"예상 {entry.estimated_download_gb:g}GB"
                 if entry.estimated_download_gb is not None
                 else "크기 미상"
             )
-            self.model_combo.addItem(
-                f"{entry.label} — {state}, {size}", entry.model_id
+            specification = " · ".join(
+                value
+                for value in (entry.parameter_size, entry.quantization)
+                if value
             )
+            values = (
+                recommendation,
+                entry.label,
+                state,
+                size,
+                specification or "—",
+                _entry_table_text(entry),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.UserRole, entry.model_id)
+                item.setToolTip(_entry_detail_text(entry))
+                if column == 0:
+                    item.setTextAlignment(Qt.AlignCenter)
+                self.model_table.setItem(row, column, item)
+        self.model_table.blockSignals(False)
+        self.model_table.setSortingEnabled(sorting)
         selected_found = False
         if selected:
-            index = self.model_combo.findData(selected)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
+            row = self._row_for_model(selected)
+            if row >= 0:
+                self.model_table.setCurrentCell(row, 0)
+                self.model_table.selectRow(row)
                 selected_found = True
                 self._preferred_model = ""
         if not selected_found:
-            first_installed = next(
+            default_model = next(
                 (
-                    index
-                    for index, entry in enumerate(snapshot.entries)
-                    if entry.installed
+                    entry.model_id
+                    for entry in snapshot.entries
+                    if entry.installed and entry.selectable
                 ),
-                0,
+                next(
+                    (
+                        entry.model_id
+                        for entry in snapshot.entries
+                        if entry.selectable
+                    ),
+                    snapshot.entries[0].model_id if snapshot.entries else "",
+                ),
             )
-            if self.model_combo.count():
-                self.model_combo.setCurrentIndex(first_installed)
-        self.model_combo.blockSignals(False)
-        self.installed_models.blockSignals(True)
-        self.installed_models.clear()
-        for entry in snapshot.entries:
-            if not entry.installed:
-                continue
-            owner = " · 앱에서 받은 모델" if entry.managed_by_app else " · 공유/기존 모델"
-            selection = " · 12B 이상 선택 제외" if not entry.selectable else ""
-            details = " ".join(
-                value for value in (entry.parameter_size, entry.quantization) if value
-            )
-            item = QListWidgetItem(
-                f"{entry.model_id} — {entry.installed_size_gb:g}GB"
-                f"{f' · {details}' if details else ''}{owner}{selection}"
-            )
-            item.setData(Qt.UserRole, entry.model_id)
-            self.installed_models.addItem(item)
-        self.installed_models.blockSignals(False)
+            row = self._row_for_model(default_model)
+            if row >= 0:
+                self.model_table.setCurrentCell(row, 0)
+                self.model_table.selectRow(row)
         self._selection_changed()
 
     def _apply_deleted_model(self, model: str) -> None:
@@ -500,10 +535,11 @@ class OllamaModelDialog(QDialog):
             self.model_detail.setText("모델을 선택하세요.")
         elif entry.installed:
             owner = "앱에서 다운로드" if entry.managed_by_app else "기존/공유 모델"
+            selection = " · 분석 모델 선택 제외" if not entry.selectable else ""
             self.model_detail.setText(
                 f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
                 f"{entry.parameter_size or '파라미터 미상'} · "
-                f"{entry.quantization or '양자화 미상'}\n"
+                f"{entry.quantization or '양자화 미상'}{selection}\n"
                 f"{_entry_detail_text(entry)}"
             )
         else:
@@ -513,41 +549,17 @@ class OllamaModelDialog(QDialog):
                 f"안전 여유 필요 약 {required:.1f}GB\n"
                 f"{_entry_detail_text(entry)}"
             )
-        self._select_installed_model(entry.model_id if entry and entry.installed else "")
-        self._update_actions()
-
-    def _installed_selection_changed(self, current, _previous=None) -> None:
-        if current is None:
-            self._update_actions()
-            return
-        model = str(current.data(Qt.UserRole) or "")
-        entry = self._entry_for_model(model)
-        if entry is None:
-            self._update_actions()
-            return
-        index = self.model_combo.findData(entry.model_id)
-        if index >= 0 and index != self.model_combo.currentIndex():
-            self.model_combo.setCurrentIndex(index)
-            return
-        owner = "앱에서 다운로드" if entry.managed_by_app else "기존/공유 모델"
-        selection = " · 분석 모델 선택 제외" if not entry.selectable else ""
-        self.model_detail.setText(
-            f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
-            f"{entry.parameter_size or '파라미터 미상'} · "
-            f"{entry.quantization or '양자화 미상'}{selection}\n"
-            f"{_entry_detail_text(entry)}"
-        )
         self._update_actions()
 
     def _install(self) -> None:
         entry = self._selected_entry()
-        if entry is None:
+        if entry is None or not entry.selectable:
             return
         if entry.installed:
             if QMessageBox.question(
                 self,
                 "설치 모델 검증",
-                f"{entry.model_id}의 짧은 JSON 응답을 검증한 뒤 선택할까요?",
+                f"{entry.model_id}의 짧은 서지정보 입력을 검증한 뒤 선택할까요?",
             ) != QMessageBox.Yes:
                 return
             self.progress.setRange(0, 0)
@@ -570,7 +582,7 @@ class OllamaModelDialog(QDialog):
             "Ollama 모델 다운로드",
             f"{entry.model_id}을(를) 다운로드할까요?\n"
             f"예상 다운로드 {entry.estimated_download_gb:g}GB\n"
-            "완료 후 설치 목록과 짧은 JSON 응답을 검증합니다.",
+            "완료 후 설치 목록과 짧은 서지정보 입력을 검증합니다.",
         ) != QMessageBox.Yes:
             return
         self.progress.setRange(0, 100)
@@ -648,17 +660,14 @@ class OllamaModelDialog(QDialog):
     def _selected_entry(self):
         if self._snapshot is None:
             return None
-        model = self.model_combo.currentData()
-        return next(
-            (entry for entry in self._snapshot.entries if entry.model_id == model),
-            None,
+        row = self.model_table.currentRow()
+        item = self.model_table.item(row, 0) if row >= 0 else None
+        return self._entry_for_model(
+            str(item.data(Qt.UserRole) or "") if item is not None else ""
         )
 
     def _selected_installed_entry(self):
-        item = self.installed_models.currentItem()
-        if item is None:
-            return None
-        entry = self._entry_for_model(str(item.data(Qt.UserRole) or ""))
+        entry = self._selected_entry()
         return entry if entry is not None and entry.installed else None
 
     def _entry_for_model(self, model: str):
@@ -674,24 +683,16 @@ class OllamaModelDialog(QDialog):
             None,
         )
 
-    def _select_installed_model(self, model: str) -> None:
+    def _row_for_model(self, model: str) -> int:
         key = model.strip().casefold().removesuffix(":latest")
-        target = None
-        for row in range(self.installed_models.count()):
-            item = self.installed_models.item(row)
+        for row in range(self.model_table.rowCount()):
+            item = self.model_table.item(row, 0)
             item_key = str(item.data(Qt.UserRole) or "").casefold().removesuffix(
                 ":latest"
             )
             if item_key == key:
-                target = item
-                break
-        if target is self.installed_models.currentItem():
-            return
-        self.installed_models.blockSignals(True)
-        self.installed_models.setCurrentItem(target)
-        if target is None:
-            self.installed_models.clearSelection()
-        self.installed_models.blockSignals(False)
+                return row
+        return -1
 
     def _busy(self) -> bool:
         return self._worker is not None
@@ -701,15 +702,18 @@ class OllamaModelDialog(QDialog):
         entry = self._selected_entry()
         reachable = bool(self._snapshot and self._snapshot.reachable)
         self.refresh_button.setEnabled(not busy)
-        self.model_combo.setEnabled(not busy and self.model_combo.count() > 0)
+        self.model_table.setEnabled(not busy and self.model_table.rowCount() > 0)
         self.install_button.setEnabled(
             not busy
             and reachable
             and entry is not None
+            and entry.selectable
             and (entry.installed or entry.estimated_download_gb is not None)
         )
         self.install_button.setText(
-            "검증 후 선택"
+            "분석 모델 선택 제외"
+            if entry is not None and not entry.selectable
+            else "검증 후 선택"
             if entry is not None and entry.installed
             else "다운로드 후 선택"
         )
@@ -757,3 +761,14 @@ def _entry_detail_text(entry) -> str:
         if entry.benchmark_summary
         else usage
     )
+
+
+def _entry_table_text(entry) -> str:
+    """Flatten the most useful guidance into one sortable table cell."""
+
+    parts = [
+        " ".join(line.split())
+        for line in _entry_detail_text(entry).splitlines()
+        if line.strip()
+    ]
+    return " · ".join(dict.fromkeys(parts))

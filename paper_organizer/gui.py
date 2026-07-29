@@ -61,11 +61,6 @@ def main() -> int:
     ai_settings = AiSettingsController(secret_store)
     summary = SummaryController(secret_store)
     workflow = LibraryWorkflowController()
-    background_analysis = BackgroundAnalysisService(
-        workflow,
-        summary,
-        secret_store,
-    )
     conversational_search = ConversationalSearchController(
         workflow,
         secret_store,
@@ -73,6 +68,12 @@ def main() -> int:
     library_translation = LibraryTranslationService(
         workflow,
         secret_store,
+    )
+    background_analysis = BackgroundAnalysisService(
+        workflow,
+        summary,
+        secret_store,
+        translation=library_translation,
     )
     splash = create_splash()
     splash.show()
@@ -101,7 +102,7 @@ def main() -> int:
         )
         if snapshot is not None:
             window.statusBar().showMessage(
-                f"JSON {snapshot.local_json_files}개 · 라이브러리 논문 "
+                f"기존 색인 {snapshot.local_json_files}개 · 라이브러리 논문 "
                 f"{snapshot.library_entries}개 로드 완료"
             )
         elif error:

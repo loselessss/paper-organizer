@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,6 +79,54 @@ class AnalysisQueueTests(unittest.TestCase):
                 [item.queue_id for item in store.load()],
                 [pending.queue_id],
             )
+
+    def test_translation_uses_the_same_persistent_serial_queue(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = AnalysisQueueStore(root)
+            translated = store.enqueue_translation(
+                path=root / "paper.paperpack",
+                file_sha256="e" * 64,
+                title="Translate Me",
+                source_hash="f" * 64,
+            )
+
+            loaded = AnalysisQueueStore(root).load()[0]
+            self.assertEqual(loaded.queue_id, translated.queue_id)
+            self.assertEqual(loaded.task_type, "translation")
+            self.assertEqual(loaded.source_hash, "f" * 64)
+            self.assertEqual(store.claim_next().task_type, "translation")
+
+    def test_v1_analysis_queue_loads_with_analysis_task_defaults(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = AnalysisQueueStore(root)
+            store.path.parent.mkdir(parents=True)
+            store.path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "items": [
+                            {
+                                "queue_id": "sha256:" + "a" * 64,
+                                "path": str(root / "paper.paperpack"),
+                                "file_sha256": "a" * 64,
+                                "title": "Legacy",
+                                "status": "organized_pending_analysis",
+                                "priority": 0,
+                                "added_at": "2026-07-29T00:00:00+00:00",
+                                "updated_at": "2026-07-29T00:00:00+00:00",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = store.load()[0]
+
+            self.assertEqual(loaded.task_type, "analysis")
+            self.assertEqual(loaded.source_hash, "")
 
 
 if __name__ == "__main__":

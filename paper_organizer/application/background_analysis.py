@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, Thread
 from typing import Callable
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
+from paper_organizer.application.library_translation import LibraryTranslationService
 from paper_organizer.application.summary_service import (
     SummaryController,
     SummaryMode,
@@ -50,6 +52,8 @@ class BackgroundAnalysisService:
         settings_path: Path | None = None,
         ollama: OllamaRuntimeInspector | None = None,
         ollama_starter: Callable[[], bool] | None = None,
+        translation: LibraryTranslationService | None = None,
+        ollama_stopper: Callable[[], bool] | None = None,
     ) -> None:
         self._workflow = workflow
         self._summary = summary
@@ -57,6 +61,30 @@ class BackgroundAnalysisService:
         self._settings_path = settings_path or default_settings_path()
         self._ollama = ollama or OllamaRuntimeInspector()
         self._ollama_starter = ollama_starter
+        self._translation = translation
+        self._ollama_stopper = ollama_stopper
+        self._cancel_requested = Event()
+
+    def request_cancel(self) -> None:
+        """Cancel the current result and interrupt an app-managed Ollama process."""
+
+        self._cancel_requested.set()
+        from paper_organizer.application.background_ocr import (
+            stop_active_ocr_workers,
+        )
+
+        Thread(target=stop_active_ocr_workers, daemon=True).start()
+        if load_settings(self._settings_path).summary_provider != "ollama":
+            return
+        stopper = self._ollama_stopper
+        if stopper is None:
+            from paper_organizer.infra.ollama_installer import stop_managed_runtime
+
+            stopper = stop_managed_runtime
+        Thread(target=stopper, daemon=True).start()
+
+    def reset_cancel(self) -> None:
+        self._cancel_requested.clear()
 
     def recover_interrupted(self) -> int:
         recovered = self._workflow.recover_interrupted_analysis()
@@ -117,7 +145,10 @@ class BackgroundAnalysisService:
             return AnalysisRunEvent("idle", "분석할 정리된 논문이 없습니다.")
         next_item = pending[0]
         queued_path = Path(next_item.path)
-        if self._workflow.paperpack_needs_ocr(queued_path):
+        if (
+            next_item.task_type == "analysis"
+            and self._workflow.paperpack_needs_ocr(queued_path)
+        ):
             if (
                 settings.summary_provider == "ollama"
                 and not ollama_model_supports_ocr(settings.selected_model)
@@ -154,6 +185,13 @@ class BackgroundAnalysisService:
                         else None
                     ),
                 )
+                if self._cancel_requested.is_set():
+                    return AnalysisRunEvent(
+                        "cancelled",
+                        f"{next_item.title} OCR을 즉시 중지하고 대기열에 유지했습니다.",
+                        next_item.queue_id,
+                        next_item.title,
+                    )
                 return AnalysisRunEvent(
                     "ocr_completed",
                     f"{next_item.title} 전체 OCR을 저장했습니다. AI 분석을 이어갑니다.",
@@ -161,6 +199,13 @@ class BackgroundAnalysisService:
                     next_item.title,
                 )
             except Exception as exc:
+                if self._cancel_requested.is_set():
+                    return AnalysisRunEvent(
+                        "cancelled",
+                        f"{next_item.title} 작업을 즉시 중지하고 대기열에 유지했습니다.",
+                        next_item.queue_id,
+                        next_item.title,
+                    )
                 message = _safe_error(exc)
                 try:
                     self._workflow.fail_analysis(next_item.queue_id, message)
@@ -181,8 +226,12 @@ class BackgroundAnalysisService:
         if on_start is not None:
             on_start(
                 AnalysisRunEvent(
-                    "started",
-                    f"{item.title} 분석을 시작했습니다.",
+                    "translation_started" if item.task_type == "translation" else "started",
+                    (
+                        f"{item.title} AI 번역을 시작했습니다."
+                        if item.task_type == "translation"
+                        else f"{item.title} 분석을 시작했습니다."
+                    ),
                     item.queue_id,
                     item.title,
                 )
@@ -190,6 +239,29 @@ class BackgroundAnalysisService:
         prepared = None
         execution = None
         try:
+            self._raise_if_cancelled()
+            if item.task_type == "translation":
+                if self._translation is None:
+                    raise RuntimeError("AI 번역 서비스가 준비되지 않았습니다.")
+                entry = next(
+                    (
+                        value
+                        for value in self._workflow.list_library()
+                        if value.sidecar_path.resolve() == Path(item.path).resolve()
+                    ),
+                    None,
+                )
+                if entry is None:
+                    raise RuntimeError("번역할 라이브러리 문서를 찾을 수 없습니다.")
+                self._translation.translate(entry)
+                self._raise_if_cancelled()
+                self._workflow.remove_from_queue(item.queue_id)
+                return AnalysisRunEvent(
+                    "translation_completed",
+                    f"{item.title} AI 번역을 완료했습니다.",
+                    item.queue_id,
+                    item.title,
+                )
             mode = (
                 SummaryMode.QUICK
                 if settings.resource_profile == "eco"
@@ -210,7 +282,9 @@ class BackgroundAnalysisService:
             else:
                 pdf = self._workflow.materialize_pdf(queued_path)
                 prepared = self._summary.prepare(pdf, mode)
+            self._raise_if_cancelled()
             execution = self._summary.run(prepared)
+            self._raise_if_cancelled()
             self._workflow.apply_analysis_result(Path(item.path), execution)
             self._workflow.remove_from_queue(item.queue_id)
             return AnalysisRunEvent(
@@ -220,8 +294,20 @@ class BackgroundAnalysisService:
                 item.title,
             )
         except Exception as exc:
+            if self._cancel_requested.is_set():
+                message = f"{item.title} 작업을 즉시 중지하고 대기열로 되돌렸습니다."
+                try:
+                    self._workflow.retry_queue_item(item.queue_id)
+                except Exception as queue_exc:
+                    message += f" / 큐 복구 실패: {_safe_error(queue_exc)}"
+                return AnalysisRunEvent(
+                    "cancelled",
+                    message,
+                    item.queue_id,
+                    item.title,
+                )
             message = _safe_error(exc)
-            if prepared is not None and execution is None:
+            if item.task_type == "analysis" and prepared is not None and execution is None:
                 save_failure = getattr(
                     self._workflow,
                     "apply_analysis_failure",
@@ -262,6 +348,10 @@ class BackgroundAnalysisService:
                 from paper_organizer.infra.ollama_installer import stop_managed_runtime
 
                 stop_managed_runtime()
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_requested.is_set():
+            raise RuntimeError("analysis cancelled")
 
 
 def poll_interval_seconds(resource_profile: str) -> int:

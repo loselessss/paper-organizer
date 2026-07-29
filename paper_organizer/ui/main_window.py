@@ -120,8 +120,8 @@ class PaperOrganizerWindow(QMainWindow):
             collect_split.setStretchFactor(0, 3)
             collect_split.setStretchFactor(1, 2)
             collect_split.setChildrenCollapsible(False)
-            self.tabs.addTab(collect_split, "수집 및 분석")
             self.tabs.addTab(self.library_widget, "라이브러리")
+            self.tabs.addTab(collect_split, "새 PDF 및 분석 큐")
         if self.queue_widget is not None:
             self.queue_widget.library_requested.connect(
                 self._open_queue_item_in_library
@@ -134,6 +134,9 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget.reanalysis_queued.connect(
                 self._library_reanalysis_queued
             )
+            self.library_widget.translation_queued.connect(
+                self._library_translation_queued
+            )
             self.library_widget.metadata_changed.connect(
                 self.queue_widget.refresh
             )
@@ -141,6 +144,8 @@ class PaperOrganizerWindow(QMainWindow):
                 self.show_natural_search
             )
         self.setCentralWidget(self.tabs)
+        if self.library_widget is not None:
+            self.tabs.setCurrentWidget(self.library_widget)
 
         settings_menu = self.menuBar().addMenu("설정")
         watch_settings_menu = settings_menu.addMenu("요약 감시 옵션")
@@ -222,9 +227,12 @@ class PaperOrganizerWindow(QMainWindow):
             and self._library_workflow.settings().background_analysis_enabled
         ):
             self.queue_widget.start_background_analysis()
-        self.statusBar().showMessage(
-            f"재요약 {count}건을 분석 대기열에 넣었습니다.", 8000
-        )
+
+    def _library_translation_queued(self, count: int) -> None:
+        if self.queue_widget is None:
+            return
+        self.queue_widget.refresh()
+        self.queue_widget.start_background_analysis(immediate_count=count)
 
     def _create_ai_menu(self, menu: QMenu) -> None:
         self._provider_group = QActionGroup(self)

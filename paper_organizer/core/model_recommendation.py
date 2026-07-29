@@ -29,6 +29,14 @@ class ModelSpec:
     quality: int
     license: str
     recommended_context: int
+    recommendation_rank: int | None
+    benchmark_score: float | None
+    benchmark_paper_count: int
+    benchmark_success_count: int
+    benchmark_average_seconds: float | None
+    benchmark_json_retries: int | None
+    benchmark_strengths: tuple[str, ...]
+    benchmark_hardware: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,11 +85,22 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
     version = str(decoded.get("catalog_version") or "").strip()
     if not version:
         raise ValueError("model catalog version is required")
+    benchmark_hardware = str(decoded.get("benchmark_hardware") or "").strip()
     models: list[ModelSpec] = []
     seen: set[str] = set()
     for raw in decoded["models"]:
         if not isinstance(raw, dict):
             raise ValueError("model catalog entry must be an object")
+        benchmark = raw.get("benchmark") or {}
+        if not isinstance(benchmark, dict):
+            raise ValueError("model benchmark entry must be an object")
+        recommendation_rank = raw.get("recommendation_rank")
+        benchmark_score = benchmark.get("score")
+        benchmark_average_seconds = benchmark.get("average_seconds")
+        benchmark_json_retries = benchmark.get("json_retries")
+        strengths = benchmark.get("strengths") or []
+        if not isinstance(strengths, list):
+            raise ValueError("model benchmark strengths must be a list")
         spec = ModelSpec(
             model_id=str(raw["id"]).strip(),
             label=str(raw["label"]).strip(),
@@ -94,6 +113,30 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
             quality=int(raw["quality"]),
             license=str(raw["license"]).strip(),
             recommended_context=int(raw["recommended_context"]),
+            recommendation_rank=(
+                int(recommendation_rank)
+                if recommendation_rank is not None
+                else None
+            ),
+            benchmark_score=(
+                float(benchmark_score) if benchmark_score is not None else None
+            ),
+            benchmark_paper_count=int(benchmark.get("paper_count") or 0),
+            benchmark_success_count=int(benchmark.get("success_count") or 0),
+            benchmark_average_seconds=(
+                float(benchmark_average_seconds)
+                if benchmark_average_seconds is not None
+                else None
+            ),
+            benchmark_json_retries=(
+                int(benchmark_json_retries)
+                if benchmark_json_retries is not None
+                else None
+            ),
+            benchmark_strengths=tuple(
+                str(value).strip() for value in strengths if str(value).strip()
+            ),
+            benchmark_hardware=benchmark_hardware,
         )
         if not spec.model_id or spec.model_id in seen:
             raise ValueError("model catalog contains an empty or duplicate id")
@@ -107,9 +150,65 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
         )
         if any(not math.isfinite(value) or value <= 0 for value in numeric):
             raise ValueError(f"model catalog values must be positive: {spec.model_id}")
+        if spec.recommendation_rank is not None and spec.recommendation_rank <= 0:
+            raise ValueError("model recommendation rank must be positive")
+        if spec.benchmark_score is not None and not 0 <= spec.benchmark_score <= 100:
+            raise ValueError("model benchmark score must be between 0 and 100")
+        if not 0 <= spec.benchmark_success_count <= spec.benchmark_paper_count:
+            raise ValueError("model benchmark success count is invalid")
+        if (
+            spec.benchmark_average_seconds is not None
+            and (
+                not math.isfinite(spec.benchmark_average_seconds)
+                or spec.benchmark_average_seconds <= 0
+            )
+        ):
+            raise ValueError("model benchmark average time must be positive")
+        if (
+            spec.benchmark_json_retries is not None
+            and spec.benchmark_json_retries < 0
+        ):
+            raise ValueError("model benchmark retry count cannot be negative")
         seen.add(spec.model_id)
         models.append(spec)
-    return version, tuple(sorted(models, key=lambda item: item.parameters_b))
+    return version, tuple(
+        sorted(
+            models,
+            key=lambda item: (
+                item.recommendation_rank is None,
+                item.recommendation_rank or 0,
+                item.parameters_b,
+            ),
+        )
+    )
+
+
+def model_benchmark_summary(spec: ModelSpec) -> str:
+    """Describe private real-paper benchmark results without exposing papers."""
+
+    lines: list[str] = []
+    if spec.recommendation_rank is not None:
+        lines.append(f"★ 종합 추천 {spec.recommendation_rank}순위")
+    facts: list[str] = []
+    if spec.benchmark_paper_count:
+        facts.append(
+            f"실논문 {spec.benchmark_success_count}/{spec.benchmark_paper_count}편 완료"
+        )
+    if spec.benchmark_score is not None:
+        facts.append(f"품질 {spec.benchmark_score:g}/100")
+    if spec.benchmark_average_seconds is not None:
+        facts.append(f"평균 {spec.benchmark_average_seconds:g}초")
+    if spec.benchmark_json_retries is not None:
+        facts.append(f"서지정보 입력 재시도 {spec.benchmark_json_retries}회")
+    if facts:
+        lines.append(" · ".join(facts))
+        if spec.benchmark_hardware:
+            lines.append(f"측정 환경: {spec.benchmark_hardware}")
+    elif spec.recommendation_rank is None:
+        lines.append("실논문 벤치마크 미실시")
+    if spec.benchmark_strengths:
+        lines.append("강점: " + " · ".join(spec.benchmark_strengths))
+    return "\n".join(lines)
 
 
 def model_usage_guidance(
@@ -157,7 +256,7 @@ def model_usage_guidance(
             hallucination_risk="매우 높음",
             summary_strategy="실사용 논문 요약 비권장",
             advanced_analysis=False,
-            caution="JSON·사실 보존 비교용입니다. 중요한 논문 요약에는 사용하지 마세요.",
+            caution="서지정보 입력·사실 보존 비교용입니다. 중요한 논문 요약에는 사용하지 마세요.",
         )
     if parameters < 3:
         return ModelUsageGuidance(
@@ -296,6 +395,19 @@ def _highest_stable(
         if candidate.spec.recommended_ram_gb <= total_ram_gb
     ]
     pool = recommended or headroom or candidates
+    ranked = [
+        candidate
+        for candidate in pool
+        if candidate.spec.recommendation_rank is not None
+    ]
+    if ranked:
+        return min(
+            ranked,
+            key=lambda item: (
+                item.spec.recommendation_rank or math.inf,
+                -item.spec.quality,
+            ),
+        )
     return max(pool, key=lambda item: (item.spec.quality, item.spec.parameters_b))
 
 

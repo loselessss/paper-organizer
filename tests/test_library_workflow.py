@@ -458,6 +458,28 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertFalse(clean.changed)
             self.assertFalse(clean.conflicted)
 
+    def test_spdf_working_copy_repairs_an_orphaned_v170_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "paper.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Recovered Workspace")
+            )
+            _pack, working, state = controller._paperpack_edit_paths(
+                organized.pdf_path
+            )
+            working.parent.mkdir(parents=True)
+            working.write_bytes(b"incomplete")
+            self.assertFalse(state.exists())
+
+            repaired = controller.materialize_editable_pdf(organized.pdf_path)
+
+            self.assertEqual(repaired.read_bytes(), source.read_bytes())
+            self.assertTrue(state.is_file())
+
     def test_spdf_working_copy_detects_conflict_and_can_be_discarded(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -502,9 +524,10 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertIsNotNone(wrapped.duplicate)
             self.assertEqual(wrapped.duplicate.match.kind, DuplicateKind.SAME_WORK)
             operation = controller.trash_confirmed_duplicate(wrapped)
-            self.assertFalse(wrapped_path.exists())
+            self.assertTrue(wrapped_path.exists())
             self.assertTrue(operation.trashed_path.exists())
             manifest = json.loads(operation.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["storage_mode"], "reference")
             self.assertEqual(manifest["kind"], "unorganized_duplicate")
             self.assertEqual(manifest["detection_status"], "academic_likely")
             self.assertEqual(manifest["estimated_title"], "ResearchGate")
@@ -535,7 +558,8 @@ class LibraryWorkflowTests(unittest.TestCase):
             operation = controller.trash_confirmed_duplicate(item)
             manifest = json.loads(operation.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["kind"], "discarded_new_pdf")
-            self.assertFalse(source.exists())
+            self.assertTrue(source.exists())
+            self.assertEqual(manifest["storage_mode"], "reference")
 
             restored = controller.restore_trash(controller.list_trash()[0])
             self.assertTrue(restored.exists())

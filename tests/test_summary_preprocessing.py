@@ -1,6 +1,9 @@
 import unittest
 
-from paper_organizer.application.summary_preprocessing import preprocess_paper_text
+from paper_organizer.application.summary_preprocessing import (
+    preprocess_paper_text,
+    remove_figure_and_table_captions,
+)
 
 
 class SummaryPreprocessingTests(unittest.TestCase):
@@ -68,6 +71,38 @@ class SummaryPreprocessingTests(unittest.TestCase):
         self.assertEqual(prepared.sections[0].name, "front")
         self.assertIn("A Precise Paper Title", prepared.text)
         self.assertIn("Mina Vale and Theo Karst", prepared.text)
+
+    def test_small_model_caption_filter_keeps_scientific_prose(self):
+        filtered = remove_figure_and_table_captions(
+            [
+                "Results\nSignal increased by 20 percent.\n"
+                "Figure 2. Microscopy panels and scale bars.\n"
+                "Table 1: Full measurement matrix.\n"
+                "This result supports the hypothesis."
+            ]
+        )
+
+        self.assertNotIn("Figure 2", filtered[0])
+        self.assertNotIn("Table 1", filtered[0])
+        self.assertIn("Signal increased", filtered[0])
+        self.assertIn("supports the hypothesis", filtered[0])
+
+    def test_page_labels_are_removed_without_touching_section_numbers(self):
+        prepared = preprocess_paper_text(
+            [
+                "A useful paper\nPage 1 of 3\nAbstract\nEvidence " * 20,
+                "[PDF Page 2]\n2. Methods\nMethod evidence.\n- 2 -",
+                "페이지 3\n3 / 3\n3. Results\nMeasured evidence.",
+            ]
+        )
+
+        self.assertNotIn("Page 1 of 3", prepared.text)
+        self.assertNotIn("[PDF Page 2]", prepared.text)
+        self.assertNotIn("- 2 -", prepared.text)
+        self.assertNotIn("페이지 3", prepared.text)
+        self.assertNotIn("3 / 3", prepared.text)
+        self.assertIn("Method evidence", prepared.text)
+        self.assertIn("Measured evidence", prepared.text)
 
 
 if __name__ == "__main__":

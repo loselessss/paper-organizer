@@ -1,6 +1,9 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
 from unittest import mock
 
 import fitz
@@ -137,6 +140,7 @@ class FakeWorkflow:
         self.applied = []
         self.needs_ocr = False
         self.ocr_completed = []
+        self.retried = []
 
     def analysis_queue(self):
         return [] if self.claimed else [self.item]
@@ -176,11 +180,98 @@ class FakeWorkflow:
             (path, prepared.regex_fallback, message, diagnostics)
         )
 
+    def retry_queue_item(self, queue_id, *, high=False):
+        self.retried.append((queue_id, high))
+
     def recover_interrupted_analysis(self):
         return 0
 
 
 class BackgroundAnalysisTests(unittest.TestCase):
+    def test_immediate_stop_discards_result_and_returns_item_to_waiting_queue(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            stopped = Event()
+            holder = {}
+
+            class CancellingSummary(FakeSummary):
+                def run(self, prepared):
+                    holder["service"].request_cancel()
+                    return self.result
+
+            service = BackgroundAnalysisService(
+                workflow,
+                CancellingSummary(execution(root / "paper.pdf")),
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                ollama_stopper=lambda: stopped.set() or True,
+            )
+            holder["service"] = service
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "cancelled")
+        self.assertEqual(workflow.applied, [])
+        self.assertEqual(workflow.failed, [])
+        self.assertEqual(workflow.retried, [(workflow.item.queue_id, False)])
+        self.assertTrue(stopped.wait(1))
+    def test_translation_runs_in_the_same_queue_without_starting_summary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            pack = root / "paper.paperpack"
+            pack.write_bytes(b"placeholder")
+            workflow = FakeWorkflow(pack)
+            workflow.item = replace(
+                workflow.item,
+                task_type="translation",
+                source_hash="source-hash",
+            )
+            entry = SimpleNamespace(sidecar_path=pack)
+            workflow.list_library = lambda: [entry]
+
+            class Translation:
+                def __init__(self):
+                    self.entries = []
+
+                def translate(self, value):
+                    self.entries.append(value)
+
+            translation = Translation()
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                translation=translation,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "translation_completed")
+        self.assertEqual(translation.entries, [entry])
+        self.assertEqual(summary.modes, [])
+        self.assertEqual(workflow.removed, [workflow.item.queue_id])
+
     def test_managed_ollama_stops_only_for_immediate_unload_policy(self):
         for mode, should_stop in (("unload", True), ("auto", False)):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:

@@ -65,7 +65,7 @@ def create_splash() -> QSplashScreen:
         "color: #d8e4f3; background: transparent; font-family: 'Segoe UI'; font-size: 11pt;"
     )
     splash.showMessage(
-        "PaperPack과 JSON 색인을 읽는 중…",
+        "PaperPack과 기존 색인을 읽는 중…",
         Qt.AlignLeft | Qt.AlignBottom,
         QColor("#ffffff"),
     )

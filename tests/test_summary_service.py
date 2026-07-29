@@ -373,6 +373,99 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
 
+    def test_all_models_omit_figure_and_table_captions(self):
+        pages = [
+            "Results\n"
+            + "Measured scientific evidence. " * 30
+            + "\nFigure 3. Detailed microscopy panels and scale bars."
+            + "\nTable 2. Full measurement matrix."
+        ]
+        small = prepare_text_summary(
+            Path("paper.paperpack"),
+            pages,
+            AppSettings(summary_provider="ollama", selected_model="qwen3:4b"),
+        )
+        large = prepare_text_summary(
+            Path("paper.paperpack"),
+            pages,
+            AppSettings(summary_provider="ollama", selected_model="qwen3:8b"),
+        )
+
+        self.assertNotIn("Figure 3", small.document_text)
+        self.assertNotIn("Table 2", small.document_text)
+        self.assertNotIn("Figure 3", large.document_text)
+        self.assertNotIn("Table 2", large.document_text)
+
+    def test_patent_claims_are_copied_without_ai_rewriting(self):
+        claims = (
+            "CLAIMS\n"
+            "1. A bleaching composition comprising enzyme X.\n"
+            "2. The composition of claim 1, wherein the pH is 7.0."
+        )
+        prepared = prepare_text_summary(
+            Path("patent.paperpack"),
+            [
+                "US 2026/0000001 A1\nPatent Application Publication\n"
+                "Description\n" + "Technical disclosure. " * 30,
+                claims,
+                "ABSTRACT OF THE DISCLOSURE\nA short abstract.",
+            ],
+            AppSettings(summary_provider="ollama", selected_model="qwen3:8b"),
+        )
+
+        self.assertEqual(prepared.patent_claims_text, claims)
+
+    def test_patent_page_markers_are_removed_without_touching_claim_numbers(self):
+        prepared = prepare_text_summary(
+            Path("patent.paperpack"),
+            [
+                "등록특허 10-1234567\n대한민국특허청\n"
+                "발명의 명칭\nA useful invention\n- 1 -\n"
+                + "Technical disclosure. " * 30,
+                "청구범위\n"
+                "1. 제1 구성요소를 포함하는 장치.\n"
+                "Page 2 of 3\n"
+                "2. 제1항에 있어서, 제2 구성요소를 더 포함하는 장치.\n"
+                "3 / 3",
+            ],
+            AppSettings(summary_provider="ollama", selected_model="qwen3:8b"),
+        )
+
+        self.assertNotIn("- 1 -", prepared.document_text)
+        self.assertNotIn("Page 2 of 3", prepared.document_text)
+        self.assertNotIn("3 / 3", prepared.document_text)
+        self.assertEqual(
+            prepared.patent_claims_text,
+            "청구범위\n"
+            "1. 제1 구성요소를 포함하는 장치.\n"
+            "2. 제1항에 있어서, 제2 구성요소를 더 포함하는 장치.",
+        )
+
+    def test_patent_drawing_section_is_excluded_but_claims_are_preserved(self):
+        claims = (
+            "청구범위\n"
+            "1. 효소 복합체를 포함하는 조성물.\n"
+            "2. 제1항에 있어서, 담체를 더 포함하는 조성물."
+        )
+        prepared = prepare_text_summary(
+            Path("patent.paperpack"),
+            [
+                "등록특허 10-1234567\n대한민국특허청\n"
+                "발명의 명칭\n효소 복합체\n"
+                + "Technical disclosure. " * 30,
+                "도면의 간단한 설명\n"
+                "도 1은 효소 반응 장치를 도시한다.\n"
+                "도 2는 측정 결과를 도시한다.\n"
+                + claims,
+            ],
+            AppSettings(summary_provider="ollama", selected_model="qwen3:8b"),
+        )
+
+        self.assertNotIn("도 1은", prepared.document_text)
+        self.assertNotIn("도 2는", prepared.document_text)
+        self.assertIn("효소 복합체를 포함", prepared.document_text)
+        self.assertEqual(prepared.patent_claims_text, claims)
+
     def test_8b_ollama_model_uses_one_pass_and_keeps_advanced_fields(self):
         settings = AppSettings(
             summary_provider="ollama",

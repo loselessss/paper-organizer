@@ -88,7 +88,7 @@ from paper_organizer.models.paper import (
 )
 
 
-_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 DISCOVERY_OCR_PAGE_LIMIT = 5
 _RESERVED_NAMES = {
@@ -190,6 +190,7 @@ class TrashEntry:
     duplicate_title: str = ""
     duplicate_kind: str = ""
     duplicate_score: float | None = None
+    storage_mode: str = "moved"
 
 
 @dataclass(frozen=True, slots=True)
@@ -840,38 +841,251 @@ def _is_supported_document(status: str) -> bool:
     return status in {"academic_likely", "patent_likely"}
 
 
+_PATENT_INID_RE = re.compile(r"^\s*[\[(](\d{2})[\])]\s*(.*)$")
+
+
+def _patent_inid_blocks(text: str) -> dict[str, list[str]]:
+    """Collect patent title-page fields grouped by WIPO INID code."""
+
+    blocks: dict[str, list[str]] = {}
+    current = ""
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+        match = _PATENT_INID_RE.match(line)
+        if match:
+            code = match.group(1)
+            if code == "19" and code in blocks:
+                # Some PDFs are bundles of patent front pages. Never merge the
+                # next patent's title, inventors or identifiers into the first.
+                break
+            current = code
+            blocks.setdefault(current, [])
+            payload = match.group(2).strip()
+            if payload:
+                blocks[current].append(payload)
+            continue
+        if current:
+            blocks[current].append(line)
+    return blocks
+
+
+_KOREAN_ADDRESS_RE = re.compile(
+    r"(?:"
+    r"특별시|광역시|특별자치(?:시|도)|경기도|강원도|충청[남북]도|"
+    r"전라[남북]도|경상[남북]도|제주도|"
+    r"\d+(?:번지|호|동)|(?:로|길)\s*\d+|아파트|빌딩|"
+    r"\([^)]*(?:동|읍|면|리)[^)]*\)"
+    r")"
+)
+from paper_organizer.core.patent import patent_index_numbers
+
+
+def _korean_inid_parties(
+    blocks: dict[str, list[str]],
+    codes: tuple[str, ...],
+    labels: tuple[str, ...],
+) -> list[str]:
+    """Read Korean party/name lines while dropping the following addresses."""
+
+    for code in codes:
+        rows = list(blocks.get(code, []))
+        if not rows:
+            continue
+        values: list[str] = []
+        for index, row in enumerate(rows):
+            line = " ".join(row.split()).strip(" ;,")
+            if index == 0:
+                for label in labels:
+                    if line.startswith(label):
+                        line = line[len(label) :].lstrip(" :#.")
+                        break
+            if (
+                not line
+                or line in labels
+                or any(marker in line for marker in ("심사관", "대리인"))
+                or _KOREAN_ADDRESS_RE.search(line)
+                or any(character.isdigit() for character in line)
+            ):
+                continue
+            values.extend(
+                value.strip(" ;,")
+                for value in re.split(r"\s*;\s*", line)
+                if value.strip(" ;,")
+            )
+        if values:
+            return list(dict.fromkeys(values))
+    return []
+
+
+def _patent_inid_value(
+    blocks: dict[str, list[str]],
+    codes: tuple[str, ...],
+    label_pattern: str,
+) -> str:
+    for code in codes:
+        lines = blocks.get(code, [])
+        if not lines:
+            continue
+        value = " ".join(lines)
+        value = re.sub(
+            rf"^\s*(?:{label_pattern})\s*[:#.]?\s*",
+            "",
+            value,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        value = " ".join(value.split()).strip(" ;,")
+        if value:
+            return value
+    return ""
+
+
+def _patent_labeled_value(text: str, label_pattern: str) -> str:
+    match = re.search(
+        rf"(?im)^\s*(?:{label_pattern})\s*[:#.]?\s*(.*)$",
+        text,
+    )
+    if match is None:
+        return ""
+    value = " ".join(match.group(1).split()).strip(" ;,")
+    if value:
+        return value
+    remainder = text[match.end() :]
+    for line in remainder.splitlines():
+        value = " ".join(line.split()).strip(" ;,")
+        if value:
+            return value
+    return ""
+
+
+def _patent_identifier(value: str) -> str:
+    """Keep only the leading patent/application identifier from an INID block."""
+
+    match = re.match(
+        r"(?ix)^\s*("
+        r"(?:[A-Z]{2}\s*)?"
+        r"\d{1,4}(?:[\s,./-]*\d{1,7})+"
+        r"(?:\s*[A-Z]\d)?"
+        r")",
+        value,
+    )
+    return " ".join(match.group(1).split()).strip(" ;,") if match else value
+
+
+def _split_patent_inventors(value: str) -> list[str]:
+    separators = r"\s*;\s*|\s+\band\b\s+|\s+및\s+"
+    inventors = [
+        item.strip(" ;,")
+        for item in re.split(separators, value, flags=re.IGNORECASE)
+        if item.strip(" ;,")
+    ]
+    return inventors or ([value.strip()] if value.strip() else [])
+
+
 def _apply_patent_metadata(
     metadata: EditablePaperMetadata, page_texts: list[str]
 ) -> EditablePaperMetadata:
     text = "\n".join(page_texts[:5])
     metadata.document_type = "patent"
     metadata.venue = ""
+    blocks = _patent_inid_blocks(text)
+    is_korean = bool(
+        "대한민국특허청" in text
+        or "등록특허공보" in text
+        or "공개특허공보" in text
+    )
+    title = _patent_inid_value(
+        blocks,
+        ("54",),
+        r"title(?:\s+of\s+(?:the\s+)?invention)?|발명의\s*명칭",
+    ) or _patent_labeled_value(
+        text,
+        r"(?:\(54\)\s*)?(?:title(?:\s+of\s+(?:the\s+)?invention)?|발명의\s*명칭)",
+    )
+    if title:
+        metadata.title = title
     patterns = {
         "publication_number": (
-            r"(?im)^\s*(?:publication\s+(?:number|no\.?)|공개번호)\s*[:#]?\s*"
+            r"(?im)^\s*(?:publication\s+(?:number|no\.?)|patent\s+no\.?|"
+            r"공개\s*번호|등록\s*번호|특허\s*번호)\s*[:#]?\s*"
             r"([A-Z]{0,3}\s*\d[\w .\-/]{3,30})"
         ),
         "application_number": (
-            r"(?im)^\s*(?:application\s+(?:number|no\.?)|출원번호)\s*[:#]?\s*"
+            r"(?im)^\s*(?:application\s+(?:number|no\.?)|appl\.\s*no\.?|"
+            r"출원\s*번호)\s*[:#]?\s*"
             r"([A-Z]{0,3}\s*\d[\w .\-/]{3,30})"
         ),
         "assignee": (
-            r"(?im)^\s*(?:applicant|assignee|출원인|특허권자)\s*[:#]?\s*(.{2,120})$"
+            r"(?im)^\s*(?:applicants?|assignees?|출원인|특허권자)\s*[:#]?\s*(.{2,120})$"
+        ),
+    }
+    inid_values = {
+        "publication_number": _patent_identifier(
+            _patent_inid_value(
+                blocks,
+                ("10", "11"),
+                r"patent\s+no\.?|publication\s+(?:number|no\.?)|"
+                r"공개\s*번호|등록\s*번호|특허\s*번호",
+            )
+        ),
+        "application_number": _patent_identifier(
+            _patent_inid_value(
+                blocks,
+                ("21",),
+                r"application\s+(?:number|no\.?)|appl\.\s*no\.?|출원\s*번호",
+            )
+        ),
+        "assignee": (
+            "; ".join(
+                _korean_inid_parties(
+                    blocks,
+                    ("73", "71"),
+                    ("특허권자", "출원인"),
+                )
+            )
+            if is_korean
+            else _patent_inid_value(
+                blocks,
+                ("73", "71"),
+                r"assignees?|applicants?|특허권자|출원인",
+            )
         ),
     }
     for field_name, pattern in patterns.items():
+        if inid_values[field_name]:
+            setattr(metadata, field_name, inid_values[field_name])
+            continue
         match = re.search(pattern, text)
-        if match:
+        if match is not None:
             setattr(metadata, field_name, " ".join(match.group(1).split()).strip(" ;,"))
-    inventor = re.search(
-        r"(?im)^\s*(?:inventors?|발명자)\s*[:#]?\s*(.{2,240})$", text
+    korean_inventors = (
+        _korean_inid_parties(blocks, ("72",), ("발명자",))
+        if is_korean
+        else []
     )
-    if inventor:
-        metadata.authors = [
-            value.strip()
-            for value in re.split(r"\s*;\s*|,\s*(?=[A-Z][a-z])", inventor.group(1))
-            if value.strip()
-        ]
+    if korean_inventors:
+        metadata.authors = korean_inventors
+    else:
+        inventor_value = _patent_inid_value(
+            blocks,
+            ("72",),
+            r"inventors?|발명자",
+        ) or _patent_labeled_value(
+            text,
+            r"(?:\(72\)\s*)?(?:inventors?|발명자)",
+        )
+        if inventor_value:
+            metadata.authors = _split_patent_inventors(inventor_value)
+    date_value = _patent_inid_value(
+        blocks,
+        ("45", "43"),
+        r"date\s+of\s+patent|publication\s+date|공고\s*일자|공개\s*일자",
+    )
+    year_match = _YEAR_RE.search(date_value)
+    if year_match is not None:
+        metadata.year = int(year_match.group(0))
     number = metadata.publication_number.upper().replace(" ", "")
     office_names = {
         "US": "USPTO",
@@ -885,6 +1099,8 @@ def _apply_patent_metadata(
         (office for prefix, office in office_names.items() if number.startswith(prefix)),
         "",
     )
+    if not metadata.patent_office and is_korean:
+        metadata.patent_office = "KIPO"
     return metadata
 
 
@@ -1390,7 +1606,7 @@ class LibraryWorkflowController:
         return OrganizedPaper(destination, destination, "; ".join(warnings))
 
     def trash_confirmed_duplicate(self, item: ReviewItem) -> TrashOperation:
-        """Move a new PDF to recoverable app trash and remember its file ID."""
+        """Exclude a new PDF by stable ID without moving or locking the source."""
         _input_dir, library_root = self.configured_paths()
         source = item.path.resolve()
         if not source.is_file() or sha256_file(source) != item.identity.file_sha256:
@@ -1398,17 +1614,14 @@ class LibraryWorkflowController:
         operation_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
         operation_dir = library_root / "trash" / operation_id
         operation_dir.mkdir(parents=True, exist_ok=False)
-        destination = operation_dir / source.name
         manifest = operation_dir / "manifest.json"
-        moved = False
         try:
-            shutil.move(str(source), str(destination))
-            moved = True
             _atomic_json_write(
                 manifest,
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "operation_id": operation_id,
+                    "storage_mode": "reference",
                     "kind": (
                         "unorganized_duplicate"
                         if item.duplicate is not None and item.duplicate.confirmed
@@ -1416,7 +1629,7 @@ class LibraryWorkflowController:
                     ),
                     "created_at": _now_iso(),
                     "original_path": str(source),
-                    "trashed_name": destination.name,
+                    "trashed_name": "",
                     "sha256": item.identity.file_sha256,
                     "duplicate_of": (
                         str(item.duplicate.pdf_path) if item.duplicate is not None else ""
@@ -1441,9 +1654,7 @@ class LibraryWorkflowController:
                 },
             )
         except Exception as exc:
-            if moved and destination.exists() and not source.exists():
-                shutil.move(str(destination), str(source))
-            raise LibraryWorkflowError(f"제외 목록 이동을 완료하지 못했습니다: {exc}") from None
+            raise LibraryWorkflowError(f"제외 목록 기록을 완료하지 못했습니다: {exc}") from None
         self._forget_discovery(source)
         self._cache.pop(source, None)
         _record_ignored_file_id(library_root, item.identity.file_sha256)
@@ -1451,7 +1662,7 @@ class LibraryWorkflowController:
             self._queue().remove(f"sha256:{item.identity.file_sha256}")
         except AnalysisQueueError:
             pass
-        return TrashOperation(operation_id, manifest, destination)
+        return TrashOperation(operation_id, manifest, source)
 
     def list_trash(self) -> list[TrashEntry]:
         _input_dir, root = self.configured_paths()
@@ -1465,8 +1676,13 @@ class LibraryWorkflowController:
                 if data.get("restored_at"):
                     continue
                 operation_id = str(data["operation_id"])
-                trashed = manifest.parent / str(data["trashed_name"])
-                if not trashed.is_file():
+                storage_mode = str(data.get("storage_mode") or "moved")
+                trashed = (
+                    Path(str(data["original_path"]))
+                    if storage_mode == "reference"
+                    else manifest.parent / str(data["trashed_name"])
+                )
+                if storage_mode != "reference" and not trashed.is_file():
                     continue
                 entries.append(
                     TrashEntry(
@@ -1486,6 +1702,7 @@ class LibraryWorkflowController:
                             if data.get("duplicate_score") is not None
                             else None
                         ),
+                        storage_mode=storage_mode,
                     )
                 )
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -1500,6 +1717,30 @@ class LibraryWorkflowController:
         data = json.loads(manifest.read_text(encoding="utf-8"))
         if data.get("restored_at"):
             raise LibraryWorkflowError("이미 복원된 작업입니다.")
+        storage_mode = str(data.get("storage_mode") or "moved")
+        if storage_mode == "reference":
+            destination = Path(str(data["original_path"]))
+            _forget_ignored_file_id(root, str(data.get("sha256", "")))
+            data["restored_at"] = _now_iso()
+            data["restored_path"] = str(destination)
+            try:
+                _atomic_json_write(manifest, data)
+            except Exception as exc:
+                _record_ignored_file_id(root, str(data.get("sha256", "")))
+                raise LibraryWorkflowError(
+                    f"복원 기록을 저장하지 못했습니다: {exc}"
+                ) from None
+            if destination.is_file():
+                self._forget_discovery(destination)
+                try:
+                    self._queue().enqueue(
+                        path=destination,
+                        file_sha256=str(data["sha256"]),
+                        title=destination.stem,
+                    )
+                except (OSError, AnalysisQueueError):
+                    pass
+            return destination
         trashed = manifest.parent / str(data["trashed_name"])
         if not trashed.is_file() or sha256_file(trashed) != str(data["sha256"]):
             raise LibraryWorkflowError("제외 파일이 없거나 내용이 바뀌었습니다.")
@@ -1680,6 +1921,26 @@ class LibraryWorkflowController:
                 problems.append(f"{title}: {exc}")
         return queued, tuple(problems)
 
+    def queue_analysis_translation(self, entry: LibraryEntry) -> AnalysisQueueItem:
+        """Queue a Korean analysis translation behind all other serial AI work."""
+
+        from paper_organizer.application.library_translation import (
+            analysis_translation_source_hash,
+        )
+
+        file_sha256 = str(entry.record.get("file", {}).get("sha256") or "").strip()
+        source_hash = analysis_translation_source_hash(entry.record)
+        if not file_sha256 or not entry.sidecar_path.is_file():
+            raise LibraryWorkflowError("PaperPack 또는 파일 식별자가 없습니다.")
+        if not source_hash:
+            raise LibraryWorkflowError("번역할 AI 분석 내용이 없습니다.")
+        return self._queue().enqueue_translation(
+            path=entry.sidecar_path,
+            file_sha256=file_sha256,
+            title=entry.metadata.title or entry.sidecar_path.stem,
+            source_hash=source_hash,
+        )
+
     def approve_category_suggestion(self, entry: LibraryEntry) -> str:
         """Save an AI-proposed category only after explicit user approval."""
 
@@ -1743,7 +2004,7 @@ class LibraryWorkflowController:
         suggested_category = (
             data.suggested_category.strip() if not data.category.strip() else ""
         )
-        record["analysis"] = {
+        analysis_result = {
             "status": "completed",
             "analysis_level": execution.preview.mode.value,
             "summary": data.summary,
@@ -1757,6 +2018,12 @@ class LibraryWorkflowController:
             "completed_at": now,
             "provenance": execution.provenance,
         }
+        if (
+            inferred_metadata.document_type == "patent"
+            and execution.patent_claims_text.strip()
+        ):
+            analysis_result["patent_claims"] = execution.patent_claims_text
+        record["analysis"] = analysis_result
         description = record.setdefault("description", {})
         classification = record.setdefault("classification", {})
         classification["ai_tags"] = ai_tags
@@ -2089,9 +2356,8 @@ class LibraryWorkflowController:
             return self.materialize_pdf(source)
         source, workspace_pdf, state_path = self._paperpack_edit_paths(source)
         if workspace_pdf.exists() != state_path.exists():
-            raise LibraryWorkflowError(
-                "paperpack 편집 작업공간이 불완전합니다. 편집본 폐기 후 다시 여세요."
-            )
+            for orphan in (workspace_pdf, state_path):
+                orphan.unlink(missing_ok=True)
         if workspace_pdf.is_file():
             status = self.paperpack_working_copy(source)
             if status is None:
@@ -2100,6 +2366,7 @@ class LibraryWorkflowController:
                 return workspace_pdf
         try:
             info = inspect_paperpack(source)
+            workspace_pdf.parent.mkdir(parents=True, exist_ok=True)
             extract_paperpack_pdf(source, workspace_pdf)
             _atomic_json_write(
                 state_path,
@@ -2363,8 +2630,10 @@ class LibraryWorkflowController:
                     str(metadata.year or ""),
                     metadata.venue,
                     metadata.patent_office,
-                    metadata.publication_number,
-                    metadata.application_number,
+                    patent_index_numbers(
+                        metadata.publication_number,
+                        metadata.application_number,
+                    ),
                     metadata.assignee,
                     metadata.category,
                     metadata.subcategory,

@@ -23,8 +23,9 @@ from paper_organizer.core.paperpack import (
     load_paperpack_content,
     load_paperpack_metadata,
 )
+from paper_organizer.core.patent import patent_index_numbers
 
-SEARCH_INDEX_SCHEMA_VERSION = 2
+SEARCH_INDEX_SCHEMA_VERSION = 3
 _SNIPPET_TOKENS = 12
 
 
@@ -96,7 +97,7 @@ def _drop_stale_schema(connection: sqlite3.Connection) -> None:
         str(row["name"])
         for row in connection.execute("PRAGMA table_info(works)").fetchall()
     }
-    if "summary" in columns:
+    if {"summary", "patent_number"}.issubset(columns):
         return
     connection.executescript(
         """
@@ -121,6 +122,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             authors TEXT NOT NULL DEFAULT '',
             year TEXT NOT NULL DEFAULT '',
             venue TEXT NOT NULL DEFAULT '',
+            patent_number TEXT NOT NULL DEFAULT '',
             category TEXT NOT NULL DEFAULT '',
             subcategory TEXT NOT NULL DEFAULT '',
             tags TEXT NOT NULL DEFAULT '',
@@ -152,6 +154,7 @@ def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tu
     bibliography = record.get("bibliography", {})
     classification = record.get("classification", {})
     description = record.get("description", {})
+    patent = record.get("patent", {})
     file_id = str(identity.get("file_id") or record.get("id") or "")
     return (
         file_id,
@@ -160,6 +163,10 @@ def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tu
         _text_list(bibliography.get("authors")),
         str(bibliography.get("year") or ""),
         str(bibliography.get("venue") or ""),
+        patent_index_numbers(
+            str(patent.get("publication_number") or ""),
+            str(patent.get("application_number") or ""),
+        ),
         str(classification.get("category") or ""),
         str(classification.get("subcategory") or ""),
         ", ".join(
@@ -190,7 +197,7 @@ def _upsert_paperpack(
     connection.execute("DELETE FROM works WHERE file_id = ?", (file_id,))
     connection.execute("DELETE FROM pages WHERE file_id = ?", (file_id,))
     connection.execute(
-        "INSERT INTO works VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row
+        "INSERT INTO works VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row
     )
     pages = content_pages(load_paperpack_content(paperpack))
     if pages:
@@ -347,7 +354,8 @@ def search_metadata(
             FROM works
             WHERE lower(
                 title || ' ' || authors || ' ' || year || ' ' || venue || ' ' ||
-                category || ' ' || subcategory || ' ' || tags || ' ' || summary
+                patent_number || ' ' || category || ' ' || subcategory || ' ' ||
+                tags || ' ' || summary
             ) LIKE ?
             ORDER BY title
             LIMIT ?

@@ -139,7 +139,7 @@ class ConversationalSearchTests(unittest.TestCase):
                 settings_path,
                 ollama=StaticOllamaInspector(
                     installed_model("qwen3:4b", "4.0B"),
-                    installed_model("granite3.3:2b", "2.0B"),
+                    installed_model("granite4.1:3b", "3.0B"),
                 ),
                 start_local_runtime=lambda: True,
             )
@@ -147,7 +147,7 @@ class ConversationalSearchTests(unittest.TestCase):
             view = controller.provider_view()
 
         self.assertEqual(view.provider, "ollama")
-        self.assertEqual(view.model, "granite3.3:2b")
+        self.assertEqual(view.model, "granite4.1:3b")
         self.assertFalse(view.sends_to_cloud)
 
     def test_selected_installed_model_wins_over_smaller_search_model(self):
@@ -163,7 +163,7 @@ class ConversationalSearchTests(unittest.TestCase):
                 settings_path,
                 ollama=StaticOllamaInspector(
                     installed_model("qwen3:4b", "4.0B"),
-                    installed_model("granite3.3:2b", "2.0B"),
+                    installed_model("granite4.1:3b", "3.0B"),
                 ),
                 start_local_runtime=lambda: True,
             )

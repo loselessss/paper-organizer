@@ -16,6 +16,11 @@ from paper_organizer.core.search_index import (
     search_index_path,
     search_metadata,
 )
+from paper_organizer.core.paperpack import (
+    iter_paperpacks,
+    load_paperpack_metadata,
+    update_paperpack,
+)
 from paper_organizer.infra.settings import load_settings, save_settings
 
 
@@ -108,6 +113,7 @@ class SearchIndexTests(unittest.TestCase):
             }
             connection.close()
             self.assertIn("summary", columns)
+            self.assertIn("patent_number", columns)
             self.assertNotIn("summary_ko", columns)
 
     def test_body_text_is_searchable_after_auto_organize(self):
@@ -158,6 +164,25 @@ class SearchIndexTests(unittest.TestCase):
 
             self.assertEqual(len(hits), 1)
             self.assertEqual(hits[0].venue, "Journal of Molecular Biology")
+
+    def test_patent_index_searches_registration_and_application_numbers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _controller, library = self._library(root)
+            paperpack = next(iter(iter_paperpacks(library)))
+            record = load_paperpack_metadata(paperpack)
+            record.setdefault("document", {})["type"] = "patent"
+            record["patent"] = {
+                "office": "KIPO",
+                "publication_number": "10-2052132",
+                "application_number": "10-2017-0092335",
+                "assignee": "고려대학교 산학협력단",
+            }
+            update_paperpack(paperpack, record, changed_by="test")
+            rebuild_search_index(library)
+
+            self.assertEqual(len(search_metadata(library, "10-2052132")), 1)
+            self.assertEqual(len(search_metadata(library, "10-2017-0092335")), 1)
 
     def test_controller_search_returns_library_entries(self):
         with tempfile.TemporaryDirectory() as temp:

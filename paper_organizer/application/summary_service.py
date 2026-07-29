@@ -17,6 +17,7 @@ from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_nam
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
     preprocess_paper_text,
+    remove_figure_and_table_captions,
 )
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
@@ -125,6 +126,7 @@ class PreparedSummary:
         default_factory=RegexSummaryFallback,
         repr=False,
     )
+    patent_claims_text: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +138,7 @@ class SummaryExecution:
     bibliography_retry_count: int = 0
     bibliography_status: str = "ok"
     bibliography_verified_fields: tuple[str, ...] = ()
+    patent_claims_text: str = field(default="", repr=False)
 
     @property
     def provenance(self) -> dict[str, object]:
@@ -311,6 +314,18 @@ def _prepared_from_chunks(
         re.sub(r"^\[PDF PAGE \d+\]\s*\n?", "", chunk, count=1)
         for chunk in chunks
     ]
+    extracted_claims = _extract_patent_claims(page_texts)
+    is_patent = bool(extracted_claims) or _looks_like_patent(
+        "\n".join(page_texts[:2])
+    )
+    if is_patent:
+        page_texts = [_remove_patent_page_markers(text) for text in page_texts]
+    patent_claims_text = (
+        _extract_patent_claims(page_texts) if is_patent else ""
+    )
+    page_texts = list(remove_figure_and_table_captions(page_texts))
+    if is_patent:
+        page_texts = list(_remove_patent_drawing_sections(page_texts))
     processed = preprocess_paper_text(
         page_texts,
         page_numbers=tuple(index + 1 for index in page_indexes),
@@ -353,6 +368,7 @@ def _prepared_from_chunks(
         section_contexts=_section_contexts(processed),
         bibliography_text=_bibliography_context(page_texts[0]),
         regex_fallback=_regex_summary_fallback(processed),
+        patent_claims_text=patent_claims_text,
     )
 
 
@@ -423,6 +439,9 @@ def run_prepared_summary(
         "allowed_categories": _allowed_categories(settings),
         "context_window": prepared.preview.context_window,
         "output_language": settings.summary_language,
+        "is_patent": _looks_like_patent(
+            f"{prepared.bibliography_text}\n{prepared.document_text[:8_000]}"
+        ),
     }
     hierarchical = (
         prepared.preview.summary_strategy == "hierarchical"
@@ -442,7 +461,11 @@ def run_prepared_summary(
                     SummaryRequest(
                         document_text=context,
                         max_output_tokens=300,
-                        prompt_version="paper-summary-v9-section",
+                        prompt_version=(
+                            "patent-summary-v1-section"
+                            if request_options["is_patent"]
+                            else "paper-summary-v9-section"
+                        ),
                         stage="section",
                         **partial_options,
                     ),
@@ -457,7 +480,11 @@ def run_prepared_summary(
             provider,
             SummaryRequest(
                 document_text=synthesis_text,
-                prompt_version="paper-summary-v9-hierarchical",
+                prompt_version=(
+                    "patent-summary-v1-hierarchical"
+                    if request_options["is_patent"]
+                    else "paper-summary-v9-hierarchical"
+                ),
                 stage="synthesis",
                 **request_options,
             ),
@@ -483,7 +510,11 @@ def run_prepared_summary(
             provider,
             SummaryRequest(
                 document_text=prepared.document_text,
-                prompt_version="paper-summary-v9-direct",
+                prompt_version=(
+                    "patent-summary-v1-direct"
+                    if request_options["is_patent"]
+                    else "paper-summary-v9-direct"
+                ),
                 stage="direct",
                 **request_options,
             ),
@@ -528,6 +559,7 @@ def run_prepared_summary(
         bibliography_retry_count=bibliography_retry_count,
         bibliography_status=bibliography_status,
         bibliography_verified_fields=bibliography_verified_fields,
+        patent_claims_text=prepared.patent_claims_text,
     )
 
 
@@ -564,7 +596,7 @@ def _summarize_with_json_retry(
     except ProviderError as exc:
         if _is_summary_format_error(exc):
             raise SummaryRetryExhaustedError(
-                "AI가 형식 교정 프롬프트를 포함해 세 번 연속 올바른 JSON을 "
+                "AI가 형식 교정 요청을 포함해 세 번 연속 올바른 서지정보 입력을 "
                 "만들지 못했습니다. 같은 논문을 다시 시도하거나 더 큰 모델을 "
                 "선택하세요.",
                 failure_kind="json_validation",
@@ -986,6 +1018,105 @@ def _bibliography_context(first_page_text: str) -> str:
     return "\n".join(kept)[:_BIBLIOGRAPHY_MAX_CHARS].strip()
 
 
+_PATENT_CLAIMS_START_RE = re.compile(
+    r"(?im)^[ \t]*(?:"
+    r"claims?[ \t]*:?"
+    r"|what[ \t]+is[ \t]+claimed[ \t]+is[ \t]*:?"
+    r"|청구[ \t]*범위[ \t]*:?"
+    r"|청구항(?:[ \t]*제?[ \t]*1[ \t]*항?)?[ \t]*:?"
+    r")[ \t]*$"
+)
+_PATENT_CLAIMS_END_RE = re.compile(
+    r"(?im)^[ \t]*(?:"
+    r"abstract(?:[ \t]+of[ \t]+the[ \t]+disclosure)?"
+    r"|description"
+    r"|brief[ \t]+description[ \t]+of[ \t]+the[ \t]+drawings"
+    r"|drawings?"
+    r"|발명의[ \t]+설명"
+    r"|도면의[ \t]+간단한[ \t]+설명"
+    r"|요약서"
+    r")[ \t]*:?[ \t]*$"
+)
+_PATENT_PAGE_MARKER_RE = re.compile(
+    r"^[ \t]*(?:"
+    r"\[?[ \t]*(?:pdf[ \t]+)?page[ \t]*[:#.]?[ \t]*\d+"
+    r"(?:[ \t]*(?:of|/)[ \t]*\d+)?[ \t]*\]?"
+    r"|(?:페이지|쪽)[ \t]*[:#.]?[ \t]*\d+"
+    r"(?:[ \t]*(?:중|/)[ \t]*\d+)?"
+    r"|\d+[ \t]*(?:of|/)[ \t]*\d+"
+    r"|[-–—][ \t]*\d+[ \t]*[-–—]"
+    r")[ \t]*$",
+    re.IGNORECASE,
+)
+_PATENT_DRAWING_START_RE = re.compile(
+    r"^[ \t]*(?:"
+    r"brief[ \t]+description[ \t]+of[ \t]+the[ \t]+drawings"
+    r"|drawings?"
+    r"|도면의[ \t]+간단한[ \t]+설명"
+    r"|도면"
+    r")[ \t]*:?[ \t]*$",
+    re.IGNORECASE,
+)
+_PATENT_DRAWING_END_RE = re.compile(
+    r"^[ \t]*(?:"
+    r"detailed[ \t]+description(?:[ \t]+of[ \t]+the[ \t]+invention)?"
+    r"|description[ \t]+of[ \t]+embodiments?"
+    r"|best[ \t]+mode"
+    r"|claims?"
+    r"|what[ \t]+is[ \t]+claimed[ \t]+is"
+    r"|abstract(?:[ \t]+of[ \t]+the[ \t]+disclosure)?"
+    r"|발명을[ \t]+실시하기[ \t]+위한[ \t]+구체적인[ \t]+내용"
+    r"|발명의[ \t]+상세한[ \t]+설명"
+    r"|청구[ \t]*범위"
+    r"|청구항(?:[ \t]*제?[ \t]*1[ \t]*항?)?"
+    r"|요약서"
+    r")[ \t]*:?[ \t]*$",
+    re.IGNORECASE,
+)
+
+
+def _remove_patent_page_markers(text: str) -> str:
+    """Remove standalone printed page labels without touching claim numbers."""
+
+    return "\n".join(
+        line
+        for line in str(text or "").splitlines()
+        if not _PATENT_PAGE_MARKER_RE.fullmatch(line)
+    )
+
+
+def _remove_patent_drawing_sections(
+    page_texts: list[str],
+) -> tuple[str, ...]:
+    """Remove patent drawing-description blocks from temporary AI input."""
+
+    skipping = False
+    cleaned: list[str] = []
+    for text in page_texts:
+        kept: list[str] = []
+        for line in str(text or "").splitlines():
+            if _PATENT_DRAWING_START_RE.fullmatch(line):
+                skipping = True
+                continue
+            if skipping and _PATENT_DRAWING_END_RE.fullmatch(line):
+                skipping = False
+            if not skipping:
+                kept.append(line)
+        cleaned.append("\n".join(kept))
+    return tuple(cleaned)
+
+
+def _extract_patent_claims(page_texts: list[str]) -> str:
+    """Copy claims from extracted text, omitting standalone page labels."""
+
+    source = "\n".join(_remove_patent_page_markers(text) for text in page_texts)
+    start = _PATENT_CLAIMS_START_RE.search(source)
+    if start is None:
+        return ""
+    end = _PATENT_CLAIMS_END_RE.search(source, start.end())
+    return source[start.start() : end.start() if end else len(source)].strip()
+
+
 def _has_bibliography_identity_context(first_page_text: str) -> bool:
     """Avoid an extra model call when the supplied page is clearly body text only."""
 
@@ -1026,7 +1157,9 @@ def _looks_like_patent(first_page_text: str) -> bool:
         "world intellectual property organization",
         "발명의 명칭",
         "공개특허",
+        "등록특허",
         "특허출원",
+        "대한민국특허청",
     )
     return any(marker in normalized for marker in markers)
 

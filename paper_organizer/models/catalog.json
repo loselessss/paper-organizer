@@ -1,6 +1,7 @@
 {
-  "catalog_version": "2026.07.29",
+  "catalog_version": "2026.07.29.2",
   "verified_at": "2026-07-29",
+  "benchmark_hardware": "NVIDIA GeForce RTX 3080 Ti",
   "models": [
     {
       "id": "qwen3:0.6b",
@@ -13,7 +14,17 @@
       "tier": "ultralight",
       "quality": 1,
       "license": "Apache-2.0",
-      "recommended_context": 4096
+      "recommended_context": 4096,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 8.3,
+        "json_retries": 1,
+        "strengths": [
+          "가장 빠른 처리",
+          "최소 메모리 비교 기준"
+        ]
+      }
     },
     {
       "id": "qwen3:1.7b",
@@ -26,20 +37,43 @@
       "tier": "ultralight",
       "quality": 2,
       "license": "Apache-2.0",
-      "recommended_context": 8192
+      "recommended_context": 8192,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 15.2,
+        "json_retries": 0,
+        "strengths": [
+          "저사양 PC용 속도·안정성 균형",
+          "서지정보 입력 첫 시도 성공"
+        ]
+      }
     },
     {
-      "id": "granite3.3:2b",
-      "label": "IBM Granite 3.3 2B",
-      "parameters_b": 2.0,
-      "download_gb": 1.5,
-      "runtime_memory_gb": 4.0,
-      "minimum_ram_gb": 6.0,
-      "recommended_ram_gb": 8.0,
-      "tier": "ultralight",
-      "quality": 1,
+      "id": "granite4.1:3b",
+      "label": "IBM Granite 4.1 3B",
+      "parameters_b": 3.0,
+      "download_gb": 2.1,
+      "runtime_memory_gb": 5.0,
+      "minimum_ram_gb": 8.0,
+      "recommended_ram_gb": 12.0,
+      "tier": "light",
+      "quality": 5,
       "license": "Apache-2.0",
-      "recommended_context": 8192
+      "recommended_context": 16384,
+      "recommendation_rank": 1,
+      "benchmark": {
+        "score": 82.5,
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 15.6,
+        "json_retries": 0,
+        "strengths": [
+          "3B급 최고 수준의 사실 보존",
+          "빠르고 안정적인 서지정보 입력",
+          "일반 논문 요약 1순위"
+        ]
+      }
     },
     {
       "id": "ministral-3:3b-instruct-2512-q4_K_M",
@@ -52,7 +86,17 @@
       "tier": "light",
       "quality": 3,
       "license": "Apache-2.0",
-      "recommended_context": 24576
+      "recommended_context": 24576,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 20.2,
+        "json_retries": 0,
+        "strengths": [
+          "구조화 응답 안정성",
+          "소형 모델 중 고른 처리속도"
+        ]
+      }
     },
     {
       "id": "phi4-mini",
@@ -65,7 +109,17 @@
       "tier": "light",
       "quality": 3,
       "license": "MIT",
-      "recommended_context": 24576
+      "recommended_context": 24576,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 29.3,
+        "json_retries": 2,
+        "strengths": [
+          "실논문 전편 완주",
+          "보수적인 요약 비교 후보"
+        ]
+      }
     },
     {
       "id": "qwen3:4b",
@@ -78,7 +132,20 @@
       "tier": "light",
       "quality": 3,
       "license": "Apache-2.0",
-      "recommended_context": 24576
+      "recommended_context": 24576,
+      "recommendation_rank": 2,
+      "benchmark": {
+        "score": 80.8,
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 15.1,
+        "json_retries": 0,
+        "strengths": [
+          "수치 결과의 정확한 보존",
+          "간결한 연구질문·방법 추출",
+          "Granite 3B와 비슷한 처리속도"
+        ]
+      }
     },
     {
       "id": "gemma3:4b",
@@ -104,7 +171,17 @@
       "tier": "light",
       "quality": 3,
       "license": "Gemma Terms",
-      "recommended_context": 24576
+      "recommended_context": 24576,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 40.1,
+        "json_retries": 2,
+        "strengths": [
+          "실논문 전편 완주",
+          "QAT 계열 품질 비교 기준"
+        ]
+      }
     },
     {
       "id": "qwen3:8b",
@@ -117,7 +194,17 @@
       "tier": "balanced",
       "quality": 4,
       "license": "Apache-2.0",
-      "recommended_context": 40960
+      "recommended_context": 40960,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 3,
+        "average_seconds": 51.3,
+        "json_retries": 3,
+        "strengths": [
+          "기여·한계까지 포함하는 정밀 분석",
+          "긴 문서의 높은 내용 밀도"
+        ]
+      }
     }
   ]
 }

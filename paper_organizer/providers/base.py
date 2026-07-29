@@ -125,10 +125,28 @@ BIBLIOGRAPHY_INSTRUCTIONS = (
     "inventor, the four-digit publication year, and the journal or conference name. "
     "Copy spelling and punctuation from the page; never translate, romanize, shorten, "
     "or rewrite these values. Reviews and meta-analyses still have authors. Never use "
+    "For patent title pages, including Korean KIPO documents, INID (54) is the "
+    "invention title, (72) identifies inventors, and (43) or (45) supplies the "
+    "publication year. "
     "authors or titles from cited references. ResearchGate, Academia.edu, PubMed, "
     "Google Scholar, Semantic Scholar, institutional repositories, publisher download "
     "banners, web domains, database names, patent offices, applicants, and assignees "
     "are distribution metadata, not a venue. Use empty values rather than guessing."
+)
+
+PATENT_SUMMARY_INSTRUCTIONS = (
+    " This document is a patent, not an academic paper. Analyze the disclosed "
+    "invention using the description, claims, embodiments, examples, and drawings "
+    "that are actually supplied. In summary, explain the technical field, prior "
+    "technical problem, proposed solution, principal embodiments, and stated effects. "
+    "Use research_question for the technical problem addressed by the invention. "
+    "Use methods for disclosed construction, process steps, materials, conditions, "
+    "and worked examples. Use contributions for claimed inventive concepts and stated "
+    "technical effects, without making a legal conclusion about novelty, validity, "
+    "infringement, or claim scope. Use limitations only for explicit constraints, "
+    "dependencies, operating ranges, or conditions in the document. Never treat the "
+    "applicant, assignee, patent office, examiner, or cited prior-art authors as "
+    "inventors. Do not invent experimental validation that is not present."
 )
 
 SEARCH_PLAN_INSTRUCTIONS = (
@@ -189,6 +207,7 @@ class SummaryRequest:
     json_repair: bool = False
     language_retry: bool = False
     advanced_analysis: bool = True
+    is_patent: bool = False
 
     def validate(self) -> None:
         if not self.document_text.strip():
@@ -216,6 +235,8 @@ class SummaryRequest:
             raise ValueError("language_retry must be a boolean")
         if not isinstance(self.advanced_analysis, bool):
             raise ValueError("advanced_analysis must be a boolean")
+        if not isinstance(self.is_patent, bool):
+            raise ValueError("is_patent must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,12 +459,19 @@ def system_instructions(request: SummaryRequest) -> str:
             if request.language_retry
             else ""
         )
+        patent = (
+            " This is a patent section. Preserve disclosed claim elements, process "
+            "steps, embodiments, examples, operating ranges, and stated technical "
+            "effects; do not reinterpret them as academic results."
+            if request.is_patent
+            else ""
+        )
         return (
             f"{language} Use only the supplied labeled paper section. Return plain "
             "text only, not JSON or markdown. In at most 120 words, preserve the "
             "research purpose, methods, findings, numeric values, and negations that "
             "are actually present. Do not infer from other sections. Ignore reference, "
-            f"bibliography, and works-cited entries.{retry}"
+            f"bibliography, and works-cited entries.{patent}{retry}"
         )
 
     if request.output_language == "ko":
@@ -534,7 +562,9 @@ def system_instructions(request: SummaryRequest) -> str:
         )
     return (
         f"{language} {SYSTEM_INSTRUCTIONS}{stage}{json_retry}"
-        f"{json_repair}{language_retry}{analysis_scope}{classification}"
+        f"{json_repair}{language_retry}{analysis_scope}"
+        f"{PATENT_SUMMARY_INSTRUCTIONS if request.is_patent else ''}"
+        f"{classification}"
         f"{language_reminder}"
     )
 

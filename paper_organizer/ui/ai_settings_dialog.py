@@ -55,7 +55,7 @@ class AiSettingsDialog(QDialog):
     def __init__(self, controller: AiSettingsController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setWindowTitle("요약 엔진 옵션 · 프롬프트 v9")
+        self.setWindowTitle("요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1")
         screen = self.screen() or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
         available_width = available.width() if available is not None else 1160
@@ -228,7 +228,7 @@ class AiSettingsDialog(QDialog):
         scroll_layout.addWidget(engine_group)
 
         note = QLabel(
-            "API 키는 설정 JSON에 저장하지 않고 Windows 자격 증명 저장소에 "
+            "API 키는 일반 설정 파일에 저장하지 않고 Windows 자격 증명 저장소에 "
             "보관합니다. 클라우드 분석은 위의 지속 전송 동의를 켠 경우에만 실행됩니다."
         )
         note.setWordWrap(True)

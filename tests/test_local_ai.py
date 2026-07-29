@@ -6,6 +6,7 @@ from pathlib import Path
 from paper_organizer.application.local_ai import LocalAiAssessmentService
 from paper_organizer.core.model_recommendation import (
     load_model_catalog,
+    model_benchmark_summary,
     model_usage_guidance,
     recommend_models,
 )
@@ -84,15 +85,52 @@ class LocalAiTests(unittest.TestCase):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.07.29")
-        self.assertEqual(models["granite3.3:2b"].parameters_b, 2.0)
-        self.assertEqual(models["granite3.3:2b"].download_gb, 1.5)
+        self.assertEqual(version, "2026.07.29.2")
+        self.assertEqual(models["granite4.1:3b"].parameters_b, 3.0)
+        self.assertEqual(models["granite4.1:3b"].download_gb, 2.1)
+        self.assertEqual(models["granite4.1:3b"].recommendation_rank, 1)
+        self.assertEqual(models["granite4.1:3b"].benchmark_score, 82.5)
+        self.assertEqual(models["qwen3:4b"].recommendation_rank, 2)
+        self.assertEqual(models["qwen3:4b"].benchmark_score, 80.8)
         self.assertEqual(models["phi4-mini"].parameters_b, 3.84)
         self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 4.0)
         self.assertEqual(
             models["ministral-3:3b-instruct-2512-q4_K_M"].parameters_b,
             3.85,
         )
+
+    def test_benchmark_summary_explains_rank_score_speed_and_strengths(self):
+        _, specs = load_model_catalog()
+        granite = next(spec for spec in specs if spec.model_id == "granite4.1:3b")
+
+        summary = model_benchmark_summary(granite)
+
+        self.assertIn("종합 추천 1순위", summary)
+        self.assertIn("품질 82.5/100", summary)
+        self.assertIn("평균 15.6초", summary)
+        self.assertIn("NVIDIA GeForce RTX 3080 Ti", summary)
+        self.assertIn("서지정보 입력 재시도 0회", summary)
+        self.assertIn("사실 보존", summary)
+
+    def test_unmeasured_model_is_labeled_without_an_invented_score(self):
+        _, specs = load_model_catalog()
+        gemma = next(spec for spec in specs if spec.model_id == "gemma3:4b")
+
+        summary = model_benchmark_summary(gemma)
+
+        self.assertEqual(summary, "실논문 벤치마크 미실시")
+        self.assertNotIn("/100", summary)
+
+    def test_qwen_4b_benchmark_summary_explains_second_place_strength(self):
+        _, specs = load_model_catalog()
+        qwen = next(spec for spec in specs if spec.model_id == "qwen3:4b")
+
+        summary = model_benchmark_summary(qwen)
+
+        self.assertIn("종합 추천 2순위", summary)
+        self.assertIn("품질 80.8/100", summary)
+        self.assertIn("평균 15.1초", summary)
+        self.assertIn("수치 결과", summary)
 
     def test_nvidia_smi_output_is_parsed_without_importing_ai_runtime(self):
         def run(command, timeout):
@@ -158,13 +196,16 @@ class LocalAiTests(unittest.TestCase):
         self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:4b")
         self.assertTrue(recommendation.recommended.installed)
 
-    def test_balanced_profile_recommends_8b_with_safe_16gb_headroom(self):
+    def test_balanced_profile_prefers_top_ranked_real_paper_model(self):
         recommendation = recommend_models(
             hardware(total_ram=16, available_ram=14),
             ollama(),
             profile="balanced",
         )
-        self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:8b")
+        self.assertEqual(
+            recommendation.recommended.spec.model_id,
+            "granite4.1:3b",
+        )
         self.assertEqual(recommendation.recommended.rating, "권장")
 
     def test_low_memory_auto_profile_stays_with_ultralight_model(self):
@@ -205,15 +246,15 @@ class LocalAiTests(unittest.TestCase):
 
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
-            self.assertEqual(saved.recommended_model, "qwen3:8b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.29")
+            self.assertEqual(saved.recommended_model, "granite4.1:3b")
+            self.assertEqual(saved.model_catalog_version, "2026.07.29.2")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"
             )
             self.assertEqual(
                 assessment.recommendation.recommended.spec.model_id,
-                "qwen3:8b",
+                "granite4.1:3b",
             )
 
 

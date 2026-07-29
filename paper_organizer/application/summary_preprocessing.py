@@ -43,11 +43,25 @@ _HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 _PAGE_NUMBER_RE = re.compile(
-    r"^\s*(?:page\s*)?\d{1,4}(?:\s*(?:/|of)\s*\d{1,4})?\s*$",
+    r"^\s*(?:"
+    r"\[?\s*(?:pdf\s+)?(?:page|p\.?)\s*[:#.]?\s*\d{1,4}"
+    r"(?:\s*(?:/|of)\s*\d{1,4})?\s*\]?"
+    r"|(?:페이지|쪽)\s*[:#.]?\s*\d{1,4}"
+    r"(?:\s*(?:/|중)\s*\d{1,4})?"
+    r"|\d{1,4}\s*(?:/|of)\s*\d{1,4}"
+    r"|[-–—]\s*\d{1,4}\s*[-–—]"
+    r"|\d{1,4}"
+    r")\s*$",
     re.IGNORECASE,
 )
 _DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_FIGURE_CAPTION_RE = re.compile(
+    r"^\s*(?:(?:supplementary|supporting)\s+)?"
+    r"(?:fig(?:ure)?\.?|table)\s*[A-Z]?\d+(?:[.\-:]\d+)*\b"
+    r"|^\s*(?:그림|도표|표)\s*\d+(?:[.\-:]\d+)*\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +78,19 @@ class PreprocessedDocument:
     sections: tuple[SectionContext, ...]
     included_pdf_pages: tuple[int, ...]
     regex_facts: tuple[str, ...]
+
+
+def remove_figure_and_table_captions(page_texts: Sequence[str]) -> tuple[str, ...]:
+    """Drop figure and table captions from temporary AI summary input."""
+
+    return tuple(
+        "\n".join(
+            line
+            for line in str(text or "").splitlines()
+            if not _FIGURE_CAPTION_RE.match(line)
+        )
+        for text in page_texts
+    )
 
 
 def preprocess_paper_text(

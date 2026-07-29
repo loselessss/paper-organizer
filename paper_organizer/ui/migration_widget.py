@@ -78,7 +78,7 @@ class LegacyMigrationWidget(QWidget):
         root.addWidget(self.table, 1)
 
         self.move_to_trash_check = QCheckBox(
-            "변환 성공 후 기존 PDF와 JSON을 앱 휴지통으로 이동"
+            "변환 성공 후 기존 PDF와 색인 파일을 앱 휴지통으로 이동"
         )
         root.addWidget(self.move_to_trash_check)
 
@@ -147,7 +147,7 @@ class LegacyMigrationWidget(QWidget):
         if move_to_trash and QMessageBox.question(
             self,
             "기존 파일 이동 확인",
-            f"{len(paths)}개 논문의 paperpack 변환이 모두 성공한 뒤 기존 PDF와 JSON을 "
+            f"{len(paths)}개 논문의 paperpack 변환이 모두 성공한 뒤 기존 PDF와 색인 파일을 "
             "복구 가능한 앱 휴지통으로 이동할까요?",
         ) != QMessageBox.Yes:
             return
@@ -202,7 +202,7 @@ class LegacyMigrationWidget(QWidget):
         if QMessageBox.question(
             self,
             "원본 복원 확인",
-            "기존 PDF와 JSON을 원래 위치로 복원합니다. 변환된 paperpack은 유지됩니다.",
+            "기존 PDF와 색인 파일을 원래 위치로 복원합니다. 변환된 paperpack은 유지됩니다.",
         ) != QMessageBox.Yes:
             return
         try:

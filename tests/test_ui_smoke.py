@@ -41,6 +41,26 @@ class UiSmokeTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_claim_display_joins_soft_wraps_and_keeps_claim_boundaries(self):
+        from paper_organizer.ui.library_workflow_widget import (
+            _format_claims_for_display,
+        )
+
+        displayed = _format_claims_for_display(
+            "청구범위\n"
+            "1. 효소 복합체를 포함하고\n"
+            "담체를 더 포함하는 조성물.\n"
+            "2. 제1항에 있어서,\n"
+            "상기 담체가 고분자인 조성물."
+        )
+
+        self.assertEqual(
+            displayed,
+            "청구범위\n\n"
+            "1. 효소 복합체를 포함하고 담체를 더 포함하는 조성물.\n\n"
+            "2. 제1항에 있어서, 상기 담체가 고분자인 조성물.",
+        )
+
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
         from PyQt5.QtWidgets import QAction, QBoxLayout, QMessageBox
@@ -76,7 +96,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
             self.assertEqual(
                 dialog.windowTitle(),
-                "요약 엔진 옵션 · 프롬프트 v9",
+                "요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1",
             )
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)
@@ -188,8 +208,16 @@ class UiSmokeTests(unittest.TestCase):
             self.assertFalse(
                 window.collection_widget.form.publication_number_edit.isHidden()
             )
-            self.assertEqual(window.tabs.tabText(0), "수집 및 분석")
-            self.assertEqual(window.tabs.tabText(1), "라이브러리")
+            self.assertEqual(
+                window.collection_widget.form.publication_number_label.text(),
+                "출원/등록번호",
+            )
+            self.assertTrue(
+                window.collection_widget.form.application_number_edit.isHidden()
+            )
+            self.assertEqual(window.tabs.tabText(0), "라이브러리")
+            self.assertEqual(window.tabs.tabText(1), "새 PDF 및 분석 큐")
+            self.assertIs(window.tabs.currentWidget(), window.library_widget)
             menu_titles = [
                 action.text() for action in window.menuBar().actions()
             ]
@@ -264,6 +292,11 @@ class UiSmokeTests(unittest.TestCase):
                 window.queue_widget.background_button.text(),
                 "백그라운드 분석 시작",
             )
+            self.assertEqual(
+                window.queue_widget.immediate_stop_button.text(),
+                "즉시 정지",
+            )
+            self.assertFalse(window.queue_widget.immediate_stop_button.isEnabled())
             self.assertEqual(
                 window.queue_widget.run_now_button.text(),
                 "선택 항목 바로 분석",
@@ -376,6 +409,12 @@ class UiSmokeTests(unittest.TestCase):
                         "",
                         "",
                         False,
+                        benchmark_summary=(
+                            "★ 종합 추천 1순위\n"
+                            "실논문 4/4편 완료 · 품질 82.5/100\n"
+                            "강점: 빠르고 안정적인 서지정보 입력"
+                        ),
+                        recommendation_rank=1,
                     ),
                     OllamaModelEntry(
                         "gemma3:12b",
@@ -393,21 +432,38 @@ class UiSmokeTests(unittest.TestCase):
 
             dialog._apply_snapshot(snapshot)
 
-            self.assertEqual(dialog.model_combo.currentData(), "qwen3:8b")
-            self.assertIn("정밀 요약", dialog.model_detail.text())
-            self.assertEqual(dialog.model_combo.findData("gemma3:12b"), -1)
-            installed_text = "\n".join(
-                dialog.installed_models.item(row).text()
-                for row in range(dialog.installed_models.count())
+            self.assertEqual(dialog.model_table.columnCount(), 6)
+            self.assertEqual(dialog.model_table.rowCount(), 3)
+            self.assertEqual(dialog._selected_entry().model_id, "qwen3:8b")
+            recommended_row = dialog._row_for_model("qwen3:8b")
+            self.assertEqual(
+                dialog.model_table.item(recommended_row, 0).text(),
+                "★ 1",
             )
-            self.assertIn("12B 이상 선택 제외", installed_text)
+            self.assertIn("정밀 요약", dialog.model_detail.text())
+            self.assertIn("품질 82.5/100", dialog.model_detail.text())
+            self.assertIn(
+                "빠르고 안정적인 서지정보 입력",
+                dialog.model_detail.text(),
+            )
+            gemma_row = dialog._row_for_model("gemma3:12b")
+            self.assertGreaterEqual(gemma_row, 0)
+            self.assertIn(
+                "선택 제외",
+                dialog.model_table.item(gemma_row, 2).text(),
+            )
             self.assertEqual(dialog.install_button.text(), "다운로드 후 선택")
-            dialog.installed_models.setCurrentRow(0)
-            self.assertEqual(dialog.model_combo.currentData(), "qwen3:4b")
+            qwen_row = dialog._row_for_model("qwen3:4b")
+            dialog.model_table.setCurrentCell(qwen_row, 0)
+            dialog.model_table.selectRow(qwen_row)
+            self.assertEqual(dialog._selected_entry().model_id, "qwen3:4b")
             self.assertIn("일반 요약", dialog.model_detail.text())
             self.assertTrue(dialog.delete_button.isEnabled())
-            dialog.installed_models.setCurrentRow(1)
+            dialog.model_table.setCurrentCell(gemma_row, 0)
+            dialog.model_table.selectRow(gemma_row)
             self.assertTrue(dialog.delete_button.isEnabled())
+            self.assertFalse(dialog.install_button.isEnabled())
+            self.assertEqual(dialog.install_button.text(), "분석 모델 선택 제외")
             self.assertIn("분석 모델 선택 제외", dialog.model_detail.text())
             with (
                 mock.patch.object(
@@ -436,8 +492,9 @@ class UiSmokeTests(unittest.TestCase):
             ):
                 dialog._operation_completed(False)
             installed_after_delete = {
-                dialog.installed_models.item(row).data(Qt.UserRole)
-                for row in range(dialog.installed_models.count())
+                dialog.model_table.item(row, 0).data(Qt.UserRole)
+                for row in range(dialog.model_table.rowCount())
+                if "설치됨" in dialog.model_table.item(row, 2).text()
             }
             self.assertNotIn("gemma3:12b", installed_after_delete)
             self.assertEqual(refresh_flag_during_message, [True])
@@ -1071,14 +1128,12 @@ class UiSmokeTests(unittest.TestCase):
                     widget.table.horizontalHeaderItem(column).text()
                     for column in (5, 6, 7)
                 ],
-                ["PaperPack 등록 시간", "분석일", "분석 상태"],
+                ["번역 상태", "등록일", "분석일"],
             )
-            self.assertEqual(widget.table.item(0, 5).text(), "2026-07-27 11:30")
-            self.assertEqual(widget.table.item(0, 6).text(), "2026-07-28 12:00")
-            self.assertEqual(
-                widget.table.item(0, 7).text(),
-                "분석 완료 (v1.4.1)",
-            )
+            self.assertEqual(widget.table.item(0, 4).text(), "v1.4.1")
+            self.assertEqual(widget.table.item(0, 5).text(), "—")
+            self.assertEqual(widget.table.item(0, 6).text(), "2026-07-27")
+            self.assertEqual(widget.table.item(0, 7).text(), "2026-07-28")
             self.assertIn("앱 v1.4.1", widget.analysis_view.toPlainText())
             self.assertEqual(
                 _analysis_version_label(
@@ -1090,7 +1145,7 @@ class UiSmokeTests(unittest.TestCase):
                         }
                     }
                 ),
-                "요약 v9",
+                "v9",
             )
             entry.record["workflow"] = {"analysis_status": "failed"}
             entry.record["analysis"]["last_attempt"] = {
@@ -1117,11 +1172,11 @@ class UiSmokeTests(unittest.TestCase):
             }
             widget.refresh(True)
             failed_text = widget.analysis_view.toPlainText()
-            self.assertEqual(widget.table.item(0, 7).text(), "분석 실패")
+            self.assertEqual(widget.table.item(0, 4).text(), "실패")
             self.assertIn("AI 요약 실패", failed_text)
             self.assertIn("정규식 추출 Abstract", failed_text)
             self.assertIn("Original abstract fallback.", failed_text)
-            self.assertIn("JSON 형식·스키마 검증 실패", failed_text)
+            self.assertIn("서지정보 입력 형식 검증 실패", failed_text)
             self.assertIn("요청 시도 횟수: 3회", failed_text)
             self.assertIn("ollama / qwen3:4b", failed_text)
             self.assertIn("Abstract, Results", failed_text)

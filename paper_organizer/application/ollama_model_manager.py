@@ -11,6 +11,7 @@ from threading import Event
 from paper_organizer.core.model_recommendation import (
     ModelSpec,
     load_model_catalog,
+    model_benchmark_summary,
     model_usage_guidance,
 )
 from paper_organizer.infra.hardware import HardwareInspector
@@ -44,6 +45,7 @@ class OllamaModelEntry:
     selectable: bool = True
     usage_guidance: str = ""
     benchmark_summary: str = ""
+    recommendation_rank: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +284,10 @@ def _entry_from_spec(
     managed: bool,
     benchmark_summary: str,
 ) -> OllamaModelEntry:
+    static_benchmark = model_benchmark_summary(spec)
+    combined_benchmark = "\n".join(
+        value for value in (static_benchmark, benchmark_summary) if value
+    )
     return OllamaModelEntry(
         model_id=spec.model_id,
         label=spec.label,
@@ -295,7 +301,8 @@ def _entry_from_spec(
             spec.model_id,
             spec.parameters_b,
         ).display_text(),
-        benchmark_summary=benchmark_summary,
+        benchmark_summary=combined_benchmark,
+        recommendation_rank=spec.recommendation_rank,
     )
 
 

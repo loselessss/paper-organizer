@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-QUEUE_SCHEMA_VERSION = 1
+QUEUE_SCHEMA_VERSION = 2
 VALID_STATUSES = {
     "pending_review",
     "organized_pending_analysis",
@@ -38,6 +38,8 @@ class AnalysisQueueItem:
     attempt_count: int = 0
     started_at: str = ""
     completed_at: str = ""
+    task_type: str = "analysis"
+    source_hash: str = ""
 
 
 def _now_iso() -> str:
@@ -54,7 +56,10 @@ class AnalysisQueueStore:
             return []
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(data, dict) or data.get("schema_version") != QUEUE_SCHEMA_VERSION:
+            if (
+                not isinstance(data, dict)
+                or data.get("schema_version") not in {1, QUEUE_SCHEMA_VERSION}
+            ):
                 raise ValueError("unsupported analysis queue schema")
             raw_items = data.get("items", [])
             if not isinstance(raw_items, list):
@@ -66,6 +71,7 @@ class AnalysisQueueStore:
                 item = AnalysisQueueItem(**raw)
                 if (
                     item.status not in VALID_STATUSES
+                    or item.task_type not in {"analysis", "translation"}
                     or item.priority not in (0, 1)
                     or item.attempt_count < 0
                 ):
@@ -101,6 +107,45 @@ class AnalysisQueueStore:
             attempt_count=existing.attempt_count if existing else 0,
             started_at=existing.started_at if existing else "",
             completed_at=existing.completed_at if existing else "",
+            task_type="analysis",
+            source_hash="",
+        )
+        items = [value for value in items if value.queue_id != queue_id]
+        items.append(item)
+        self._save(items)
+        return item
+
+    def enqueue_translation(
+        self,
+        *,
+        path: Path,
+        file_sha256: str,
+        title: str,
+        source_hash: str,
+    ) -> AnalysisQueueItem:
+        """Queue one analysis translation in the same serial AI pipeline."""
+
+        if not source_hash:
+            raise AnalysisQueueError("번역할 분석 내용 식별자가 없습니다.")
+        items = self.load()
+        queue_id = f"translation:{file_sha256}:{source_hash[:16]}"
+        now = _now_iso()
+        existing = next((item for item in items if item.queue_id == queue_id), None)
+        item = AnalysisQueueItem(
+            queue_id=queue_id,
+            path=str(path.resolve()),
+            file_sha256=file_sha256,
+            title=title.strip() or path.stem,
+            status="organized_pending_analysis",
+            priority=existing.priority if existing else 0,
+            added_at=existing.added_at if existing else now,
+            updated_at=now,
+            last_error="",
+            attempt_count=existing.attempt_count if existing else 0,
+            started_at="",
+            completed_at="",
+            task_type="translation",
+            source_hash=source_hash,
         )
         items = [value for value in items if value.queue_id != queue_id]
         items.append(item)
@@ -134,6 +179,8 @@ class AnalysisQueueStore:
             attempt_count=existing.attempt_count,
             started_at="",
             completed_at="",
+            task_type="analysis",
+            source_hash="",
         )
         self._replace(items, updated)
         return updated
@@ -170,6 +217,8 @@ class AnalysisQueueStore:
             attempt_count=basis.attempt_count if basis else 0,
             started_at="",
             completed_at="",
+            task_type="analysis",
+            source_hash="",
         )
         remaining = [
             item for item in items if item.queue_id not in {old_id, new_id}

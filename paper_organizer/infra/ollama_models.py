@@ -159,7 +159,7 @@ class OllamaModelClient:
                 decoded = json.loads(response_text)
             except json.JSONDecodeError as exc:
                 raise OllamaModelError(
-                    "설치 모델의 JSON 응답 검증에 실패했습니다."
+                    "설치 모델의 서지정보 입력 검증에 실패했습니다."
                 ) from exc
             if not isinstance(decoded, Mapping) or decoded.get("ready") is not True:
                 raise OllamaModelError(
@@ -181,7 +181,7 @@ class OllamaModelClient:
             details = [processor] if processor else []
             if output_tps:
                 details.append(f"출력 {output_tps:g} tok/s")
-            message = "설치 및 짧은 JSON 응답 검증 완료"
+            message = "설치 및 짧은 서지정보 입력 검증 완료"
             if details:
                 message += " · " + " · ".join(details)
             return OllamaVerification(
@@ -260,7 +260,9 @@ class OllamaModelClient:
         try:
             return _decode_object(raw)
         except (ValueError, json.JSONDecodeError) as exc:
-            raise OllamaModelError("Ollama 응답이 올바른 JSON 객체가 아닙니다.") from exc
+            raise OllamaModelError(
+                "Ollama가 올바른 서지정보 입력을 반환하지 않았습니다."
+            ) from exc
 
     def _request(
         self,
