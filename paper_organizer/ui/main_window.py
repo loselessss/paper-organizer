@@ -324,9 +324,17 @@ class PaperOrganizerWindow(QMainWindow):
     def show_first_run_ai_setup(self) -> None:
         QMessageBox.information(
             self,
-            "AI 분석 설정",
-            "Paper Organizer는 기본 요약 AI로 Ollama를 이용하기 때문에 먼저 "
-            "Ollama와 요약 모델을 설치해야 합니다.\n\n다음 설정 화면에서 "
+            "첫 실행 설정",
+            "먼저 요약 감시 옵션에서 다운로드 폴더, 스캔 주기와 자동 보관 "
+            "방식을 확인합니다.\n\n이어서 요약 엔진 옵션에서 로컬 또는 "
+            "클라우드 AI를 설정합니다.",
+        )
+        if self._library_workflow is not None:
+            FolderSettingsDialog(self._library_workflow, self).exec_()
+        QMessageBox.information(
+            self,
+            "요약 엔진 설정",
+            "Paper Organizer는 기본 요약 AI로 Ollama를 이용합니다.\n\n다음 설정 화면에서 "
             "로컬 Ollama를 선택한 뒤 추천 모델의 설치·검증을 진행하세요. "
             "OpenAI 또는 Anthropic을 대신 사용하려면 API 키와 클라우드 전송 "
             "동의를 설정할 수 있습니다.",

@@ -74,10 +74,12 @@ class UiSmokeTests(unittest.TestCase):
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
-            self.assertEqual(dialog.windowTitle(), "요약 엔진 옵션")
+            self.assertEqual(
+                dialog.windowTitle(),
+                "요약 엔진 옵션 · 프롬프트 v9",
+            )
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)
-            self.assertIn("앱 1.6 요약 엔진 변경점", dialog.engine_changes_label.text())
             self.assertFalse(dialog.model_combo.isEditable())
             self.assertEqual(dialog.model_combo.count(), 2)
             dialog.model_combo.setCurrentIndex(
@@ -90,6 +92,11 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("일반 요약", dialog.model_guidance.text())
             self.assertIn("기여·한계 미지원", dialog.model_guidance.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
+            with mock.patch.object(dialog, "_scan_hardware") as scan_hardware:
+                dialog.model_profile_combo.setCurrentIndex(
+                    dialog.model_profile_combo.findData("balanced")
+                )
+                scan_hardware.assert_called_once_with()
             self.assertEqual(dialog.residency_combo.currentData(), "auto")
             self.assertEqual(dialog.resident_model_combo.count(), 2)
             self.assertIn("미리 적재하지 않으며", dialog.residency_guidance.text())
@@ -142,6 +149,29 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(
                 window.windowTitle(), f"Paper Organizer — v{__version__}"
             )
+            with (
+                mock.patch(
+                    "paper_organizer.ui.main_window.QMessageBox.information"
+                ),
+                mock.patch(
+                    "paper_organizer.ui.main_window.FolderSettingsDialog"
+                ) as first_run_watch,
+                mock.patch(
+                    "paper_organizer.ui.main_window.AiSettingsDialog"
+                ) as first_run_engine,
+                mock.patch(
+                    "paper_organizer.ui.main_window.OllamaModelDialog"
+                ),
+            ):
+                window.show_first_run_ai_setup()
+                first_run_watch.assert_called_once_with(
+                    workflow_controller,
+                    window,
+                )
+                first_run_engine.assert_called_once_with(
+                    ai_controller,
+                    window,
+                )
             window.collection_widget.form.set_metadata(
                 EditablePaperMetadata(
                     title="Patent",

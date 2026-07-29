@@ -55,7 +55,7 @@ class AiSettingsDialog(QDialog):
     def __init__(self, controller: AiSettingsController, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setWindowTitle("요약 엔진 옵션")
+        self.setWindowTitle("요약 엔진 옵션 · 프롬프트 v9")
         screen = self.screen() or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
         available_width = available.width() if available is not None else 1160
@@ -79,14 +79,6 @@ class AiSettingsDialog(QDialog):
         scroll_layout = QVBoxLayout(scroll_content)
         engine_group = QGroupBox("요약 엔진 옵션")
         engine_layout = QVBoxLayout(engine_group)
-        self.engine_changes_label = QLabel(
-            "<b>앱 1.6 요약 엔진 변경점</b><br>"
-            "작은 모델은 구역별 근거를 먼저 요약한 뒤 통합하고, 8B 이상은 정리된 "
-            "전체 구역을 직접 분석합니다. 서지정보 분리 추출·출력 언어 검증·JSON "
-            "복구도 적용됩니다. <span style='color:#666;'>내부 프롬프트 v9</span>"
-        )
-        self.engine_changes_label.setWordWrap(True)
-        engine_layout.addWidget(self.engine_changes_label)
 
         self.engine_columns = QBoxLayout(QBoxLayout.LeftToRight)
         self.provider_group = QGroupBox("제공자·출력")
@@ -254,6 +246,9 @@ class AiSettingsDialog(QDialog):
             lambda: self._open_model_manager()
         )
         self._load()
+        self.model_profile_combo.currentIndexChanged.connect(
+            self._model_profile_changed
+        )
         self._update_responsive_layout()
 
     def resizeEvent(self, event) -> None:
@@ -527,8 +522,11 @@ class AiSettingsDialog(QDialog):
         if self._scan_worker is not None and self._scan_worker.isRunning():
             return
         self.hardware_scan_button.setEnabled(False)
+        self.model_profile_combo.setEnabled(False)
         self.hardware_status.setText("CPU·RAM·GPU·디스크와 Ollama를 검사하는 중…")
-        self.recommendation_status.setText("추천 계산 중…")
+        self.recommendation_status.setText(
+            f"{self.model_profile_combo.currentText()} 프로필로 추천 계산 중…"
+        )
         worker = _HardwareScanWorker(
             self._controller,
             self.model_profile_combo.currentData(),
@@ -536,9 +534,16 @@ class AiSettingsDialog(QDialog):
         )
         worker.completed.connect(self._hardware_scan_completed)
         worker.failed.connect(self._hardware_scan_failed)
-        worker.finished.connect(lambda: self.hardware_scan_button.setEnabled(True))
+        worker.finished.connect(self._hardware_scan_finished)
         self._scan_worker = worker
         worker.start()
+
+    def _model_profile_changed(self) -> None:
+        self._scan_hardware()
+
+    def _hardware_scan_finished(self) -> None:
+        self.hardware_scan_button.setEnabled(True)
+        self.model_profile_combo.setEnabled(True)
 
     def _hardware_scan_completed(self, assessment) -> None:
         hardware = assessment.hardware
@@ -560,22 +565,38 @@ class AiSettingsDialog(QDialog):
             f"{gpu_text} · 모델 디스크 {hardware.model_disk_free_gb:g}GB 여유 · {ollama_text}"
         )
         recommendation = assessment.recommendation
+        profile_label = {
+            "auto": "자동",
+            "speed": "속도 우선",
+            "balanced": "균형",
+            "quality": "품질 우선",
+            "manual": "직접 선택",
+        }.get(recommendation.profile, recommendation.profile)
         chosen = recommendation.recommended
         if chosen is None:
             self._recommended_model = ""
             self.recommendation_status.setText(
-                "현재 안전 여유 기준으로 추천할 로컬 모델이 없습니다."
+                f"{profile_label} 결과 · 현재 안전 여유 기준으로 추천할 "
+                "로컬 모델이 없습니다."
             )
         else:
             self._recommended_model = chosen.spec.model_id
             state = "설치됨" if chosen.installed else f"다운로드 약 {chosen.spec.download_gb:g}GB"
             explanation = " ".join((*chosen.reasons, *chosen.warnings))
             self.recommendation_status.setText(
-                f"{chosen.spec.label} ({chosen.rating}, {state}) · "
+                f"{profile_label} 결과 · {chosen.spec.label} "
+                f"({chosen.rating}, {state}) · "
                 + explanation
+                + " 추천 결과만 바뀌며 활성 모델은 자동 변경하지 않습니다."
             )
         lines: list[str] = []
         for candidate in recommendation.candidates:
+            marker = (
+                "★ 프로필 추천 · "
+                if chosen is not None
+                and candidate.spec.model_id == chosen.spec.model_id
+                else ""
+            )
             installed = " · 설치됨" if candidate.installed else ""
             warning = f" · {' '.join(candidate.warnings)}" if candidate.warnings else ""
             usage = model_usage_guidance(
@@ -583,7 +604,7 @@ class AiSettingsDialog(QDialog):
                 candidate.spec.parameters_b,
             )
             lines.append(
-                f"[{candidate.rating}] {candidate.spec.label} — 다운로드 "
+                f"{marker}[{candidate.rating}] {candidate.spec.label} — 다운로드 "
                 f"{candidate.spec.download_gb:g}GB / 예상 실행 메모리 "
                 f"{candidate.spec.runtime_memory_gb:g}GB · {usage.role}, "
                 f"환각 위험 {usage.hallucination_risk}{installed}{warning}"
