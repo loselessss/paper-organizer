@@ -27,7 +27,10 @@ from paper_organizer.application.legacy_migration import (
     LegacyMigrationService,
     LegacyMigrationTrashEntry,
 )
-from paper_organizer.application.summary_service import SummaryExecution
+from paper_organizer.application.summary_service import (
+    PreparedSummary,
+    SummaryExecution,
+)
 from paper_organizer.core.classifier import (
     TaxonomyError,
     classify_text,
@@ -1371,6 +1374,99 @@ class LibraryWorkflowController:
 
     def fail_analysis(self, queue_id: str, message: str) -> AnalysisQueueItem:
         return self._queue().mark_failed(queue_id, message)
+
+    def apply_analysis_failure(
+        self,
+        source_path: Path,
+        prepared: PreparedSummary,
+        message: str,
+        *,
+        error_type: str = "",
+        failure_kind: str = "provider_or_application",
+        request_attempts: int | None = None,
+    ) -> None:
+        """Persist failure state and deterministic excerpts without faking an AI result."""
+
+        _input_dir, root = self.configured_paths()
+        source = source_path.expanduser().resolve()
+        papers_root = (root / "papers").resolve()
+        if (
+            source.suffix.casefold() != PAPERPACK_SUFFIX
+            or not source.is_file()
+            or not _inside(papers_root, source)
+        ):
+            raise LibraryWorkflowError(
+                "분석 실패 정보는 라이브러리의 paperpack에만 저장할 수 있습니다."
+            )
+        record = load_paperpack_metadata(source)
+        now = _now_iso()
+        safe_message = " ".join(str(message).split())[:500] or "알 수 없는 분석 오류"
+        fallback = prepared.regex_fallback
+        fallback_record = {
+            "source": "auto:regex",
+            "abstract": fallback.abstract,
+            "abstract_pdf_pages": list(fallback.abstract_pdf_pages),
+            "facts": list(fallback.facts),
+        }
+        allowed_kinds = {
+            "json_validation",
+            "language_validation",
+            "timeout",
+            "authentication",
+            "ollama_runtime",
+            "provider_or_application",
+        }
+        diagnostics: dict[str, Any] = {
+            "stage": "summary_generation_and_validation",
+            "failure_kind": (
+                failure_kind
+                if failure_kind in allowed_kinds
+                else "provider_or_application"
+            ),
+            "error_type": re.sub(r"[^A-Za-z0-9_.]", "", error_type)[:120],
+            "provider": prepared.preview.provider,
+            "model": prepared.preview.model,
+            "analysis_level": prepared.preview.mode.value,
+            "summary_strategy": prepared.preview.summary_strategy,
+            "output_language": prepared.preview.output_language,
+            "included_sections": list(prepared.preview.included_sections),
+        }
+        if (
+            isinstance(request_attempts, int)
+            and not isinstance(request_attempts, bool)
+            and 1 <= request_attempts <= 10
+        ):
+            diagnostics["request_attempts"] = request_attempts
+        failed_attempt = {
+            "status": "failed",
+            "error": safe_message,
+            "failed_at": now,
+            "diagnostics": diagnostics,
+            "fallback": fallback_record,
+        }
+        analysis = record.get("analysis")
+        if isinstance(analysis, dict) and analysis.get("status") == "completed":
+            analysis["last_attempt"] = failed_attempt
+            analysis["fallback"] = fallback_record
+        else:
+            record["analysis"] = failed_attempt
+        workflow = record.setdefault("workflow", {})
+        workflow.update(
+            {
+                "analysis_status": "failed",
+                "needs_reanalysis": True,
+                "updated_at": now,
+            }
+        )
+        try:
+            update_paperpack(source, record, changed_by="auto:regex")
+            rebuild_library_index(root)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"분석 실패 정보와 정규식 추출본을 저장하지 못했습니다: {exc}"
+            ) from None
+        self._index_search_entry(source)
+        self._library_cache = None
 
     def retry_queue_item(self, queue_id: str, *, high: bool = False) -> AnalysisQueueItem:
         return self._queue().retry(queue_id, high=high)

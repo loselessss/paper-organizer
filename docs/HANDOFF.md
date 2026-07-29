@@ -4,10 +4,9 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: v1.6.1 이후 요약 엔진 좌우 패널·Ollama 자동 기동·업데이트 캐시 정리 구현
-- 이번 회차 범위: `요약 엔진 옵션`에서 제공자 설정과 모델 선택·설치·삭제를 좌우로
-  통합, 꺼진 Ollama를 시작한 뒤 설치 모델 재조회, 중단/구버전 업데이트 파일 정리,
-  검증된 최신 설치 파일 재사용
+- 상태: v1.6.2 릴리스 준비 완료
+- v1.6.2 범위: 요약 엔진 좌우 패널·Ollama 자동 기동·모델 목록 즉시 갱신·업데이트
+  캐시 정리·3단계 JSON 복구·AI 최종 실패 시 정규식 추출본과 상세 진단 표시
 
 ---
 
@@ -139,6 +138,16 @@ core·application 테스트가 PyQt 없이도 돌아야 합니다. UI가 필요�
 최종 JSON은 기본 요청, `json_retry`, `json_repair` 순서로 최대 세 번 시도합니다.
 세 번째 요청은 타입이 맞는 빈 JSON 틀과 직렬화 규칙을 명시하는 별도 프롬프트이며,
 `json_retry_count`에는 실제 추가 요청 수(최대 2)를 기록합니다.
+끝내 실패하면 `BackgroundAnalysisService`가 준비 단계에서 보존한
+`RegexSummaryFallback`을 `LibraryWorkflowController.apply_analysis_failure()`에
+넘깁니다. PaperPack의 `analysis.fallback`에는 `auto:regex` Abstract·페이지·
+DOI/연도 후보만 저장하고, `workflow.analysis_status=failed`와
+`needs_reanalysis=true`를 기록합니다. 이 값으로 `description.summary`를 채우지
+마세요. 기존 성공 분석은 덮어쓰지 않고 `analysis.last_attempt`에 실패를 남깁니다.
+`analysis.*.diagnostics`에는 stage/failure_kind/error_type/provider/model/
+request_attempts/analysis_level/summary_strategy/output_language/included_sections를
+저장합니다. traceback·API 키·본문은 넣지 않습니다. JSON과 언어 최종 실패는
+`SummaryRetryExhaustedError`가 실제 시도 횟수와 안정적인 failure_kind를 전달합니다.
 
 제목·저자·연도·저널은 요약 스키마에 넣지 않습니다.
 `BibliographyRequest`가 첫 페이지에 작은 4필드 스키마를 별도로 요청하고,
@@ -203,6 +212,18 @@ OCR 문서는 모델 비교에서 제외합니다. 텍스트 레이어 6편의
 
 - **검증**: `tests/test_classifier.py`에 케이스를 추가하고 돌리면 됩니다.
 - **팁**: 설정 화면에서 주력 분야만 체크하면 그 분야들 안에서만 분류합니다. 분야가 좁을수록 정확도가 올라갑니다.
+
+### (4) sPDF 선택 영역 번역·요약 — 1.0 이후 후속 목표
+
+`DEVELOPMENT_PLAN.md` 7.9의 선택 영역 번역·요약 설계를 따릅니다. sPDF가 선택
+텍스트·PDF 페이지·bounding box·문서 ID를 공개 브리지로 전달하고 Organizer는 그
+범위만 현재 AI 제공자에 보냅니다. 결과는 임시 패널과 복사가 기본이며 사용자 승인
+없이 정식 요약 필드나 PaperPack을 수정하지 않습니다.
+
+sPDF 내부 객체를 Organizer에서 직접 읽지 마세요. 필요한 선택 이벤트/DTO는 먼저
+sPDF 원본 저장소에 공용 기능으로 추가하고 submodule을 갱신합니다. 클라우드 전송
+동의, 선택 영역 OCR의 명시적 실행, 요청 취소, 원문 위치 복귀를 통합 테스트에
+포함합니다.
 
 ---
 

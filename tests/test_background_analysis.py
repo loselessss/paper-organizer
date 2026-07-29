@@ -9,9 +9,11 @@ from paper_organizer.application.background_analysis import BackgroundAnalysisSe
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.summary_service import (
     PreparedSummary,
+    RegexSummaryFallback,
     SummaryExecution,
     SummaryMode,
     SummaryPreview,
+    SummaryRetryExhaustedError,
 )
 from paper_organizer.core.paperpack import (
     import_pdf_to_paperpack,
@@ -89,6 +91,31 @@ class FakeSummary:
         return self.result
 
 
+class FailingSummary:
+    def __init__(self, preview):
+        self.preview = preview
+        self.modes = []
+
+    def prepare(self, path, mode):
+        self.modes.append(mode)
+        return PreparedSummary(
+            self.preview,
+            "document text",
+            regex_fallback=RegexSummaryFallback(
+                abstract="Original abstract text.",
+                abstract_pdf_pages=(1,),
+                facts=("Year candidates: 2026",),
+            ),
+        )
+
+    def run(self, prepared):
+        raise SummaryRetryExhaustedError(
+            "AI가 세 번 연속 올바른 JSON을 만들지 못했습니다.",
+            failure_kind="json_validation",
+            attempts=3,
+        )
+
+
 class FakeWorkflow:
     def __init__(self, path: Path):
         self.item = AnalysisQueueItem(
@@ -105,6 +132,7 @@ class FakeWorkflow:
         self.completed = []
         self.removed = []
         self.failed = []
+        self.failure_fallbacks = []
         self.applied = []
         self.needs_ocr = False
         self.ocr_completed = []
@@ -141,6 +169,11 @@ class FakeWorkflow:
 
     def fail_analysis(self, queue_id, message):
         self.failed.append((queue_id, message))
+
+    def apply_analysis_failure(self, path, prepared, message, **diagnostics):
+        self.failure_fallbacks.append(
+            (path, prepared.regex_fallback, message, diagnostics)
+        )
 
     def recover_interrupted_analysis(self):
         return 0
@@ -249,6 +282,39 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(event.state, "completed")
         self.assertEqual(starts, [True])
 
+    def test_failed_ai_run_saves_regex_fallback_and_keeps_failed_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            failed_summary = FailingSummary(execution(root / "paper.pdf").preview)
+            service = BackgroundAnalysisService(
+                workflow,
+                failed_summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "failed")
+        self.assertEqual(workflow.failed[0][0], workflow.item.queue_id)
+        self.assertEqual(len(workflow.failure_fallbacks), 1)
+        _path, fallback, error, diagnostics = workflow.failure_fallbacks[0]
+        self.assertEqual(fallback.abstract, "Original abstract text.")
+        self.assertIn("세 번 연속", error)
+        self.assertEqual(diagnostics["failure_kind"], "json_validation")
+        self.assertEqual(diagnostics["request_attempts"], 3)
+        self.assertEqual(workflow.removed, [])
+
     def test_full_ocr_runs_before_ai_readiness_and_reports_each_page(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -351,6 +417,106 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(saved["description"]["methods"], ["방법"])
         self.assertEqual(saved["analysis"]["summary"], "AI 요약")
         self.assertEqual(saved["workflow"]["analysis_status"], "completed")
+
+    def test_paperpack_failure_keeps_previous_result_but_stores_regex_view(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "input"
+            papers = root / "library" / "papers" / "Test" / "General"
+            input_dir.mkdir()
+            papers.mkdir(parents=True)
+            pdf = input_dir / "paper.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((50, 50), "academic paper methods and results " * 30)
+            document.save(pdf)
+            document.close()
+            pack = papers / "paper.paperpack"
+            import_pdf_to_paperpack(
+                pack,
+                pdf,
+                {
+                    "schema_version": 2,
+                    "description": {"summary": "사용자 요약"},
+                    "analysis": {
+                        "status": "completed",
+                        "summary": "이전 AI 요약",
+                    },
+                    "workflow": {"analysis_status": "completed"},
+                },
+            )
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    input_dir=str(input_dir),
+                    library_root=str(root / "library"),
+                ),
+                settings_path,
+            )
+            workflow = LibraryWorkflowController(settings_path)
+            prepared = PreparedSummary(
+                execution(pdf).preview,
+                "document text",
+                regex_fallback=RegexSummaryFallback(
+                    abstract="Original abstract text.",
+                    abstract_pdf_pages=(1, 2),
+                    facts=("DOI candidates: 10.1000/test",),
+                ),
+            )
+
+            workflow.apply_analysis_failure(
+                pack,
+                prepared,
+                "AI가 세 번 연속 올바른 JSON을 만들지 못했습니다.",
+                error_type="SummaryRetryExhaustedError",
+                failure_kind="json_validation",
+                request_attempts=3,
+            )
+            saved = load_paperpack_metadata(pack)
+            first_failure_pack = papers / "first-failure.paperpack"
+            import_pdf_to_paperpack(
+                first_failure_pack,
+                pdf,
+                {
+                    "schema_version": 2,
+                    "description": {},
+                    "workflow": {},
+                },
+            )
+            workflow.apply_analysis_failure(
+                first_failure_pack,
+                prepared,
+                "AI가 세 번 연속 올바른 JSON을 만들지 못했습니다.",
+                error_type="SummaryRetryExhaustedError",
+                failure_kind="json_validation",
+                request_attempts=3,
+            )
+            first_failure = load_paperpack_metadata(first_failure_pack)
+
+        self.assertEqual(saved["description"]["summary"], "사용자 요약")
+        self.assertEqual(saved["analysis"]["status"], "completed")
+        self.assertEqual(saved["analysis"]["summary"], "이전 AI 요약")
+        self.assertEqual(
+            saved["analysis"]["last_attempt"]["status"],
+            "failed",
+        )
+        self.assertEqual(
+            saved["analysis"]["fallback"]["abstract"],
+            "Original abstract text.",
+        )
+        diagnostics = saved["analysis"]["last_attempt"]["diagnostics"]
+        self.assertEqual(diagnostics["failure_kind"], "json_validation")
+        self.assertEqual(diagnostics["error_type"], "SummaryRetryExhaustedError")
+        self.assertEqual(diagnostics["request_attempts"], 3)
+        self.assertEqual(diagnostics["provider"], "ollama")
+        self.assertEqual(diagnostics["model"], "qwen3:4b")
+        self.assertEqual(saved["workflow"]["analysis_status"], "failed")
+        self.assertTrue(saved["workflow"]["needs_reanalysis"])
+        self.assertEqual(first_failure["analysis"]["status"], "failed")
+        self.assertEqual(
+            first_failure["analysis"]["fallback"]["abstract"],
+            "Original abstract text.",
+        )
 
 
 if __name__ == "__main__":

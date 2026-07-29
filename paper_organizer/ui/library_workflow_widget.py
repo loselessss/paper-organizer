@@ -1455,8 +1455,8 @@ class LibraryWidget(QWidget):
                     if value
                 )
             stored_status = str(
-                entry.record.get("analysis", {}).get("status")
-                or entry.record.get("workflow", {}).get("analysis_status")
+                entry.record.get("workflow", {}).get("analysis_status")
+                or entry.record.get("analysis", {}).get("status")
                 or ""
             )
             analysis_status = (
@@ -1588,6 +1588,156 @@ class LibraryWidget(QWidget):
             else "<p style='color:#999'>없음</p>"
         )
         sections: list[str] = []
+        workflow_status = str(
+            entry.record.get("workflow", {}).get("analysis_status") or ""
+        )
+        last_attempt = analysis.get("last_attempt")
+        failed_attempt = (
+            last_attempt
+            if isinstance(last_attempt, dict)
+            and last_attempt.get("status") == "failed"
+            else analysis
+            if analysis.get("status") == "failed"
+            else {}
+        )
+        if workflow_status == "failed" or failed_attempt:
+            error = str(failed_attempt.get("error") or "").strip()
+            fallback = failed_attempt.get("fallback") or analysis.get("fallback") or {}
+            sections.append(
+                "<h3 style='color:#a33'>AI 요약 실패</h3>"
+                "<p>유효한 AI 요약 결과를 저장하지 못했습니다. "
+                "아래 내용은 AI 요약이 아니라 원문에서 정규식으로 분리한 정보입니다.</p>"
+            )
+            if error:
+                sections.append(
+                    f"<p style='color:#777'>실패 원인: {esc(error)}</p>"
+                )
+            diagnostics = failed_attempt.get("diagnostics") or {}
+            if isinstance(diagnostics, dict):
+                kind_labels = {
+                    "json_validation": "JSON 형식·스키마 검증 실패",
+                    "language_validation": "요약 출력 언어 검증 실패",
+                    "timeout": "AI 응답 시간 초과",
+                    "authentication": "API 인증 또는 키 오류",
+                    "ollama_runtime": "Ollama 실행 또는 연결 오류",
+                    "provider_or_application": "AI 제공자 또는 앱 처리 오류",
+                }
+                stage_labels = {
+                    "summary_generation_and_validation": "AI 요약 생성 및 결과 검증",
+                }
+                strategy_labels = {
+                    "direct": "전체 구역 직접 분석",
+                    "hierarchical": "구역별 요약 후 최종 합성",
+                }
+                language_labels = {
+                    "ko": "한국어",
+                    "source": "논문 원문 언어",
+                }
+                details = [
+                    value
+                    for value in (
+                        (
+                            f"실패 시각: {failed_attempt.get('failed_at')}"
+                            if failed_attempt.get("failed_at")
+                            else ""
+                        ),
+                        (
+                            "실패 단계: "
+                            + stage_labels.get(
+                                str(diagnostics.get("stage") or ""),
+                                str(diagnostics.get("stage") or ""),
+                            )
+                            if diagnostics.get("stage")
+                            else ""
+                        ),
+                        (
+                            "오류 분류: "
+                            + kind_labels.get(
+                                str(diagnostics.get("failure_kind") or ""),
+                                str(diagnostics.get("failure_kind") or ""),
+                            )
+                            if diagnostics.get("failure_kind")
+                            else ""
+                        ),
+                        (
+                            f"예외 형식: {diagnostics.get('error_type')}"
+                            if diagnostics.get("error_type")
+                            else ""
+                        ),
+                        (
+                            f"AI: {diagnostics.get('provider')} / "
+                            f"{diagnostics.get('model')}"
+                            if diagnostics.get("provider")
+                            or diagnostics.get("model")
+                            else ""
+                        ),
+                        (
+                            f"요청 시도 횟수: {diagnostics.get('request_attempts')}회"
+                            if diagnostics.get("request_attempts")
+                            else ""
+                        ),
+                        (
+                            "분석 방식: "
+                            + strategy_labels.get(
+                                str(diagnostics.get("summary_strategy") or ""),
+                                str(diagnostics.get("summary_strategy") or ""),
+                            )
+                            if diagnostics.get("summary_strategy")
+                            else ""
+                        ),
+                        (
+                            "출력 언어: "
+                            + language_labels.get(
+                                str(diagnostics.get("output_language") or ""),
+                                str(diagnostics.get("output_language") or ""),
+                            )
+                            if diagnostics.get("output_language")
+                            else ""
+                        ),
+                        (
+                            "포함 구역: "
+                            + ", ".join(
+                                str(value)
+                                for value in diagnostics.get("included_sections") or []
+                            )
+                            if diagnostics.get("included_sections")
+                            else ""
+                        ),
+                    )
+                    if value
+                ]
+                if details:
+                    sections.append(
+                        f"<h3>실패 상세</h3>{bullets(details)}"
+                    )
+            abstract = str(fallback.get("abstract") or "").strip()
+            if abstract:
+                pages = ", ".join(
+                    str(page)
+                    for page in fallback.get("abstract_pdf_pages") or []
+                )
+                page_note = f" · PDF {esc(pages)}쪽" if pages else ""
+                abstract_html = "".join(
+                    f"<p>{esc(paragraph)}</p>"
+                    for paragraph in abstract.split("\n\n")
+                    if paragraph.strip()
+                )
+                sections.append(
+                    "<h3>정규식 추출 Abstract"
+                    f"<span style='color:#777'>{page_note}</span></h3>"
+                    f"{abstract_html}"
+                )
+            facts = [str(value) for value in fallback.get("facts") or []]
+            if facts:
+                sections.append(
+                    f"<h3>정규식 후보 정보</h3>{bullets(facts)}"
+                )
+            if not abstract and not facts:
+                sections.append(
+                    "<p style='color:#999'>표시할 수 있는 정규식 추출 결과가 없습니다.</p>"
+                )
+            self.analysis_view.setHtml("".join(sections))
+            return
         summary = description.get("summary") or ""
         if not summary and not analysis:
             self.analysis_view.setHtml(

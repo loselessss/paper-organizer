@@ -993,6 +993,43 @@ class UiSmokeTests(unittest.TestCase):
                 ),
                 "요약 v9",
             )
+            entry.record["workflow"] = {"analysis_status": "failed"}
+            entry.record["analysis"]["last_attempt"] = {
+                "status": "failed",
+                "error": "AI가 세 번 연속 올바른 JSON을 만들지 못했습니다.",
+                "failed_at": "2026-07-29T12:34:56+09:00",
+                "diagnostics": {
+                    "stage": "summary_generation_and_validation",
+                    "failure_kind": "json_validation",
+                    "error_type": "SummaryRetryExhaustedError",
+                    "provider": "ollama",
+                    "model": "qwen3:4b",
+                    "request_attempts": 3,
+                    "summary_strategy": "hierarchical",
+                    "output_language": "ko",
+                    "included_sections": ["Abstract", "Results"],
+                },
+                "fallback": {
+                    "source": "auto:regex",
+                    "abstract": "Original abstract fallback.",
+                    "abstract_pdf_pages": [1],
+                    "facts": ["Year candidates: 2026"],
+                },
+            }
+            widget.refresh(True)
+            failed_text = widget.analysis_view.toPlainText()
+            self.assertEqual(widget.table.item(0, 5).text(), "분석 실패")
+            self.assertIn("AI 요약 실패", failed_text)
+            self.assertIn("정규식 추출 Abstract", failed_text)
+            self.assertIn("Original abstract fallback.", failed_text)
+            self.assertIn("JSON 형식·스키마 검증 실패", failed_text)
+            self.assertIn("요청 시도 횟수: 3회", failed_text)
+            self.assertIn("ollama / qwen3:4b", failed_text)
+            self.assertIn("Abstract, Results", failed_text)
+            self.assertNotIn("분석 요약", failed_text)
+            entry.record.pop("workflow")
+            entry.record["analysis"].pop("last_attempt")
+            widget.refresh(True)
             widget.table.selectionModel().select(
                 widget.table.model().index(1, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows,

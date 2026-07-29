@@ -63,6 +63,21 @@ class SummaryPreparationError(RuntimeError):
     pass
 
 
+class SummaryRetryExhaustedError(ProviderError):
+    """A validated summary still failed after every bounded retry."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_kind: str,
+        attempts: int,
+    ) -> None:
+        super().__init__(message)
+        self.failure_kind = failure_kind
+        self.attempts = attempts
+
+
 class SummaryMode(StrEnum):
     QUICK = "quick"
     FULL = "full"
@@ -88,11 +103,28 @@ class SummaryPreview:
 
 
 @dataclass(frozen=True, slots=True)
+class RegexSummaryFallback:
+    """Deterministic source excerpts retained when AI summarization fails."""
+
+    abstract: str = ""
+    abstract_pdf_pages: tuple[int, ...] = ()
+    facts: tuple[str, ...] = ()
+
+    @property
+    def available(self) -> bool:
+        return bool(self.abstract.strip() or self.facts)
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedSummary:
     preview: SummaryPreview
     document_text: str = field(repr=False)
     section_contexts: tuple[str, ...] = field(default=(), repr=False)
     bibliography_text: str = field(default="", repr=False)
+    regex_fallback: RegexSummaryFallback = field(
+        default_factory=RegexSummaryFallback,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +352,27 @@ def _prepared_from_chunks(
         document_text=text,
         section_contexts=_section_contexts(processed),
         bibliography_text=_bibliography_context(page_texts[0]),
+        regex_fallback=_regex_summary_fallback(processed),
+    )
+
+
+def _regex_summary_fallback(
+    processed: PreprocessedDocument,
+) -> RegexSummaryFallback:
+    abstract = next(
+        (section for section in processed.sections if section.name == "abstract"),
+        None,
+    )
+    return RegexSummaryFallback(
+        abstract=(
+            "\n\n".join(abstract.paragraphs).strip()
+            if abstract is not None
+            else ""
+        ),
+        abstract_pdf_pages=(
+            abstract.pdf_pages if abstract is not None else ()
+        ),
+        facts=processed.regex_facts,
     )
 
 
@@ -510,10 +563,12 @@ def _summarize_with_json_retry(
         return provider.summarize(repair_request), 2
     except ProviderError as exc:
         if _is_summary_format_error(exc):
-            raise ProviderError(
+            raise SummaryRetryExhaustedError(
                 "AI가 형식 교정 프롬프트를 포함해 세 번 연속 올바른 JSON을 "
                 "만들지 못했습니다. 같은 논문을 다시 시도하거나 더 큰 모델을 "
-                "선택하세요."
+                "선택하세요.",
+                failure_kind="json_validation",
+                attempts=3,
             ) from None
         raise
 
@@ -708,9 +763,11 @@ def _summarize_with_language_retry(
             if request.output_language == "ko"
             else "논문 원문 언어"
         )
-        raise ProviderError(
+        raise SummaryRetryExhaustedError(
             f"AI가 두 번 연속 {requested} 요약 지시를 따르지 못했습니다. "
-            "같은 논문을 다시 시도하거나 다른 모델을 선택하세요."
+            "같은 논문을 다시 시도하거나 다른 모델을 선택하세요.",
+            failure_kind="language_validation",
+            attempts=2,
         )
     retry = replace(
         retry,

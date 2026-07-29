@@ -225,7 +225,7 @@ class SummaryServiceTests(unittest.TestCase):
         )
         client = AlwaysInvalidClient()
 
-        with self.assertRaisesRegex(ProviderError, "세 번 연속"):
+        with self.assertRaisesRegex(ProviderError, "세 번 연속") as raised:
             run_prepared_summary(
                 prepared,
                 settings,
@@ -234,6 +234,8 @@ class SummaryServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(client.calls, 3)
+        self.assertEqual(raised.exception.failure_kind, "json_validation")
+        self.assertEqual(raised.exception.attempts, 3)
 
     def test_bibliography_is_extracted_separately_from_first_page(self):
         settings = AppSettings(
@@ -572,6 +574,39 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertIn("Results and conclusion", prepared.document_text)
         self.assertNotIn("Unrelated Author", prepared.document_text)
         self.assertNotIn("\nReferences", prepared.document_text)
+
+    def test_preparation_retains_regex_abstract_for_failed_ai_display(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        abstract = (
+            "This abstract reports a controlled enzyme experiment and its measured "
+            "result. " * 12
+        )
+
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "Test Paper\n2026\n10.1000/example\nAbstract\n"
+                + abstract
+                + "\nIntroduction\n"
+                + "The introduction provides study context. " * 20,
+            ],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertIn("controlled enzyme experiment", prepared.regex_fallback.abstract)
+        self.assertNotIn(
+            "introduction provides study context",
+            prepared.regex_fallback.abstract.casefold(),
+        )
+        self.assertEqual(prepared.regex_fallback.abstract_pdf_pages, (1,))
+        self.assertIn(
+            "DOI candidates: 10.1000/example",
+            prepared.regex_fallback.facts,
+        )
         self.assertNotIn("[PDF PAGE 3]", prepared.document_text)
 
     def test_early_table_of_contents_reference_line_is_not_cut(self):

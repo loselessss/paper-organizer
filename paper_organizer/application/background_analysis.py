@@ -187,6 +187,8 @@ class BackgroundAnalysisService:
                     item.title,
                 )
             )
+        prepared = None
+        execution = None
         try:
             mode = (
                 SummaryMode.QUICK
@@ -219,6 +221,25 @@ class BackgroundAnalysisService:
             )
         except Exception as exc:
             message = _safe_error(exc)
+            if prepared is not None and execution is None:
+                save_failure = getattr(
+                    self._workflow,
+                    "apply_analysis_failure",
+                    None,
+                )
+                if save_failure is not None:
+                    try:
+                        save_failure(
+                            Path(item.path),
+                            prepared,
+                            message,
+                            **_failure_diagnostics(exc),
+                        )
+                    except Exception as fallback_exc:
+                        message += (
+                            " / 정규식 추출본 저장 실패: "
+                            f"{_safe_error(fallback_exc)}"
+                        )
             try:
                 self._workflow.fail_analysis(item.queue_id, message)
             except Exception as queue_exc:
@@ -255,3 +276,33 @@ def _model_installed(status: OllamaRuntimeStatus, selected: str) -> bool:
 
 def _safe_error(exc: BaseException) -> str:
     return " ".join(str(exc).split())[:500] or exc.__class__.__name__
+
+
+def _failure_diagnostics(exc: BaseException) -> dict[str, object]:
+    """Return safe structured context without traceback, secrets or paper text."""
+
+    message = str(exc).casefold()
+    kind = str(getattr(exc, "failure_kind", "") or "")
+    if not kind:
+        if "json" in message:
+            kind = "json_validation"
+        elif "언어" in message or "language" in message:
+            kind = "language_validation"
+        elif "timeout" in message or "timed out" in message or "시간 초과" in message:
+            kind = "timeout"
+        elif "api 키" in message or "api key" in message or "auth" in message:
+            kind = "authentication"
+        elif "ollama" in message:
+            kind = "ollama_runtime"
+        else:
+            kind = "provider_or_application"
+    attempts = getattr(exc, "attempts", None)
+    return {
+        "error_type": exc.__class__.__name__,
+        "failure_kind": kind,
+        "request_attempts": (
+            attempts
+            if isinstance(attempts, int) and not isinstance(attempts, bool)
+            else None
+        ),
+    }
