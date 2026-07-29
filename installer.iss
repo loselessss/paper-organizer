@@ -1,5 +1,5 @@
 #define MyAppName "Paper Organizer"
-#define MyAppVersion "1.6.2"
+#define MyAppVersion "1.7.0"
 #define MyAppPublisher "SANGKYU SHIN, Ph.D."
 #define MyAppExeName "PaperOrganizer.exe"
 
