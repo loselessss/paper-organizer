@@ -218,6 +218,8 @@ class OllamaModelManagerTests(unittest.TestCase):
         entry = next(item for item in snapshot.entries if item.model_id == "gemma3:12b")
         self.assertTrue(entry.installed)
         self.assertFalse(entry.selectable)
+        self.assertIn("정밀 요약", entry.usage_guidance)
+
 
     def test_install_checks_disk_then_tracks_only_verified_model(self):
         with tempfile.TemporaryDirectory() as temp:

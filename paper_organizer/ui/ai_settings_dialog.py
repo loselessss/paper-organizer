@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.core.model_recommendation import model_usage_guidance
 from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
 
@@ -74,6 +75,12 @@ class AiSettingsDialog(QDialog):
         self.model_status = QLabel("")
         self.model_status.setWordWrap(True)
         self.model_status.setStyleSheet("color: #666;")
+        self.model_guidance = QLabel("")
+        self.model_guidance.setWordWrap(True)
+        self.model_guidance.setStyleSheet(
+            "background: #fff8e8; border: 1px solid #e2c98d; "
+            "border-radius: 4px; padding: 7px; color: #5f4200;"
+        )
         self.key_status = QLabel()
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.Password)
@@ -153,6 +160,7 @@ class AiSettingsDialog(QDialog):
         self.recommendation_status.setWordWrap(True)
         local_form.addRow("활성 모델", model_row)
         local_form.addRow("", self.model_status)
+        local_form.addRow("용도 / 주의", self.model_guidance)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
@@ -286,6 +294,7 @@ class AiSettingsDialog(QDialog):
             if line_edit is not None:
                 line_edit.setPlaceholderText("클라우드 모델 ID")
         self.model_combo.blockSignals(False)
+        self._update_model_guidance()
 
     def _reload_ollama_models(self) -> None:
         if self.provider_combo.currentData() != "ollama":
@@ -296,6 +305,7 @@ class AiSettingsDialog(QDialog):
         )
 
     def _model_changed(self) -> None:
+        self._update_model_guidance()
         if self.provider_combo.currentData() != "ollama":
             return
         model = self.model_combo.currentData()
@@ -307,6 +317,28 @@ class AiSettingsDialog(QDialog):
             QMessageBox.warning(self, "Ollama 모델 적용 실패", str(exc))
             return
         self.model_status.setText(f"{model} 적용 완료")
+
+    def _update_model_guidance(self) -> None:
+        provider = self.provider_combo.currentData()
+        if provider == "ollama":
+            model = str(self.model_combo.currentData() or "")
+            if not model:
+                self.model_guidance.setText(
+                    "설치된 모델을 선택하면 실사용 용도와 환각 주의사항을 표시합니다."
+                )
+                return
+            self.model_guidance.setText(
+                model_usage_guidance(model).display_text()
+            )
+            return
+        if provider in {"openai", "anthropic"}:
+            self.model_guidance.setText(
+                "클라우드 정밀 분석 · 모델별 품질과 비용은 제공자 정책에 따라 달라집니다.\n"
+                "논문 본문이 외부 서비스로 전송되며 API 키와 제공자 지출 한도를 "
+                "별도로 관리해야 합니다."
+            )
+            return
+        self.model_guidance.clear()
 
     def _current_model(self) -> str:
         if self.provider_combo.currentData() == "ollama":
@@ -424,10 +456,15 @@ class AiSettingsDialog(QDialog):
         for candidate in recommendation.candidates:
             installed = " · 설치됨" if candidate.installed else ""
             warning = f" · {' '.join(candidate.warnings)}" if candidate.warnings else ""
+            usage = model_usage_guidance(
+                candidate.spec.model_id,
+                candidate.spec.parameters_b,
+            )
             lines.append(
                 f"[{candidate.rating}] {candidate.spec.label} — 다운로드 "
                 f"{candidate.spec.download_gb:g}GB / 예상 실행 메모리 "
-                f"{candidate.spec.runtime_memory_gb:g}GB{installed}{warning}"
+                f"{candidate.spec.runtime_memory_gb:g}GB · {usage.role}, "
+                f"환각 위험 {usage.hallucination_risk}{installed}{warning}"
             )
         self.model_candidates.setPlainText("\n".join(lines))
 

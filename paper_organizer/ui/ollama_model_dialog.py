@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
+from paper_organizer.core.model_recommendation import model_usage_guidance
 from paper_organizer.infra.ollama_installer import (
     OLLAMA_DOWNLOAD_URL,
     ensure_runtime,
@@ -501,13 +502,15 @@ class OllamaModelDialog(QDialog):
             self.model_detail.setText(
                 f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
                 f"{entry.parameter_size or '파라미터 미상'} · "
-                f"{entry.quantization or '양자화 미상'}"
+                f"{entry.quantization or '양자화 미상'}\n"
+                f"{_entry_usage_text(entry)}"
             )
         else:
             required = (entry.estimated_download_gb or 0) * 1.5 + 2.0
             self.model_detail.setText(
                 f"예상 다운로드 {entry.estimated_download_gb:g}GB · "
-                f"안전 여유 필요 약 {required:.1f}GB"
+                f"안전 여유 필요 약 {required:.1f}GB\n"
+                f"{_entry_usage_text(entry)}"
             )
         self._select_installed_model(entry.model_id if entry and entry.installed else "")
         self._update_actions()
@@ -530,7 +533,8 @@ class OllamaModelDialog(QDialog):
         self.model_detail.setText(
             f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
             f"{entry.parameter_size or '파라미터 미상'} · "
-            f"{entry.quantization or '양자화 미상'}{selection}"
+            f"{entry.quantization or '양자화 미상'}{selection}\n"
+            f"{_entry_usage_text(entry)}"
         )
         self._update_actions()
 
@@ -737,3 +741,9 @@ def _download_detail(completed: int, total: int, speed_bps: float) -> str:
             eta = max(0, round((total - completed) / speed_bps))
             parts.append(f"약 {eta // 60}분 {eta % 60}초 남음")
     return f" · {' · '.join(parts)}" if parts else ""
+
+
+def _entry_usage_text(entry) -> str:
+    return entry.usage_guidance or model_usage_guidance(
+        entry.model_id
+    ).display_text()

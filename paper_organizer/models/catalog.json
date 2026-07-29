@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.07.28",
-  "verified_at": "2026-07-28",
+  "catalog_version": "2026.07.29",
+  "verified_at": "2026-07-29",
   "models": [
     {
       "id": "qwen3:0.6b",
@@ -25,6 +25,19 @@
       "recommended_ram_gb": 8.0,
       "tier": "ultralight",
       "quality": 2,
+      "license": "Apache-2.0",
+      "recommended_context": 8192
+    },
+    {
+      "id": "granite3.3:2b",
+      "label": "IBM Granite 3.3 2B",
+      "parameters_b": 2.0,
+      "download_gb": 1.5,
+      "runtime_memory_gb": 4.0,
+      "minimum_ram_gb": 6.0,
+      "recommended_ram_gb": 8.0,
+      "tier": "ultralight",
+      "quality": 1,
       "license": "Apache-2.0",
       "recommended_context": 8192
     },

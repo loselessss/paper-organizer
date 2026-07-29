@@ -42,6 +42,7 @@ git submodule update --init
 .\.venv\Scripts\python -m pip install -e ".[gui,build]"
 ollama pull qwen3:0.6b
 ollama pull qwen3:1.7b
+ollama pull granite3.3:2b
 ollama pull ministral-3:3b-instruct-2512-q4_K_M
 ollama pull phi4-mini
 ollama pull qwen3:4b

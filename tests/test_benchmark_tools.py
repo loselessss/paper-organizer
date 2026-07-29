@@ -50,6 +50,7 @@ class BenchmarkToolTests(unittest.TestCase):
         self.assertTrue(score["field_matches"]["authors"])
 
     def test_cross_family_candidates_are_in_default_model_matrix(self):
+        self.assertIn("granite3.3:2b", DEFAULT_MODELS)
         self.assertIn("phi4-mini", DEFAULT_MODELS)
         self.assertIn("gemma3:4b-it-qat", DEFAULT_MODELS)
         self.assertIn(

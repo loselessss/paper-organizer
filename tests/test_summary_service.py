@@ -357,6 +357,22 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(execution.result.data.contributions, ())
         self.assertEqual(execution.result.data.limitations, ())
 
+    def test_ollama_models_below_8b_keep_hierarchical_basic_analysis(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="custom-model:7b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "Introduction\n" + "Scientific introduction evidence. " * 30,
+                "Results\n" + "Measured result evidence. " * 30,
+            ],
+            settings,
+        )
+
+        self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
+
     def test_8b_ollama_model_uses_one_pass_and_keeps_advanced_fields(self):
         settings = AppSettings(
             summary_provider="ollama",

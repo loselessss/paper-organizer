@@ -87,6 +87,8 @@ class UiSmokeTests(unittest.TestCase):
                 ai_controller.settings().selected_model,
                 "qwen3:4b",
             )
+            self.assertIn("일반 요약", dialog.model_guidance.text())
+            self.assertIn("기여·한계 미지원", dialog.model_guidance.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
                 dialog.manage_models_button.text(),
@@ -344,6 +346,7 @@ class UiSmokeTests(unittest.TestCase):
             dialog._apply_snapshot(snapshot)
 
             self.assertEqual(dialog.model_combo.currentData(), "qwen3:8b")
+            self.assertIn("정밀 요약", dialog.model_detail.text())
             self.assertEqual(dialog.model_combo.findData("gemma3:12b"), -1)
             installed_text = "\n".join(
                 dialog.installed_models.item(row).text()
@@ -353,6 +356,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.install_button.text(), "다운로드 후 선택")
             dialog.installed_models.setCurrentRow(0)
             self.assertEqual(dialog.model_combo.currentData(), "qwen3:4b")
+            self.assertIn("일반 요약", dialog.model_detail.text())
             self.assertTrue(dialog.delete_button.isEnabled())
             dialog.installed_models.setCurrentRow(1)
             self.assertTrue(dialog.delete_button.isEnabled())

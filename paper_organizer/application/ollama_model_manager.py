@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
-from paper_organizer.core.model_recommendation import ModelSpec, load_model_catalog
+from paper_organizer.core.model_recommendation import (
+    ModelSpec,
+    load_model_catalog,
+    model_usage_guidance,
+)
 from paper_organizer.infra.hardware import HardwareInspector
 from paper_organizer.infra.ollama_models import (
     OllamaModelClient,
@@ -37,6 +41,7 @@ class OllamaModelEntry:
     quantization: str
     managed_by_app: bool
     selectable: bool = True
+    usage_guidance: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +116,10 @@ class OllamaModelManagerService:
                     quantization=actual.quantization,
                     managed_by_app=key in managed,
                     selectable=_installed_model_is_selectable(actual),
+                    usage_guidance=model_usage_guidance(
+                        actual.name,
+                        _installed_parameters_b(actual),
+                    ).display_text(),
                 )
             )
         return OllamaModelSnapshot(
@@ -263,6 +272,10 @@ def _entry_from_spec(
         parameter_size=actual.parameter_size if actual is not None else "",
         quantization=actual.quantization if actual is not None else "",
         managed_by_app=managed,
+        usage_guidance=model_usage_guidance(
+            spec.model_id,
+            spec.parameters_b,
+        ).display_text(),
     )
 
 
@@ -277,3 +290,9 @@ def _installed_model_is_selectable(model: InstalledOllamaModel) -> bool:
     description = f"{model.parameter_size} {model.name}".casefold()
     match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", description)
     return match is None or float(match.group(1)) < 12
+
+
+def _installed_parameters_b(model: InstalledOllamaModel) -> float | None:
+    description = f"{model.parameter_size} {model.name}".casefold()
+    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", description)
+    return float(match.group(1)) if match else None

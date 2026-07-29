@@ -6,6 +6,7 @@ from pathlib import Path
 from paper_organizer.application.local_ai import LocalAiAssessmentService
 from paper_organizer.core.model_recommendation import (
     load_model_catalog,
+    model_usage_guidance,
     recommend_models,
 )
 from paper_organizer.infra.hardware import GpuInfo, HardwareInspector, HardwareProfile
@@ -64,11 +65,28 @@ class FakeOllamaInspector:
 
 
 class LocalAiTests(unittest.TestCase):
+    def test_model_guidance_explains_safe_roles_by_parameter_class(self):
+        benchmark = model_usage_guidance("qwen3:0.6b")
+        low_spec = model_usage_guidance("qwen3:1.7b")
+        standard = model_usage_guidance("qwen3:4b")
+        advanced = model_usage_guidance("qwen3:8b")
+
+        self.assertEqual(benchmark.role, "벤치마크·분류 보조")
+        self.assertEqual(benchmark.hallucination_risk, "매우 높음")
+        self.assertEqual(low_spec.role, "저사양 안전 요약")
+        self.assertFalse(low_spec.advanced_analysis)
+        self.assertEqual(standard.summary_strategy, "구역별 요약 후 통합")
+        self.assertFalse(standard.advanced_analysis)
+        self.assertTrue(advanced.advanced_analysis)
+        self.assertIn("충분한 RAM", advanced.caution)
+
     def test_cross_family_benchmark_models_are_in_catalog(self):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.07.28")
+        self.assertEqual(version, "2026.07.29")
+        self.assertEqual(models["granite3.3:2b"].parameters_b, 2.0)
+        self.assertEqual(models["granite3.3:2b"].download_gb, 1.5)
         self.assertEqual(models["phi4-mini"].parameters_b, 3.84)
         self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 4.0)
         self.assertEqual(
@@ -177,7 +195,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "qwen3:8b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.28")
+            self.assertEqual(saved.model_catalog_version, "2026.07.29")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

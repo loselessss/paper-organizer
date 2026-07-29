@@ -40,6 +40,7 @@ except ImportError:
 DEFAULT_MODELS = (
     "qwen3:0.6b",
     "qwen3:1.7b",
+    "granite3.3:2b",
     "ministral-3:3b-instruct-2512-q4_K_M",
     "phi4-mini",
     "qwen3:4b",

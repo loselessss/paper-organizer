@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,23 @@ class ModelRecommendation:
     profile: str
     recommended: ModelCandidate | None
     candidates: tuple[ModelCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUsageGuidance:
+    role: str
+    hallucination_risk: str
+    summary_strategy: str
+    advanced_analysis: bool
+    caution: str
+
+    def display_text(self) -> str:
+        advanced = "기여·한계 지원" if self.advanced_analysis else "기여·한계 미지원"
+        return (
+            f"{self.role} · 환각 위험 {self.hallucination_risk}\n"
+            f"{self.summary_strategy} · {advanced}\n"
+            f"{self.caution}"
+        )
 
 
 def default_catalog_path() -> Path:
@@ -92,6 +110,84 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
         seen.add(spec.model_id)
         models.append(spec)
     return version, tuple(sorted(models, key=lambda item: item.parameters_b))
+
+
+def model_usage_guidance(
+    model_id: str,
+    parameters_b: float | None = None,
+    *,
+    catalog_path: Path | None = None,
+) -> ModelUsageGuidance:
+    """Describe the safe product role of a local model without running it."""
+
+    parameters = parameters_b if parameters_b and parameters_b > 0 else None
+    if parameters is None:
+        key = model_id.strip().casefold().removesuffix(":latest")
+        try:
+            _, specs = load_model_catalog(catalog_path)
+            spec = next(
+                (
+                    item
+                    for item in specs
+                    if item.model_id.casefold().removesuffix(":latest") == key
+                ),
+                None,
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            spec = None
+        if spec is not None:
+            parameters = spec.parameters_b
+        else:
+            match = re.search(
+                r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)",
+                model_id.casefold(),
+            )
+            parameters = float(match.group(1)) if match else None
+    if parameters is None:
+        return ModelUsageGuidance(
+            role="직접 선택 모델",
+            hallucination_risk="미확인",
+            summary_strategy="모델 크기와 검증 결과를 확인한 뒤 사용",
+            advanced_analysis=False,
+            caution="카탈로그 밖 모델은 사양과 요약 안전성을 자동 보증하지 않습니다.",
+        )
+    if parameters <= 0.8:
+        return ModelUsageGuidance(
+            role="벤치마크·분류 보조",
+            hallucination_risk="매우 높음",
+            summary_strategy="실사용 논문 요약 비권장",
+            advanced_analysis=False,
+            caution="JSON·사실 보존 비교용입니다. 중요한 논문 요약에는 사용하지 마세요.",
+        )
+    if parameters < 3:
+        return ModelUsageGuidance(
+            role="저사양 안전 요약",
+            hallucination_risk="높음",
+            summary_strategy="짧은 구역별 요약 후 축소 통합",
+            advanced_analysis=False,
+            caution=(
+                "정보 누락을 허용하는 대신 결과 확인이 필요합니다. "
+                "최종 실패 시 Abstract·정규식 추출본만 표시합니다."
+            ),
+        )
+    if parameters < 8:
+        return ModelUsageGuidance(
+            role="일반 요약",
+            hallucination_risk="주의 필요",
+            summary_strategy="구역별 요약 후 통합",
+            advanced_analysis=False,
+            caution=(
+                "일반 요약용 최소 권장 등급입니다. 수치·고유명사와 부정 표현은 "
+                "원문 대조가 필요합니다."
+            ),
+        )
+    return ModelUsageGuidance(
+        role="정밀 요약",
+        hallucination_risk="상대적으로 낮지만 검증 필요",
+        summary_strategy="정리된 전체 구역 직접 분석",
+        advanced_analysis=True,
+        caution="핵심 기여·한계를 포함합니다. 충분한 RAM과 긴 처리 시간을 요구합니다.",
+    )
 
 
 def recommend_models(

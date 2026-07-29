@@ -903,7 +903,7 @@ def ollama_model_supports_ocr(model: str) -> bool:
 
 def _uses_hierarchical_summary(settings: AppSettings, model: str) -> bool:
     parameters = _model_parameters(model)
-    return settings.summary_provider == "ollama" and 0 < parameters <= 4.0
+    return settings.summary_provider == "ollama" and 0 < parameters < 8.0
 
 
 def _adaptive_context_window(
