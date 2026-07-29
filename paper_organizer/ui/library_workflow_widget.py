@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 
@@ -45,6 +46,11 @@ from paper_organizer.application.background_analysis import (
     BackgroundAnalysisService,
 )
 from paper_organizer.application.conversational_search import requires_ai_search
+from paper_organizer.application.library_translation import (
+    LibraryTranslation,
+    LibraryTranslationService,
+    analysis_translation_source_hash,
+)
 from paper_organizer.integrations.spdf_bridge import open_pdf
 
 
@@ -74,6 +80,35 @@ def _analysis_version_label(record: dict) -> str:
     suffix = prompt_version.split(marker, 1)[1]
     number = suffix.split("-", 1)[0]
     return f"요약 v{number}" if number.isdigit() else ""
+
+
+def _format_library_timestamp(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return text
+
+
+def _analysis_failed(record: dict) -> bool:
+    workflow = record.get("workflow")
+    workflow = workflow if isinstance(workflow, dict) else {}
+    analysis = record.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    last_attempt = analysis.get("last_attempt")
+    return bool(
+        workflow.get("analysis_status") == "failed"
+        or analysis.get("status") == "failed"
+        or (
+            isinstance(last_attempt, dict)
+            and last_attempt.get("status") == "failed"
+        )
+    )
 
 
 class _ReviewQueueTable(QTableWidget):
@@ -1293,14 +1328,46 @@ class AnalysisQueueWidget(QWidget):
         worker.wait(2000)
 
 
+class _LibraryTranslationWorker(QThread):
+    completed = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
+
+    def __init__(
+        self,
+        service: LibraryTranslationService,
+        entry: LibraryEntry,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._entry = entry
+
+    def run(self) -> None:
+        path = str(self._entry.sidecar_path.resolve())
+        try:
+            self.completed.emit(path, self._service.translate(self._entry))
+        except Exception as exc:
+            self.failed.emit(path, str(exc))
+
+
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
     natural_search_requested = pyqtSignal(str)
 
-    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+    def __init__(
+        self,
+        controller: LibraryWorkflowController,
+        parent=None,
+        *,
+        translation_service: LibraryTranslationService | None = None,
+    ) -> None:
         super().__init__(parent)
         self._controller = controller
+        self._translation_service = translation_service
+        self._translation_worker: _LibraryTranslationWorker | None = None
+        self._translation_path = ""
+        self._translation_cache: dict[str, LibraryTranslation] = {}
         self._entries: list[LibraryEntry] = []
         root = QVBoxLayout(self)
         search_row = QHBoxLayout()
@@ -1316,9 +1383,18 @@ class LibraryWidget(QWidget):
         search_row.addWidget(self.search_edit, 1)
         search_row.addWidget(refresh_button)
         root.addLayout(search_row)
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["제목", "유형/출처", "저자/발명자", "연도", "분야", "분석 상태"]
+            [
+                "제목",
+                "유형/출처",
+                "저자/발명자",
+                "연도",
+                "분야",
+                "PaperPack 등록 시간",
+                "분석일",
+                "분석 상태",
+            ]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -1339,9 +1415,17 @@ class LibraryWidget(QWidget):
         detail_layout.addWidget(self.form)
         edit_actions = QHBoxLayout()
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
+        self.translation_button = QPushButton("AI 번역")
+        self.translation_button.setCheckable(True)
+        self.translation_button.setToolTip(
+            "현재 AI 분석을 한국어로 번역합니다. 원문 색인은 바꾸지 않고 "
+            "번역 보기와 원문 보기를 전환합니다."
+        )
+        self.translation_button.toggled.connect(self._translation_toggled)
         self.save_button.clicked.connect(self._save_selected)
         self.save_button.setEnabled(False)
         edit_actions.addStretch(1)
+        edit_actions.addWidget(self.translation_button)
         edit_actions.addWidget(self.save_button)
         detail_layout.addLayout(edit_actions)
         analysis_group = QGroupBox("AI 분석 내용")
@@ -1477,6 +1561,8 @@ class LibraryWidget(QWidget):
                 ", ".join(metadata.authors),
                 str(metadata.year or ""),
                 f"{metadata.category} / {metadata.subcategory}",
+                _format_library_timestamp(entry.paperpack_created_at),
+                _format_library_timestamp(entry.analysis_completed_at),
                 analysis_status,
             ]
             for column, value in enumerate(values):
@@ -1542,6 +1628,27 @@ class LibraryWidget(QWidget):
     def _selection_changed(self) -> None:
         entries = self._selected_entries()
         entry = entries[0] if len(entries) == 1 else None
+        selected_path = str(entry.sidecar_path.resolve()) if entry else ""
+        if selected_path != self._translation_path:
+            self._translation_path = selected_path
+            self.translation_button.blockSignals(True)
+            self.translation_button.setChecked(False)
+            self.translation_button.blockSignals(False)
+        if entry is not None and self._translation_service is not None:
+            cached = self._translation_cache.get(selected_path)
+            if (
+                cached is None
+                or cached.source_hash
+                != analysis_translation_source_hash(entry.record)
+            ):
+                self._translation_cache.pop(selected_path, None)
+                cached = self._translation_service.cached(entry)
+            if cached is not None:
+                self._translation_cache[selected_path] = cached
+            elif self.translation_button.isChecked():
+                self.translation_button.blockSignals(True)
+                self.translation_button.setChecked(False)
+                self.translation_button.blockSignals(False)
         self.form.set_metadata(entry.metadata if entry else None)
         self.form.setEnabled(entry is not None)
         self.save_button.setEnabled(entry is not None)
@@ -1568,8 +1675,91 @@ class LibraryWidget(QWidget):
             if suggestion
             else "AI 추천 연구분야 없음"
         )
+        self._update_translation_button(entry)
         self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entries)
+
+    def _update_translation_button(self, entry: LibraryEntry | None) -> None:
+        worker_running = bool(
+            self._translation_worker is not None
+            and self._translation_worker.isRunning()
+        )
+        can_translate = bool(
+            entry is not None
+            and self._translation_service is not None
+            and self._translation_service.has_source(entry)
+            and not _analysis_failed(entry.record)
+        )
+        self.translation_button.setEnabled(can_translate and not worker_running)
+        if worker_running:
+            self.translation_button.setText("AI 번역 중…")
+        elif self.translation_button.isChecked():
+            self.translation_button.setText("원문 보기")
+        elif entry is not None and str(entry.sidecar_path.resolve()) in self._translation_cache:
+            self.translation_button.setText("AI 번역 보기")
+        else:
+            self.translation_button.setText("AI 번역")
+
+    def _translation_toggled(self, checked: bool) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        path = str(entry.sidecar_path.resolve())
+        cached = self._translation_cache.get(path)
+        if checked and cached is None:
+            service = self._translation_service
+            if service is None:
+                self.translation_button.setChecked(False)
+                return
+            worker = _LibraryTranslationWorker(service, entry, self)
+            worker.completed.connect(self._translation_completed)
+            worker.failed.connect(self._translation_failed)
+            worker.finished.connect(self._translation_worker_finished)
+            self._translation_worker = worker
+            self._update_translation_button(entry)
+            worker.start()
+            return
+        self._update_translation_button(entry)
+        self._render_analysis(entry)
+
+    def _translation_completed(
+        self,
+        path: str,
+        translation: LibraryTranslation,
+    ) -> None:
+        self._translation_cache[path] = translation
+        entry = self._selected()
+        if entry is None or str(entry.sidecar_path.resolve()) != path:
+            return
+        self.translation_button.blockSignals(True)
+        self.translation_button.setChecked(True)
+        self.translation_button.blockSignals(False)
+        self._update_translation_button(entry)
+        self._render_analysis(entry)
+        self.metadata_changed.emit()
+
+    def _translation_failed(self, path: str, message: str) -> None:
+        entry = self._selected()
+        if entry is not None and str(entry.sidecar_path.resolve()) == path:
+            self.translation_button.blockSignals(True)
+            self.translation_button.setChecked(False)
+            self.translation_button.blockSignals(False)
+            self._update_translation_button(entry)
+            self._render_analysis(entry)
+        QMessageBox.warning(self, "AI 번역 실패", message)
+
+    def _translation_worker_finished(self) -> None:
+        worker = self._translation_worker
+        self._translation_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._update_translation_button(self._selected())
+
+    def is_translation_busy(self) -> bool:
+        return bool(
+            self._translation_worker is not None
+            and self._translation_worker.isRunning()
+        )
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
@@ -1577,6 +1767,26 @@ class LibraryWidget(QWidget):
             self.analysis_view.setHtml(
                 "<p style='color:#777'>왼쪽 목록에서 문서를 선택하면 "
                 "AI 분석 내용이 표시됩니다.</p>"
+            )
+            return
+        path = str(entry.sidecar_path.resolve())
+        translation = self._translation_cache.get(path)
+        if self.translation_button.isChecked() and translation is not None:
+            provenance = " / ".join(
+                value for value in (translation.provider, translation.model) if value
+            )
+            provenance = (
+                f"<p style='color:#777'>AI 번역 · {html.escape(provenance)}"
+                f" · {html.escape(_format_library_timestamp(translation.translated_at))}</p>"
+                if provenance
+                else "<p style='color:#777'>AI 번역</p>"
+            )
+            translated = html.escape(translation.text).replace("\n", "<br>")
+            self.analysis_view.setHtml(
+                provenance
+                + "<div style='white-space:pre-wrap; line-height:1.45'>"
+                + translated
+                + "</div>"
             )
             return
         description = entry.record.get("description", {})

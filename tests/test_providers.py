@@ -183,6 +183,69 @@ class ProviderTests(unittest.TestCase):
                 self.assertEqual(result.data.summary, section)
                 self.assertEqual(result.data.methods, ())
 
+    def test_translation_uses_plain_text_for_every_provider(self):
+        translated = "[요약]\n이 연구는 정확도를 개선했습니다."
+        cases = (
+            (
+                OpenAIProvider,
+                FakeHttpClient(
+                    {
+                        "output": [{
+                            "type": "message",
+                            "content": [{
+                                "type": "output_text",
+                                "text": translated,
+                            }],
+                        }]
+                    }
+                ),
+                "openai",
+            ),
+            (
+                AnthropicProvider,
+                FakeHttpClient(
+                    {"content": [{"type": "text", "text": translated}]}
+                ),
+                "anthropic",
+            ),
+            (
+                OllamaProvider,
+                FakeHttpClient({"message": {"content": translated}}),
+                "ollama",
+            ),
+        )
+        for provider_class, client, provider_name in cases:
+            with self.subTest(provider=provider_name):
+                provider = (
+                    provider_class("secret", http_client=client)
+                    if provider_name != "ollama"
+                    else provider_class("qwen3:4b", http_client=client)
+                )
+                result = provider.summarize(
+                    SummaryRequest(
+                        "[요약]\nThis study improved accuracy.",
+                        cloud_consent=provider_name != "ollama",
+                        stage="translation",
+                        output_language="ko",
+                        advanced_analysis=False,
+                    )
+                )
+                payload = client.calls[0]["payload"]
+                if provider_name == "openai":
+                    self.assertNotIn("text", payload)
+                elif provider_name == "anthropic":
+                    self.assertNotIn("output_config", payload)
+                else:
+                    self.assertNotIn("format", payload)
+                self.assertIn("translation, not summarization", (
+                    payload["instructions"]
+                    if provider_name == "openai"
+                    else payload["system"]
+                    if provider_name == "anthropic"
+                    else payload["messages"][0]["content"]
+                ))
+                self.assertEqual(result.data.summary, translated)
+
     def test_bibliography_uses_dedicated_small_schema_for_every_provider(self):
         encoded = json.dumps(BIBLIOGRAPHY)
         cases = (

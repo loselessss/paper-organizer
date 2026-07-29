@@ -13,6 +13,9 @@ from paper_organizer.application.library_workflow import (
     LibraryWorkflowController,
     default_input_dir,
 )
+from paper_organizer.application.library_translation import (
+    analysis_translation_source_hash,
+)
 from paper_organizer.infra.settings import load_settings, save_settings
 from paper_organizer.models.paper import DuplicateKind
 from paper_organizer.core.paperpack import (
@@ -245,6 +248,49 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(index["work_count"], 1)
             self.assertEqual(index["works"][0]["venue"], "Nature Methods")
             self.assertEqual(len(controller.list_library("nature methods")), 1)
+            entry = controller.list_library()[0]
+            self.assertEqual(
+                entry.paperpack_created_at,
+                inspect_paperpack(organized.sidecar_path).created_at,
+            )
+            self.assertEqual(entry.analysis_completed_at, "")
+            record = load_paperpack_metadata(organized.sidecar_path)
+            record["analysis"] = {
+                "status": "completed",
+                "completed_at": "2026-07-30T01:02:03+00:00",
+            }
+            record.setdefault("workflow", {})["analysis_status"] = "completed"
+            update_paperpack(
+                organized.sidecar_path,
+                record,
+                changed_by="test",
+            )
+            controller.invalidate_library_cache()
+            analyzed = controller.list_library()[0]
+            self.assertEqual(
+                analyzed.analysis_completed_at,
+                "2026-07-30T01:02:03+00:00",
+            )
+            translated_at = controller.save_analysis_translation(
+                analyzed,
+                expected_source_hash=analysis_translation_source_hash(
+                    analyzed.record
+                ),
+                text="[요약]\n번역된 분석",
+                provider="ollama",
+                model="qwen3:4b",
+                prompt_version="paper-analysis-translation-v1",
+            )
+            translated_record = load_paperpack_metadata(
+                organized.sidecar_path
+            )
+            cached_translation = translated_record["translations"]["analysis"]["ko"]
+            self.assertEqual(cached_translation["text"], "[요약]\n번역된 분석")
+            self.assertEqual(cached_translation["translated_at"], translated_at)
+            self.assertEqual(
+                translated_record["description"]["summary"],
+                "사용자가 검토한 설명",
+            )
 
     def test_library_metadata_is_editable_with_history_and_reindex(self):
         with tempfile.TemporaryDirectory() as temp:

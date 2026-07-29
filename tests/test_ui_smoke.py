@@ -43,7 +43,7 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
-        from PyQt5.QtWidgets import QAction, QMessageBox
+        from PyQt5.QtWidgets import QAction, QBoxLayout, QMessageBox
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -102,7 +102,20 @@ class UiSmokeTests(unittest.TestCase):
                 dialog.local_model_group.title(),
                 "모델 선택·Ollama 설치 및 삭제",
             )
-            self.assertGreaterEqual(dialog.minimumWidth(), 980)
+            self.assertLessEqual(dialog.minimumWidth(), 620)
+            self.assertTrue(dialog.scroll_area.widgetResizable())
+            dialog.resize(800, 700)
+            dialog._update_responsive_layout()
+            self.assertEqual(
+                dialog.engine_columns.direction(),
+                QBoxLayout.TopToBottom,
+            )
+            dialog.resize(1120, 700)
+            dialog._update_responsive_layout()
+            self.assertEqual(
+                dialog.engine_columns.direction(),
+                QBoxLayout.LeftToRight,
+            )
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
@@ -894,6 +907,9 @@ class UiSmokeTests(unittest.TestCase):
             EditablePaperMetadata,
             LibraryEntry,
         )
+        from paper_organizer.application.library_translation import (
+            LibraryTranslation,
+        )
         from paper_organizer.ui.library_workflow_widget import (
             LibraryWidget,
             _analysis_version_label,
@@ -908,6 +924,8 @@ class UiSmokeTests(unittest.TestCase):
                 metadata=EditablePaperMetadata(title="Original English Title"),
                 work_id="work:test",
                 source_variant="publisher",
+                paperpack_created_at="2026-07-27T11:30:00",
+                analysis_completed_at="2026-07-28T12:00:00",
                 record={
                     "description": {"summary": "분석 요약"},
                     "analysis": {
@@ -962,8 +980,32 @@ class UiSmokeTests(unittest.TestCase):
                     self.deleted.extend(entries)
                     return mock.Mock(deleted=len(entries), problems=())
 
+            class FakeTranslationService:
+                def has_source(self, value):
+                    return value is entry
+
+                def cached(self, value):
+                    if value is not entry:
+                        return None
+                    return LibraryTranslation(
+                        text="[요약]\n한국어 번역 요약",
+                        source_hash="source-hash",
+                        provider="ollama",
+                        model="qwen3:4b",
+                        translated_at="2026-07-29T12:00:00",
+                    )
+
             controller = FakeLibraryController()
-            widget = LibraryWidget(controller)
+            translation_service = FakeTranslationService()
+            with mock.patch(
+                "paper_organizer.ui.library_workflow_widget."
+                "analysis_translation_source_hash",
+                return_value="source-hash",
+            ):
+                widget = LibraryWidget(
+                    controller,
+                    translation_service=translation_service,
+                )
             self.assertEqual(
                 widget.table.selectionMode(),
                 QAbstractItemView.ExtendedSelection,
@@ -983,8 +1025,26 @@ class UiSmokeTests(unittest.TestCase):
             widget._submit_search()
             self.assertEqual(controller.search_queries, ["thermostable enzyme"])
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            self.assertEqual(widget.translation_button.text(), "AI 번역 보기")
+            self.assertTrue(widget.translation_button.isEnabled())
+            widget.translation_button.click()
+            self.assertEqual(widget.translation_button.text(), "원문 보기")
+            self.assertIn("한국어 번역 요약", widget.analysis_view.toPlainText())
+            self.assertNotIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.translation_button.click()
+            self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            self.assertEqual(widget.table.columnCount(), 8)
             self.assertEqual(
-                widget.table.item(0, 5).text(),
+                [
+                    widget.table.horizontalHeaderItem(column).text()
+                    for column in (5, 6, 7)
+                ],
+                ["PaperPack 등록 시간", "분석일", "분석 상태"],
+            )
+            self.assertEqual(widget.table.item(0, 5).text(), "2026-07-27 11:30")
+            self.assertEqual(widget.table.item(0, 6).text(), "2026-07-28 12:00")
+            self.assertEqual(
+                widget.table.item(0, 7).text(),
                 "분석 완료 (v1.4.1)",
             )
             self.assertIn("앱 v1.4.1", widget.analysis_view.toPlainText())
@@ -1025,7 +1085,7 @@ class UiSmokeTests(unittest.TestCase):
             }
             widget.refresh(True)
             failed_text = widget.analysis_view.toPlainText()
-            self.assertEqual(widget.table.item(0, 5).text(), "분석 실패")
+            self.assertEqual(widget.table.item(0, 7).text(), "분석 실패")
             self.assertIn("AI 요약 실패", failed_text)
             self.assertIn("정규식 추출 Abstract", failed_text)
             self.assertIn("Original abstract fallback.", failed_text)

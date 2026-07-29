@@ -68,7 +68,7 @@ class OllamaProvider:
             "options": options,
         }
         self._apply_keep_alive(payload)
-        if request.stage != "section":
+        if request.stage not in {"section", "translation"}:
             payload["format"] = summary_response_schema(request)
         response = self._http.post_json(
             self._endpoint,
@@ -85,7 +85,7 @@ class OllamaProvider:
             prompt_version=request.prompt_version,
             data=(
                 SummaryData.from_section_text(message["content"])
-                if request.stage == "section"
+                if request.stage in {"section", "translation"}
                 else parse_summary_json(
                     message["content"],
                     advanced_analysis=request.advanced_analysis,

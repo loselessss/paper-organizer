@@ -6,8 +6,20 @@ import sys
 
 
 def main() -> int:
-    from PyQt5.QtCore import QTimer
+    from PyQt5.QtCore import Qt, QTimer
     from PyQt5.QtWidgets import QApplication, QDialog
+
+    if QApplication.instance() is None:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        rounding = getattr(Qt, "HighDpiScaleFactorRoundingPolicy", None)
+        if (
+            rounding is not None
+            and hasattr(QApplication, "setHighDpiScaleFactorRoundingPolicy")
+        ):
+            QApplication.setHighDpiScaleFactorRoundingPolicy(
+                rounding.PassThrough
+            )
 
     from paper_organizer import __version__
     from paper_organizer.application.ai_settings import AiSettingsController
@@ -17,6 +29,9 @@ def main() -> int:
     )
     from paper_organizer.application.lifecycle import LifecycleSettingsController
     from paper_organizer.application.library_workflow import LibraryWorkflowController
+    from paper_organizer.application.library_translation import (
+        LibraryTranslationService,
+    )
     from paper_organizer.application.summary_service import SummaryController
     from paper_organizer.application.update_service import GitHubUpdateService
     from paper_organizer.infra.secrets import default_secret_store
@@ -55,6 +70,10 @@ def main() -> int:
         workflow,
         secret_store,
     )
+    library_translation = LibraryTranslationService(
+        workflow,
+        secret_store,
+    )
     splash = create_splash()
     splash.show()
     app.processEvents()
@@ -78,6 +97,7 @@ def main() -> int:
             lifecycle=lifecycle,
             background_analysis=background_analysis,
             conversational_search=conversational_search,
+            library_translation=library_translation,
         )
         if snapshot is not None:
             window.statusBar().showMessage(

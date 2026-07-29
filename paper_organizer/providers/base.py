@@ -202,8 +202,10 @@ class SummaryRequest:
             raise ValueError("context_window must be between 4096 and 262144")
         if self.output_language not in {"ko", "source"}:
             raise ValueError("output_language must be ko or source")
-        if self.stage not in {"direct", "section", "synthesis"}:
-            raise ValueError("stage must be direct, section or synthesis")
+        if self.stage not in {"direct", "section", "synthesis", "translation"}:
+            raise ValueError(
+                "stage must be direct, section, synthesis or translation"
+            )
         if not isinstance(self.json_retry, bool):
             raise ValueError("json_retry must be a boolean")
         if not isinstance(self.json_repair, bool):
@@ -403,6 +405,23 @@ class SearchAnswerResult:
 
 def system_instructions(request: SummaryRequest) -> str:
     """Append the caller's category list so the model picks from it."""
+
+    if request.stage == "translation":
+        retry = (
+            " The previous response did not contain a Korean translation. Translate "
+            "the complete input again and obey every rule below."
+            if request.language_retry
+            else ""
+        )
+        return (
+            "Translate the supplied academic analysis text into natural Korean. "
+            "This is translation, not summarization: do not add, omit, infer, explain, "
+            "or correct claims. Preserve every bracketed section heading, paragraph "
+            "boundary, number, unit, negation, gene/protein name, cell line, culture "
+            "medium, reagent, instrument model, acronym, and citation exactly where "
+            "precision requires the source form. Return plain text only, with no JSON, "
+            f"markdown fence, preface, or afterword.{retry}"
+        )
 
     if request.stage == "section":
         language = (

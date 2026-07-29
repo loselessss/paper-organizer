@@ -200,6 +200,8 @@ class LibraryEntry:
     work_id: str
     source_variant: str
     record: dict[str, Any] = field(repr=False, compare=False)
+    paperpack_created_at: str = ""
+    analysis_completed_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -910,6 +912,29 @@ def _library_references(root: Path) -> Iterable[tuple[dict[str, Any], Path, Path
             PaperPackError,
         ):
             continue
+
+
+def _library_entry_timestamps(
+    record: dict[str, Any],
+    sidecar: Path,
+) -> tuple[str, str]:
+    workflow = record.get("workflow")
+    workflow = workflow if isinstance(workflow, dict) else {}
+    created_at = str(workflow.get("processed_at") or "")
+    if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+        try:
+            created_at = inspect_paperpack(sidecar).created_at or created_at
+        except (OSError, PaperPackError):
+            pass
+    analysis = record.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    completed_at = str(analysis.get("completed_at") or "")
+    if not completed_at and (
+        analysis.get("status") == "completed"
+        or workflow.get("analysis_status") == "completed"
+    ):
+        completed_at = str(workflow.get("updated_at") or "")
+    return created_at, completed_at
 
 
 def _best_duplicate(
@@ -2307,6 +2332,10 @@ class LibraryWorkflowController:
             entries: list[LibraryEntry] = []
             if root.is_dir():
                 for record, pdf_path, sidecar, identity in _library_references(root):
+                    created_at, analyzed_at = _library_entry_timestamps(
+                        record,
+                        sidecar,
+                    )
                     entries.append(
                         LibraryEntry(
                             pdf_path=pdf_path,
@@ -2315,6 +2344,8 @@ class LibraryWorkflowController:
                             work_id=identity.work_id,
                             source_variant=identity.source_variant,
                             record=record,
+                            paperpack_created_at=created_at,
+                            analysis_completed_at=analyzed_at,
                         )
                     )
             self._library_cache = sorted(
@@ -2688,7 +2719,82 @@ class LibraryWorkflowController:
             work_id=entry.work_id,
             source_variant=entry.source_variant,
             record=current,
+            paperpack_created_at=entry.paperpack_created_at,
+            analysis_completed_at=entry.analysis_completed_at,
         )
+
+    def save_analysis_translation(
+        self,
+        entry: LibraryEntry,
+        *,
+        expected_source_hash: str,
+        text: str,
+        provider: str,
+        model: str,
+        prompt_version: str,
+    ) -> str:
+        """Store an AI translation beside, never over, the canonical analysis."""
+
+        from paper_organizer.application.library_translation import (
+            analysis_translation_source_hash,
+        )
+
+        _input_dir, root = self.configured_paths()
+        sidecar = entry.sidecar_path.expanduser().resolve()
+        papers_root = (root / "papers").resolve()
+        is_paperpack = sidecar.suffix.casefold() == PAPERPACK_SUFFIX
+        is_legacy_sidecar = sidecar.name.endswith(SIDECAR_SUFFIX)
+        if not _inside(papers_root, sidecar) or not (
+            is_paperpack or is_legacy_sidecar
+        ):
+            raise LibraryWorkflowError(
+                "라이브러리 안의 PaperPack 분석만 번역할 수 있습니다."
+            )
+        current = load_record(sidecar)
+        if analysis_translation_source_hash(current) != expected_source_hash:
+            raise LibraryWorkflowError(
+                "번역 중 분석 내용이 변경되었습니다. 새 내용을 다시 번역하세요."
+            )
+        translated = text.strip()
+        if not translated:
+            raise LibraryWorkflowError("빈 AI 번역문은 저장할 수 없습니다.")
+        now = _now_iso()
+        translations = current.setdefault("translations", {})
+        if not isinstance(translations, dict):
+            translations = {}
+            current["translations"] = translations
+        translation_group = translations.setdefault("analysis", {})
+        if not isinstance(translation_group, dict):
+            translation_group = {}
+            translations["analysis"] = translation_group
+        translation_group["ko"] = {
+            "text": translated,
+            "source_hash": expected_source_hash,
+            "provider": provider.strip(),
+            "model": model.strip(),
+            "prompt_version": prompt_version.strip(),
+            "translated_at": now,
+        }
+        curation = current.setdefault("curation", {})
+        curation["revision"] = int(curation.get("revision", 0)) + 1
+        curation["last_edited_at"] = now
+        curation["last_edited_by"] = f"ai:{provider}:translation"
+        current.setdefault("workflow", {})["updated_at"] = now
+        try:
+            if is_paperpack:
+                update_paperpack(
+                    sidecar,
+                    current,
+                    changed_by=f"ai:{provider}:translation",
+                )
+            else:
+                _atomic_json_write(sidecar, current)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"AI 번역문을 저장하지 못했습니다: {exc}"
+            ) from None
+        self._library_cache = None
+        return now
 
 
 def _validate_metadata(metadata: EditablePaperMetadata) -> None:

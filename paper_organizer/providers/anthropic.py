@@ -66,7 +66,7 @@ class AnthropicProvider:
             "system": system_instructions(request),
             "messages": [{"role": "user", "content": request.document_text}],
         }
-        if request.stage != "section":
+        if request.stage not in {"section", "translation"}:
             payload["output_config"] = {
                 "format": {
                     "type": "json_schema",
@@ -92,7 +92,7 @@ class AnthropicProvider:
             prompt_version=request.prompt_version,
             data=(
                 SummaryData.from_section_text(text)
-                if request.stage == "section"
+                if request.stage in {"section", "translation"}
                 else parse_summary_json(
                     text,
                     advanced_analysis=request.advanced_analysis,

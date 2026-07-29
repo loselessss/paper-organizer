@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import (
+    QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -17,6 +20,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -52,12 +56,27 @@ class AiSettingsDialog(QDialog):
         super().__init__(parent)
         self._controller = controller
         self.setWindowTitle("요약 엔진 옵션")
-        self.resize(1120, 720)
-        self.setMinimumWidth(980)
+        screen = self.screen() or QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        available_width = available.width() if available is not None else 1160
+        available_height = available.height() if available is not None else 760
+        self.resize(
+            max(360, min(1120, available_width - 40)),
+            max(320, min(720, available_height - 40)),
+        )
+        self.setMinimumSize(
+            max(320, min(620, available_width - 80)),
+            max(280, min(480, available_height - 80)),
+        )
         self._scan_worker: _HardwareScanWorker | None = None
         self._recommended_model = ""
 
         root = QVBoxLayout(self)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
         engine_group = QGroupBox("요약 엔진 옵션")
         engine_layout = QVBoxLayout(engine_group)
         self.engine_changes_label = QLabel(
@@ -69,7 +88,7 @@ class AiSettingsDialog(QDialog):
         self.engine_changes_label.setWordWrap(True)
         engine_layout.addWidget(self.engine_changes_label)
 
-        engine_columns = QHBoxLayout()
+        self.engine_columns = QBoxLayout(QBoxLayout.LeftToRight)
         self.provider_group = QGroupBox("제공자·출력")
         form = QFormLayout(self.provider_group)
         self.provider_combo = QComboBox()
@@ -134,7 +153,7 @@ class AiSettingsDialog(QDialog):
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
         form.addRow("월간 앱 비용 한도", self.budget_spin)
-        engine_columns.addWidget(self.provider_group, 1)
+        self.engine_columns.addWidget(self.provider_group, 1)
 
         self.local_model_group = QGroupBox("모델 선택·Ollama 설치 및 삭제")
         local_layout = QVBoxLayout(self.local_model_group)
@@ -196,9 +215,9 @@ class AiSettingsDialog(QDialog):
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
         local_layout.addWidget(local_note)
-        engine_columns.addWidget(self.local_model_group, 1)
-        engine_layout.addLayout(engine_columns)
-        root.addWidget(engine_group)
+        self.engine_columns.addWidget(self.local_model_group, 1)
+        engine_layout.addLayout(self.engine_columns)
+        scroll_layout.addWidget(engine_group)
 
         note = QLabel(
             "API 키는 설정 JSON에 저장하지 않고 Windows 자격 증명 저장소에 "
@@ -206,7 +225,10 @@ class AiSettingsDialog(QDialog):
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #666;")
-        root.addWidget(note)
+        scroll_layout.addWidget(note)
+        scroll_layout.addStretch(1)
+        self.scroll_area.setWidget(scroll_content)
+        root.addWidget(self.scroll_area, 1)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -232,6 +254,23 @@ class AiSettingsDialog(QDialog):
             lambda: self._open_model_manager()
         )
         self._load()
+        self._update_responsive_layout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self) -> None:
+        columns = getattr(self, "engine_columns", None)
+        if columns is None:
+            return
+        direction = (
+            QBoxLayout.TopToBottom
+            if self.width() < 1040
+            else QBoxLayout.LeftToRight
+        )
+        if columns.direction() != direction:
+            columns.setDirection(direction)
 
     def _load(self) -> None:
         view = self._controller.view()

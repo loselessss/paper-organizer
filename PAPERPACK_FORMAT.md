@@ -51,6 +51,12 @@ content JSON to 64 MiB.
 bibliography, classification, language-selected summary, contributions, limitations,
 experimental details, curation, and provenance fields.
 
+An optional `translations.analysis.<language>` object may cache a user-requested
+translation for display without replacing the canonical analysis. It records the
+translated plain text, source analysis SHA-256, provider, model, prompt version, and
+translation timestamp. Readers must ignore a cached translation when its source hash
+no longer matches the current analysis.
+
 `content/content.json` contains page-, section-, and chunk-level extracted text used
 for evidence and full-text search. Evidence objects in metadata may refer to content
 chunk IDs and physical PDF page numbers.

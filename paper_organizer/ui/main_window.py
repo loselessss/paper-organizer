@@ -29,6 +29,9 @@ from paper_organizer.application.conversational_search import (
 )
 from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
+from paper_organizer.application.library_translation import (
+    LibraryTranslationService,
+)
 from paper_organizer.application.update_service import (
     AvailableUpdate,
     GitHubUpdateService,
@@ -59,6 +62,7 @@ class PaperOrganizerWindow(QMainWindow):
         lifecycle: LifecycleSettingsController | None = None,
         background_analysis: BackgroundAnalysisService | None = None,
         conversational_search: ConversationalSearchController | None = None,
+        library_translation: LibraryTranslationService | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -89,7 +93,11 @@ class PaperOrganizerWindow(QMainWindow):
                 background_analysis,
                 self,
             )
-            self.library_widget = LibraryWidget(library_workflow, self)
+            self.library_widget = LibraryWidget(
+                library_workflow,
+                self,
+                translation_service=library_translation,
+            )
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
             self.queue_widget.review_items_dropped.connect(
@@ -572,6 +580,7 @@ class PaperOrganizerWindow(QMainWindow):
         busy = bool(
             (self.collection_widget and self.collection_widget.is_busy())
             or (self.queue_widget and self.queue_widget.is_analysis_busy())
+            or (self.library_widget and self.library_widget.is_translation_busy())
         )
         if busy:
             self.statusBar().showMessage(
@@ -672,6 +681,18 @@ class PaperOrganizerWindow(QMainWindow):
                 self,
                 "백그라운드 분석 진행 중",
                 "현재 논문 분석이 안전하게 끝난 뒤 프로그램을 종료하세요. "
+                "창을 닫아 트레이로 보내는 것은 가능합니다.",
+            )
+            event.ignore()
+            return
+        if (
+            self.library_widget is not None
+            and self.library_widget.is_translation_busy()
+        ):
+            QMessageBox.information(
+                self,
+                "AI 번역 진행 중",
+                "현재 번역이 끝난 뒤 프로그램을 종료하세요. "
                 "창을 닫아 트레이로 보내는 것은 가능합니다.",
             )
             event.ignore()
