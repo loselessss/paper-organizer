@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -591,21 +592,26 @@ def _metadata_for_library_entry(
 def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadata:
     pdf_title = ""
     pdf_author = ""
+    visual_title = ""
     try:
         document = fitz.open(path)
         try:
             pdf_title = str(document.metadata.get("title") or "").strip()
             pdf_author = str(document.metadata.get("author") or "").strip()
+            visual_title = _extract_visual_title(document)
         finally:
             document.close()
     except Exception:
         pass
+    pdf_title = _repair_title_text(pdf_title)
+    if not _is_usable_title(pdf_title):
+        pdf_title = ""
     lines = [
         " ".join(line.split())
         for line in (page_texts[0].splitlines() if page_texts else [])
         if 5 <= len(" ".join(line.split())) <= 240
     ]
-    title = pdf_title or (lines[0] if lines else path.stem)
+    title = pdf_title or visual_title or (lines[0] if lines else path.stem)
     authors = [value.strip() for value in re.split(r"[;,]", pdf_author) if value.strip()]
     if not authors:
         authors = _extract_first_page_byline(lines)
@@ -616,6 +622,149 @@ def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadat
         authors=authors,
         year=int(match.group(0)) if match else None,
     )
+
+
+def _repair_title_text(value: str) -> str:
+    """Recover common UTF-8 and legacy Korean metadata mojibake."""
+
+    original = " ".join(value.replace("\x00", " ").split())
+    if not original:
+        return ""
+    utf8_candidates: list[str] = []
+    for source_encoding in ("latin1", "cp1252"):
+        try:
+            encoded = original.encode(source_encoding)
+        except UnicodeEncodeError:
+            continue
+        try:
+            repaired = encoded.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        normalized = " ".join(repaired.replace("\x00", " ").split())
+        if normalized:
+            utf8_candidates.append(normalized)
+    if utf8_candidates:
+        return max(utf8_candidates, key=_title_text_quality)
+
+    candidates = [original]
+    latin1_count = sum("\u0080" <= character <= "\u00ff" for character in original)
+    if latin1_count >= 2:
+        try:
+            repaired = original.encode("latin1").decode("cp949")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        else:
+            normalized = " ".join(repaired.replace("\x00", " ").split())
+            added_hangul = sum(
+                "\uac00" <= character <= "\ud7a3" for character in normalized
+            )
+            if added_hangul >= 2:
+                candidates.append(normalized)
+    return max(candidates, key=_title_text_quality)
+
+
+def _title_text_quality(value: str) -> int:
+    alphanumeric = sum(character.isalnum() for character in value)
+    hangul = sum("\uac00" <= character <= "\ud7a3" for character in value)
+    controls = sum(
+        ord(character) < 32 and character not in "\t\n\r" for character in value
+    )
+    private_or_replacement = sum(
+        character == "\ufffd"
+        or "\ue000" <= character <= "\uf8ff"
+        for character in value
+    )
+    latin_mojibake_runs = sum(
+        len(match.group(0))
+        for match in re.finditer(r"[\u00c0-\u00ff]{2,}", value)
+    )
+    marker_penalty = sum(
+        value.count(marker) for marker in ("Ã", "Â", "â€", "ðŸ")
+    )
+    return (
+        alphanumeric * 2
+        + hangul * 3
+        + min(value.count(" "), 8)
+        - controls * 40
+        - private_or_replacement * 40
+        - latin_mojibake_runs * 6
+        - marker_penalty * 12
+        - value.count("_") * 2
+    )
+
+
+def _is_usable_title(value: str) -> bool:
+    if not 5 <= len(value) <= 240:
+        return False
+    if sum(character.isalnum() for character in value) < 3:
+        return False
+    if any(
+        character == "\ufffd"
+        or "\ue000" <= character <= "\uf8ff"
+        or (ord(character) < 32 and character not in "\t\n\r")
+        for character in value
+    ):
+        return False
+    if re.search(r"[\u00c0-\u00ff]{3,}", value):
+        return False
+    folded = value.casefold().strip(" ._-")
+    if re.fullmatch(
+        r"(?:untitled|document|scan|제목\s*없음)(?:[\s._-]*\d+)?",
+        folded,
+    ):
+        return False
+    if re.fullmatch(
+        r"\d+\s*호(?:[\s._-]*(?:최종|final|수정|완성))*",
+        folded,
+    ):
+        return False
+    return True
+
+
+def _extract_visual_title(document: fitz.Document) -> str:
+    """Return a prominent first-page heading when layout evidence is strong."""
+
+    if document.page_count < 1:
+        return ""
+    try:
+        page = document[0]
+        raw = page.get_text("dict")
+    except Exception:
+        return ""
+    candidates: list[tuple[float, float, str]] = []
+    font_sizes: list[float] = []
+    for block in raw.get("blocks", []):
+        if not isinstance(block, dict) or block.get("type", 0) != 0:
+            continue
+        for line in block.get("lines", []):
+            spans = [
+                span
+                for span in line.get("spans", [])
+                if isinstance(span, dict) and str(span.get("text") or "").strip()
+            ]
+            if not spans:
+                continue
+            font_sizes.extend(float(span.get("size") or 0) for span in spans)
+            text = " ".join(
+                str(span.get("text") or "").strip() for span in spans
+            )
+            text = " ".join(text.split())
+            top = min(float(span.get("bbox", (0, 0, 0, 0))[1]) for span in spans)
+            size = max(float(span.get("size") or 0) for span in spans)
+            if top <= page.rect.height * 0.5 and _is_usable_title(text):
+                candidates.append((size, top, text))
+    positive_sizes = [size for size in font_sizes if size > 0]
+    if not candidates or not positive_sizes:
+        return ""
+    body_size = statistics.median(positive_sizes)
+    prominent = [
+        candidate
+        for candidate in candidates
+        if candidate[0] >= max(body_size * 1.3, body_size + 2)
+    ]
+    if not prominent:
+        return ""
+    return max(prominent, key=lambda candidate: (candidate[0], -candidate[1]))[2]
 
 
 def _extract_first_page_byline(lines: list[str]) -> list[str]:
