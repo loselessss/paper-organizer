@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Callable
 
 from paper_organizer.application.library_workflow import (
     LibraryEntry,
@@ -21,9 +22,14 @@ from paper_organizer.core.search_index import (
     search,
     search_metadata,
 )
+from paper_organizer.core.model_recommendation import load_model_catalog
 from paper_organizer.infra.ollama_installer import (
     start_runtime,
     stop_managed_runtime,
+)
+from paper_organizer.infra.ollama_runtime import (
+    OllamaRuntimeInspector,
+    OllamaRuntimeStatus,
 )
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import (
@@ -46,6 +52,7 @@ MAX_CANDIDATES = 5
 MAX_PAGES_PER_PAPER = 2
 MAX_PAGE_CHARS = 3_500
 MAX_CONTEXT_CHARS = 48_000
+MAX_SEARCH_QUERIES = 12
 _EXPLANATION_HINTS = (
     "비교",
     "설명",
@@ -72,6 +79,20 @@ _EXPLANATION_HINTS = (
     "which",
     "what",
 )
+_KOREAN_SEARCH_EQUIVALENTS = {
+    "배지": ("culture medium", "growth medium"),
+    "세포주": ("cell line",),
+    "배양": ("cell culture", "cultured"),
+    "처리": ("treatment", "treated"),
+    "농도": ("concentration",),
+    "온도": ("temperature",),
+    "항체": ("antibody",),
+    "단백질": ("protein",),
+    "유전자": ("gene",),
+    "효소": ("enzyme",),
+    "발현": ("expression",),
+    "정제": ("purification",),
+}
 
 
 class ConversationalSearchError(RuntimeError):
@@ -130,14 +151,32 @@ class ConversationalSearchController:
         secret_store: SecretStore,
         settings_path: Path | None = None,
         http_client: JsonHttpClient | None = None,
+        ollama: OllamaRuntimeInspector | None = None,
+        start_local_runtime: Callable[[], bool] | None = None,
     ) -> None:
         self._workflow = workflow
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._http_client = http_client
+        self._ollama = ollama or OllamaRuntimeInspector()
+        self._start_local_runtime = start_local_runtime or (
+            lambda: start_runtime(inspector=self._ollama)
+        )
 
     def provider_view(self) -> SearchProviderView:
         settings = load_settings(self._settings_path)
+        local_model = ""
+        if self._start_local_runtime():
+            local_model = _preferred_installed_model(
+                settings, self._ollama.inspect()
+            )
+        if local_model:
+            return SearchProviderView(
+                provider="ollama",
+                model=local_model,
+                sends_to_cloud=False,
+                requires_cloud_consent=False,
+            )
         model = _selected_model(settings)
         cloud = settings.summary_provider in {"openai", "anthropic"}
         return SearchProviderView(
@@ -161,12 +200,13 @@ class ConversationalSearchController:
         if not view.model:
             raise ConversationalSearchError("AI 모델을 먼저 선택하세요.")
         consent = settings.cloud_processing_consent or allow_cloud_once
-        if settings.summary_provider == "ollama" and not start_runtime():
+        if view.provider == "ollama" and not self._start_local_runtime():
             raise ConversationalSearchError(
                 "Ollama 서버를 시작할 수 없습니다. AI 설정과 설치 상태를 확인하세요."
             )
+        provider_settings = _settings_for_search_provider(settings, view)
         provider = build_provider(
-            settings,
+            provider_settings,
             self._secret_store,
             http_client=self._http_client,
         )
@@ -181,11 +221,11 @@ class ConversationalSearchController:
             candidates = self._retrieve_candidates(normalized, plan)
             context_text, candidates = _build_context(candidates)
         except Exception:
-            if settings.summary_provider == "ollama":
+            if view.provider == "ollama":
                 stop_managed_runtime()
             raise
         if not candidates:
-            if settings.summary_provider == "ollama":
+            if view.provider == "ollama":
                 stop_managed_runtime()
             return PreparedSearch(
                 question=normalized,
@@ -228,8 +268,9 @@ class ConversationalSearchController:
                 "검색 준비 후 AI 제공자 또는 모델이 변경되었습니다. 다시 검색하세요."
             )
         consent = settings.cloud_processing_consent or allow_cloud_once
+        provider_settings = _settings_for_search_provider(settings, view)
         provider = build_provider(
-            settings,
+            provider_settings,
             self._secret_store,
             http_client=self._http_client,
         )
@@ -246,7 +287,7 @@ class ConversationalSearchController:
                 )
             )
         finally:
-            if settings.summary_provider == "ollama":
+            if view.provider == "ollama":
                 stop_managed_runtime()
         answer = _validated_answer(result.data, prepared.candidates)
         return ConversationalSearchResult(
@@ -268,10 +309,10 @@ class ConversationalSearchController:
             for entry in self._workflow.list_library()
             if _entry_file_id(entry)
         }
-        queries = list(plan.search_queries) or _fallback_queries(question)
+        queries = _expanded_queries(question, plan.search_queries)
         scores: dict[str, int] = {}
         matched_pages: dict[str, set[int]] = {}
-        for query_index, query in enumerate(queries[:8]):
+        for query_index, query in enumerate(queries):
             try:
                 hits = search(root, query, limit=12)
             except SearchIndexError:
@@ -347,11 +388,123 @@ def _selected_model(settings: AppSettings) -> str:
     return settings.anthropic_model.strip()
 
 
+def _settings_for_search_provider(
+    settings: AppSettings, view: SearchProviderView
+) -> AppSettings:
+    if view.provider != "ollama":
+        return settings
+    return replace(
+        settings,
+        summary_provider="ollama",
+        selected_model=view.model,
+    )
+
+
+def _preferred_installed_model(
+    settings: AppSettings, status: OllamaRuntimeStatus
+) -> str:
+    """Prefer an installed small model without selecting or downloading it."""
+
+    if not status.reachable or not status.models:
+        return ""
+    _version, specs = load_model_catalog()
+    parameters = {spec.model_id.casefold(): spec.parameters_b for spec in specs}
+
+    def aliases(name: str) -> set[str]:
+        key = name.strip().casefold()
+        values = {key}
+        if key.endswith(":latest"):
+            values.add(key.removesuffix(":latest"))
+        return values
+
+    installed = [
+        (
+            model.name,
+            aliases(model.name),
+            _installed_parameters_b(model.name, model.parameter_size, parameters),
+        )
+        for model in status.models
+    ]
+    compatible = [item for item in installed if item[2] is None or item[2] <= 8.0]
+    if not compatible:
+        return ""
+    for preferred in (settings.selected_model, settings.recommended_model):
+        preferred_aliases = aliases(preferred)
+        for name, model_aliases, _size in compatible:
+            if preferred_aliases & model_aliases:
+                return name
+    search_sized = [
+        item for item in compatible if item[2] is not None and 1.5 <= item[2] <= 4.0
+    ]
+    pool = search_sized or compatible
+    return min(
+        pool,
+        key=lambda item: (
+            item[2] is None,
+            item[2] if item[2] is not None else 99.0,
+            item[0].casefold(),
+        ),
+    )[0]
+
+
+def _installed_parameters_b(
+    model_name: str,
+    parameter_size: str,
+    catalog_parameters: dict[str, float],
+) -> float | None:
+    key = model_name.strip().casefold()
+    for alias in (key, key.removesuffix(":latest")):
+        if alias in catalog_parameters:
+            return catalog_parameters[alias]
+    match = re.search(r"(\d+(?:\.\d+)?)\s*[bB]\b", parameter_size)
+    if match is None:
+        match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*[bB](?:\b|$)", model_name)
+    return float(match.group(1)) if match is not None else None
+
+
 def _fallback_queries(question: str) -> list[str]:
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#-]*|[가-힣]{2,}", question)
     ignored = {"논문", "연구", "결과", "방법", "어떤", "있나", "찾아줘", "보여줘"}
     values = [token for token in tokens if token.casefold() not in ignored]
     return values[:8] or [question]
+
+
+def _expanded_queries(
+    question: str, planned_queries: tuple[str, ...]
+) -> list[str]:
+    """Keep source identifiers and add English terms for Korean questions."""
+
+    exact_identifiers = re.findall(
+        r"(?<![A-Za-z0-9.+#:/-])"
+        r"(?=[A-Za-z0-9.+#:/-]*[A-Z0-9])"
+        r"[A-Za-z0-9][A-Za-z0-9.+#:/-]*"
+        r"(?![A-Za-z0-9.+#:/-])",
+        question,
+    )
+    english_equivalents = [
+        query
+        for korean, queries in _KOREAN_SEARCH_EQUIVALENTS.items()
+        if korean in question
+        for query in queries
+    ]
+    candidates = [
+        *exact_identifiers,
+        *planned_queries,
+        *english_equivalents,
+        *_fallback_queries(question),
+    ]
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = " ".join(candidate.split())
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        expanded.append(normalized)
+        if len(expanded) == MAX_SEARCH_QUERIES:
+            break
+    return expanded
 
 
 def _matches_filters(entry: LibraryEntry, plan: SearchPlanData) -> bool:

@@ -7,11 +7,16 @@ import fitz
 
 from paper_organizer.application.conversational_search import (
     ConversationalSearchController,
+    _expanded_queries,
     requires_ai_search,
 )
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.core.paperpack import build_content_payload, create_paperpack
 from paper_organizer.core.search_index import rebuild_search_index
+from paper_organizer.infra.ollama_runtime import (
+    InstalledOllamaModel,
+    OllamaRuntimeStatus,
+)
 from paper_organizer.infra.settings import load_settings, save_settings
 
 
@@ -34,6 +39,18 @@ class SequentialHttpClient:
     def post_json(self, url, headers, payload, timeout_seconds):
         self.calls.append(payload)
         return self.payloads.pop(0)
+
+
+class StaticOllamaInspector:
+    def __init__(self, *models):
+        self.status = OllamaRuntimeStatus(True, "test", tuple(models))
+
+    def inspect(self):
+        return self.status
+
+
+def installed_model(name, parameters):
+    return InstalledOllamaModel(name, 1.5, parameters, "Q4_K_M", "")
 
 
 def openai_response(data):
@@ -112,6 +129,62 @@ def create_library(root: Path):
 
 
 class ConversationalSearchTests(unittest.TestCase):
+    def test_installed_local_model_is_preferred_for_search(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workflow, settings_path, _file_id, _pack = create_library(root)
+            controller = ConversationalSearchController(
+                workflow,
+                MemorySecretStore(),
+                settings_path,
+                ollama=StaticOllamaInspector(
+                    installed_model("qwen3:4b", "4.0B"),
+                    installed_model("granite3.3:2b", "2.0B"),
+                ),
+                start_local_runtime=lambda: True,
+            )
+
+            view = controller.provider_view()
+
+        self.assertEqual(view.provider, "ollama")
+        self.assertEqual(view.model, "granite3.3:2b")
+        self.assertFalse(view.sends_to_cloud)
+
+    def test_selected_installed_model_wins_over_smaller_search_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workflow, settings_path, _file_id, _pack = create_library(root)
+            settings = load_settings(settings_path)
+            settings.selected_model = "qwen3:4b"
+            save_settings(settings, settings_path)
+            controller = ConversationalSearchController(
+                workflow,
+                MemorySecretStore(),
+                settings_path,
+                ollama=StaticOllamaInspector(
+                    installed_model("qwen3:4b", "4.0B"),
+                    installed_model("granite3.3:2b", "2.0B"),
+                ),
+                start_local_runtime=lambda: True,
+            )
+
+            view = controller.provider_view()
+
+        self.assertEqual(view.model, "qwen3:4b")
+
+    def test_korean_question_keeps_identifiers_and_adds_english_source_terms(self):
+        queries = _expanded_queries(
+            "A549를 DMEM 배지에서 배양한 논문을 찾아줘",
+            ("cell cultivation",),
+        )
+
+        self.assertIn("A549", queries)
+        self.assertIn("DMEM", queries)
+        self.assertIn("cell cultivation", queries)
+        self.assertIn("culture medium", queries)
+        self.assertIn("cell culture", queries)
+        self.assertTrue(any("배지" in query for query in queries))
+
     def test_routes_literal_queries_locally_and_questions_to_ai(self):
         self.assertFalse(requires_ai_search("thermostable enzyme"))
         self.assertFalse(requires_ai_search("10.1000/test"))
@@ -166,6 +239,7 @@ class ConversationalSearchTests(unittest.TestCase):
                 MemorySecretStore(),
                 settings_path,
                 http_client=client,
+                start_local_runtime=lambda: False,
             )
 
             prepared = controller.prepare("열에 강한 효소를 만든 논문은?")
@@ -201,6 +275,7 @@ class ConversationalSearchTests(unittest.TestCase):
                 MemorySecretStore(),
                 settings_path,
                 http_client=client,
+                start_local_runtime=lambda: False,
             )
 
             prepared = controller.prepare("없는 주제")

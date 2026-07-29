@@ -135,8 +135,11 @@ SEARCH_PLAN_INSTRUCTIONS = (
     "You prepare literal full-text searches for an academic paper library. "
     "Do not answer the question. Return 3 to 8 short search_queries, each one "
     "to four words, that are likely to occur verbatim in relevant papers. "
-    "Preserve technical names and include useful English equivalents when the "
-    "question is Korean. Avoid generic words such as paper, study, result, or "
+    "When the question is Korean, return separate Korean and English queries so "
+    "English source papers remain searchable. Preserve identifiers such as gene "
+    "and protein names, cell lines, media, reagents, model numbers, and acronyms "
+    "exactly as written; never translate or normalize them. Avoid generic words "
+    "such as paper, study, result, or "
     "method. Extract a category or four-digit year bounds only when explicitly "
     "stated; otherwise return empty strings."
 )
