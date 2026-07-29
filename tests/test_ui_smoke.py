@@ -100,6 +100,8 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.residency_combo.currentData(), "auto")
             self.assertEqual(dialog.resident_model_combo.count(), 2)
             self.assertIn("미리 적재하지 않으며", dialog.residency_guidance.text())
+            self.assertTrue(dialog.force_igpu_check.isChecked())
+            self.assertIn("1.7B", dialog.igpu_guidance.text())
             self.assertEqual(
                 dialog.manage_models_button.text(),
                 "Ollama 설치·삭제…",

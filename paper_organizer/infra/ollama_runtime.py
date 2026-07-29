@@ -19,11 +19,20 @@ class InstalledOllamaModel:
 
 
 @dataclass(frozen=True, slots=True)
+class RunningOllamaModel:
+    name: str
+    processor: str
+    size_gb: float
+    gpu_size_gb: float
+
+
+@dataclass(frozen=True, slots=True)
 class OllamaRuntimeStatus:
     reachable: bool
     version: str
     models: tuple[InstalledOllamaModel, ...]
     error: str = ""
+    running_models: tuple[RunningOllamaModel, ...] = ()
 
 
 JsonFetcher = Callable[[str, float], Mapping[str, Any]]
@@ -57,10 +66,16 @@ class OllamaRuntimeInspector:
             if not isinstance(raw_models, list):
                 raise RuntimeError("Ollama model list is invalid")
             models = parse_installed_models(tags_data)
+            try:
+                running_data = self._fetch(f"{self._endpoint}/api/ps", timeout)
+                running_models = parse_running_models(running_data)
+            except (OSError, ValueError, RuntimeError, HTTPError, URLError):
+                running_models = ()
             return OllamaRuntimeStatus(
                 reachable=True,
                 version=str(version_data.get("version") or "unknown"),
                 models=models,
+                running_models=running_models,
             )
         except (OSError, ValueError, RuntimeError, HTTPError, URLError) as exc:
             return OllamaRuntimeStatus(False, "", (), str(exc))
@@ -97,3 +112,46 @@ def parse_installed_models(data: Mapping[str, Any]) -> tuple[InstalledOllamaMode
             )
         )
     return tuple(sorted(models, key=lambda item: item.name.casefold()))
+
+
+def parse_running_models(
+    data: Mapping[str, Any],
+) -> tuple[RunningOllamaModel, ...]:
+    """Parse `/api/ps` and describe CPU, GPU or mixed model placement."""
+
+    raw_models = data.get("models", [])
+    if not isinstance(raw_models, list):
+        raise RuntimeError("Ollama running model list is invalid")
+    models: list[RunningOllamaModel] = []
+    for raw in raw_models:
+        if not isinstance(raw, Mapping) or "size_vram" not in raw:
+            continue
+        name = str(raw.get("name") or raw.get("model") or "").strip()
+        if not name:
+            continue
+        size = _non_negative_number(raw.get("size"))
+        gpu_size = _non_negative_number(raw.get("size_vram"))
+        models.append(
+            RunningOllamaModel(
+                name=name,
+                processor=_processor_label(size, gpu_size),
+                size_gb=round(size / (1000**3), 2),
+                gpu_size_gb=round(gpu_size / (1000**3), 2),
+            )
+        )
+    return tuple(sorted(models, key=lambda item: item.name.casefold()))
+
+
+def _non_negative_number(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return max(0.0, float(value))
+
+
+def _processor_label(size: float, gpu_size: float) -> str:
+    if gpu_size <= 0:
+        return "CPU"
+    if size <= 0 or gpu_size >= size * 0.95:
+        return "GPU"
+    percent = max(1, min(99, round(gpu_size / size * 100)))
+    return f"GPU {percent}% + CPU"

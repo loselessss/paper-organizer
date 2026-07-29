@@ -134,7 +134,17 @@ class OllamaModelClientTests(unittest.TestCase):
                         }
                     ).encode()
                 ),
-                FakeResponse(b'{"response":"{\\"ready\\": true}","done":true}'),
+                FakeResponse(
+                    b'{"response":"{\\"ready\\": true}","done":true,'
+                    b'"prompt_eval_count":10,"prompt_eval_duration":100000000,'
+                    b'"eval_count":20,"eval_duration":1000000000,'
+                    b'"total_duration":1500000000}'
+                ),
+                FakeResponse(
+                    b'{"models":[{"name":"qwen3:4b","size":2500000000,'
+                    b'"size_vram":2500000000}]}'
+                ),
+                FakeResponse(b'{"done":true}'),
             ]
         )
         client = OllamaModelClient(opener)
@@ -146,11 +156,16 @@ class OllamaModelClientTests(unittest.TestCase):
         self.assertEqual(result.percent, 100)
         self.assertEqual([item.percent for item in progress], [50, 100])
         self.assertEqual(verified.model.size_gb, 2.5)
+        self.assertEqual(verified.processor, "GPU")
+        self.assertEqual(verified.prompt_tokens_per_second, 100.0)
+        self.assertEqual(verified.output_tokens_per_second, 20.0)
         pull_payload = json.loads(opener.requests[0][0].data)
         self.assertFalse(pull_payload["insecure"])
         generate_payload = json.loads(opener.requests[2][0].data)
         self.assertFalse(generate_payload["stream"])
-        self.assertEqual(generate_payload["keep_alive"], 0)
+        self.assertEqual(generate_payload["keep_alive"], "1m")
+        unload_payload = json.loads(opener.requests[4][0].data)
+        self.assertEqual(unload_payload["keep_alive"], 0)
 
     def test_pull_can_be_cancelled_before_next_stream_chunk(self):
         opener = QueueOpener([FakeResponse(lines=(b'{"status":"pulling"}\n',))])
@@ -242,6 +257,7 @@ class OllamaModelManagerTests(unittest.TestCase):
         self.assertTrue(result.newly_managed)
         self.assertEqual(saved.managed_ollama_models, ["qwen3:4b"])
         self.assertEqual(saved.selected_model, "old:model")
+        self.assertIn("qwen3:4b", saved.ollama_model_benchmarks)
 
     def test_failed_verification_does_not_track_or_activate_model(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -286,6 +302,9 @@ class OllamaModelManagerTests(unittest.TestCase):
                     selected_model="qwen3:4b",
                     ollama_resident_model="qwen3:4b",
                     managed_ollama_models=["qwen3:4b"],
+                    ollama_model_benchmarks={
+                        "qwen3:4b": {"processor": "GPU"}
+                    },
                 ),
                 settings_path,
             )
@@ -305,6 +324,7 @@ class OllamaModelManagerTests(unittest.TestCase):
         self.assertEqual(saved.selected_model, "")
         self.assertEqual(saved.ollama_resident_model, "")
         self.assertEqual(saved.managed_ollama_models, [])
+        self.assertEqual(saved.ollama_model_benchmarks, {})
 
     def test_existing_shared_model_can_be_verified_without_becoming_managed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -323,6 +343,7 @@ class OllamaModelManagerTests(unittest.TestCase):
         self.assertEqual(verified.model.name, "qwen3:4b")
         self.assertEqual(fake_client.pulled, [])
         self.assertEqual(saved.managed_ollama_models, [])
+        self.assertIn("qwen3:4b", saved.ollama_model_benchmarks)
 
 
 if __name__ == "__main__":

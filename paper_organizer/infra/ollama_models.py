@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from paper_organizer.infra.ollama_runtime import (
     InstalledOllamaModel,
     parse_installed_models,
+    parse_running_models,
 )
 
 
@@ -48,6 +49,10 @@ class OllamaVerification:
     model: InstalledOllamaModel
     response_valid: bool
     message: str
+    processor: str = ""
+    prompt_tokens_per_second: float = 0.0
+    output_tokens_per_second: float = 0.0
+    total_seconds: float = 0.0
 
 
 ProgressCallback = Callable[[OllamaPullProgress], None]
@@ -142,20 +147,84 @@ class OllamaModelClient:
                 "format": schema,
                 "stream": False,
                 "think": False,
-                "keep_alive": 0,
+                "keep_alive": "1m",
                 "options": {"temperature": 0, "num_predict": 24},
             },
             method="POST",
             timeout=timeout,
         )
-        response_text = str(generated.get("response") or "").strip()
         try:
-            decoded = json.loads(response_text)
-        except json.JSONDecodeError as exc:
-            raise OllamaModelError("설치 모델의 JSON 응답 검증에 실패했습니다.") from exc
-        if not isinstance(decoded, Mapping) or decoded.get("ready") is not True:
-            raise OllamaModelError("설치 모델이 예상한 검증 응답을 반환하지 않았습니다.")
-        return OllamaVerification(matched, True, "설치 및 짧은 JSON 응답 검증 완료")
+            response_text = str(generated.get("response") or "").strip()
+            try:
+                decoded = json.loads(response_text)
+            except json.JSONDecodeError as exc:
+                raise OllamaModelError(
+                    "설치 모델의 JSON 응답 검증에 실패했습니다."
+                ) from exc
+            if not isinstance(decoded, Mapping) or decoded.get("ready") is not True:
+                raise OllamaModelError(
+                    "설치 모델이 예상한 검증 응답을 반환하지 않았습니다."
+                )
+            processor = self._running_processor(model_id)
+            prompt_tps = _tokens_per_second(
+                generated.get("prompt_eval_count"),
+                generated.get("prompt_eval_duration"),
+            )
+            output_tps = _tokens_per_second(
+                generated.get("eval_count"),
+                generated.get("eval_duration"),
+            )
+            total_seconds = round(
+                _non_negative_int(generated.get("total_duration")) / 1_000_000_000,
+                3,
+            )
+            details = [processor] if processor else []
+            if output_tps:
+                details.append(f"출력 {output_tps:g} tok/s")
+            message = "설치 및 짧은 JSON 응답 검증 완료"
+            if details:
+                message += " · " + " · ".join(details)
+            return OllamaVerification(
+                matched,
+                True,
+                message,
+                processor=processor,
+                prompt_tokens_per_second=prompt_tps,
+                output_tokens_per_second=output_tps,
+                total_seconds=total_seconds,
+            )
+        finally:
+            self._unload_after_verification(model_id)
+
+    def _running_processor(self, model: str) -> str:
+        try:
+            running = parse_running_models(
+                self._request_json("/api/ps", None, method="GET", timeout=5.0)
+            )
+        except (OllamaModelError, RuntimeError, ValueError):
+            return ""
+        matched = next(
+            (item for item in running if _same_model(item.name, model)),
+            None,
+        )
+        return matched.processor if matched is not None else ""
+
+    def _unload_after_verification(self, model: str) -> None:
+        try:
+            self._request_json(
+                "/api/generate",
+                {
+                    "model": model,
+                    "prompt": "",
+                    "stream": False,
+                    "keep_alive": 0,
+                    "options": {"num_predict": 1},
+                },
+                method="POST",
+                timeout=30.0,
+            )
+        except OllamaModelError:
+            pass
 
     def delete(self, model: str, *, timeout: float = 30.0) -> None:
         model_id = validate_model_name(model)
@@ -237,6 +306,14 @@ def _non_negative_int(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     return max(0, int(value))
+
+
+def _tokens_per_second(count: Any, duration: Any) -> float:
+    tokens = _non_negative_int(count)
+    nanoseconds = _non_negative_int(duration)
+    if not tokens or not nanoseconds:
+        return 0.0
+    return round(tokens / (nanoseconds / 1_000_000_000), 2)
 
 
 def _same_model(left: str, right: str) -> bool:

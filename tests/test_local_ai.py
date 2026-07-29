@@ -117,6 +117,16 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(timeout, 1.5)
             if url.endswith("/api/version"):
                 return {"version": "0.12.0"}
+            if url.endswith("/api/ps"):
+                return {
+                    "models": [
+                        {
+                            "name": "qwen3:4b",
+                            "size": 2_500_000_000,
+                            "size_vram": 2_500_000_000,
+                        }
+                    ]
+                }
             return {
                 "models": [
                     {
@@ -137,6 +147,7 @@ class LocalAiTests(unittest.TestCase):
         self.assertEqual(status.version, "0.12.0")
         self.assertEqual(status.models[0].name, "qwen3:4b")
         self.assertEqual(status.models[0].size_gb, 2.5)
+        self.assertEqual(status.running_models[0].processor, "GPU")
 
     def test_auto_profile_prefers_a_compatible_installed_model(self):
         recommendation = recommend_models(

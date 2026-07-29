@@ -23,6 +23,10 @@ A REAL PUBLICATION**.
 - `tools/run_models.py`: Paper Organizer's real section/JSON pipeline runner for
   installed Ollama models.
 
+The runner follows Paper Organizer's saved GPU-first policy, lets Ollama fall back
+to CPU, and records the actual `GPU`, `CPU`, or mixed placement reported by
+`/api/ps` with each result.
+
 The frontier reference is the canonical answer key with evaluation-only
 `forbidden_claims` and `scoring_notes` removed. It scores 100/100 on every paper;
 model scores therefore read directly as a percentage of that reference. A model

@@ -6,8 +6,11 @@ from tests.benchmark.tools.run_models import (
     DEFAULT_MODELS,
     PRIVATE_RUNNER,
     _documents,
+    apply_benchmark_acceleration,
     private_benchmark_command,
 )
+from paper_organizer.infra.ollama_acceleration import OLLAMA_IGPU_ENVIRONMENT
+from paper_organizer.infra.settings import AppSettings
 from tests.benchmark.tools.score_output import (
     score_bibliography,
     score_summary,
@@ -16,6 +19,20 @@ from tests.benchmark.tools.score_output import (
 
 
 class BenchmarkToolTests(unittest.TestCase):
+    def test_benchmark_uses_saved_gpu_priority_and_can_remove_it(self):
+        environment = {}
+
+        label = apply_benchmark_acceleration(AppSettings(), environment)
+
+        self.assertIn("GPU 우선", label)
+        self.assertEqual(environment[OLLAMA_IGPU_ENVIRONMENT], "1")
+
+        apply_benchmark_acceleration(
+            AppSettings(ollama_force_igpu=False),
+            environment,
+        )
+        self.assertNotIn(OLLAMA_IGPU_ENVIRONMENT, environment)
+
     def test_default_benchmark_command_targets_private_papers(self):
         command = private_benchmark_command(
             ["qwen3:0.6b"],

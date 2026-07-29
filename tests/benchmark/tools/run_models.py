@@ -29,7 +29,16 @@ from paper_organizer.application.summary_service import (  # noqa: E402
 from paper_organizer.core.benchmark_recommendation import (  # noqa: E402
     recommend_observed_model,
 )
-from paper_organizer.infra.settings import AppSettings  # noqa: E402
+from paper_organizer.infra.ollama_acceleration import (  # noqa: E402
+    OLLAMA_IGPU_ENVIRONMENT,
+)
+from paper_organizer.infra.ollama_runtime import (  # noqa: E402
+    OllamaRuntimeInspector,
+)
+from paper_organizer.infra.settings import (  # noqa: E402
+    AppSettings,
+    load_settings,
+)
 
 try:
     from .score_output import score_summary  # type: ignore[import-not-found]  # noqa: E402
@@ -68,6 +77,19 @@ def private_benchmark_command(
     if resume:
         command.append("--resume")
     return command
+
+
+def apply_benchmark_acceleration(
+    settings: AppSettings,
+    environment: dict[str, str],
+) -> str:
+    """Apply the saved GPU-first policy to benchmark child processes."""
+
+    if settings.ollama_force_igpu:
+        environment[OLLAMA_IGPU_ENVIRONMENT] = "1"
+        return "GPU 우선 (내장 GPU 포함, 실패 시 CPU)"
+    environment.pop(OLLAMA_IGPU_ENVIRONMENT, None)
+    return "Ollama 기본 장치 선택"
 
 
 class _NoSecrets:
@@ -163,6 +185,7 @@ def _run_one(
         execution = run_prepared_summary(prepared, settings, _NoSecrets())
         elapsed = time.perf_counter() - started
         _current, peak = tracemalloc.get_traced_memory()
+        processor = _running_processor(model)
         output = asdict(execution.result.data)
         output_text = json.dumps(output, ensure_ascii=False)
         truth = json.loads(truth_path.read_text(encoding="utf-8"))
@@ -179,6 +202,7 @@ def _run_one(
             "runner_peak_memory_mb": round(peak / (1024 * 1024), 2),
             "input_tokens": execution.result.input_tokens,
             "output_tokens": execution.result.output_tokens,
+            "processor": processor,
             "preview": {
                 "pages": list(prepared.preview.included_pdf_pages),
                 "sections": list(prepared.preview.included_sections),
@@ -203,10 +227,25 @@ def _run_one(
             "language": language,
             "elapsed_seconds": round(elapsed, 3),
             "runner_peak_memory_mb": round(peak / (1024 * 1024), 2),
+            "processor": _running_processor(model),
             "error": " ".join(str(exc).split()),
         }
     finally:
         tracemalloc.stop()
+
+
+def _running_processor(model: str) -> str:
+    key = model.strip().casefold().removesuffix(":latest")
+    status = OllamaRuntimeInspector().inspect()
+    running = next(
+        (
+            item
+            for item in status.running_models
+            if item.name.casefold().removesuffix(":latest") == key
+        ),
+        None,
+    )
+    return running.processor if running is not None else "확인 안 됨"
 
 
 def _write_comparison(
@@ -232,6 +271,7 @@ def _write_comparison(
             "status",
             "elapsed_seconds",
             "runner_peak_memory_mb",
+            "processor",
             "input_tokens",
             "output_tokens",
             "score_100",
@@ -262,6 +302,7 @@ def _write_comparison(
                 "status": result["status"],
                 "elapsed_seconds": result["elapsed_seconds"],
                 "runner_peak_memory_mb": result["runner_peak_memory_mb"],
+                "processor": result.get("processor", ""),
                 "input_tokens": result.get("input_tokens", ""),
                 "output_tokens": result.get("output_tokens", ""),
                 "score_100": score.get("score_100", ""),
@@ -291,6 +332,7 @@ def _write_comparison(
             "success",
             "failed",
             "mean_seconds",
+            "processor",
             "fit_score_100",
             "mean_score_100",
             "mean_coverage",
@@ -314,6 +356,13 @@ def _write_comparison(
                     )
                     if successes
                     else ""
+                ),
+                "processor": ", ".join(
+                    dict.fromkeys(
+                        str(result.get("processor") or "")
+                        for result in successes
+                        if result.get("processor")
+                    )
                 ),
                 "fit_score_100": (
                     recommendation_by_model[model].fit_score_100
@@ -384,6 +433,7 @@ def _write_comparison(
             "penalty_points",
             "forbidden_hits",
             "elapsed_seconds",
+            "processor",
             "error",
         ),
     )
@@ -408,6 +458,7 @@ def _write_comparison(
                 "penalty_points": score.get("penalty_points", ""),
                 "forbidden_hits": score.get("forbidden_hits", ""),
                 "elapsed_seconds": result["elapsed_seconds"],
+                "processor": result.get("processor", ""),
                 "error": result.get("error", ""),
             }
         )
@@ -444,6 +495,11 @@ def main() -> int:
         help="이미 성공 결과가 있는 모델/문서는 건너뜁니다.",
     )
     args = parser.parse_args()
+    acceleration_policy = apply_benchmark_acceleration(
+        load_settings(),
+        os.environ,
+    )
+    print(f"가속 정책: {acceleration_policy}")
     if not args.synthetic:
         if not PRIVATE_RUNNER.is_file():
             parser.error(

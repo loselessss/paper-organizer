@@ -277,6 +277,7 @@ class OllamaModelDialog(QDialog):
                 self,
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
+                f"{result.verification.message if installed_now else result.message}\n"
                 "활성 Ollama 모델로 선택하고 설정에 저장했습니다.",
             )
             return
@@ -503,14 +504,14 @@ class OllamaModelDialog(QDialog):
                 f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
                 f"{entry.parameter_size or '파라미터 미상'} · "
                 f"{entry.quantization or '양자화 미상'}\n"
-                f"{_entry_usage_text(entry)}"
+                f"{_entry_detail_text(entry)}"
             )
         else:
             required = (entry.estimated_download_gb or 0) * 1.5 + 2.0
             self.model_detail.setText(
                 f"예상 다운로드 {entry.estimated_download_gb:g}GB · "
                 f"안전 여유 필요 약 {required:.1f}GB\n"
-                f"{_entry_usage_text(entry)}"
+                f"{_entry_detail_text(entry)}"
             )
         self._select_installed_model(entry.model_id if entry and entry.installed else "")
         self._update_actions()
@@ -534,7 +535,7 @@ class OllamaModelDialog(QDialog):
             f"설치 크기 {entry.installed_size_gb:g}GB · {owner} · "
             f"{entry.parameter_size or '파라미터 미상'} · "
             f"{entry.quantization or '양자화 미상'}{selection}\n"
-            f"{_entry_usage_text(entry)}"
+            f"{_entry_detail_text(entry)}"
         )
         self._update_actions()
 
@@ -747,3 +748,12 @@ def _entry_usage_text(entry) -> str:
     return entry.usage_guidance or model_usage_guidance(
         entry.model_id
     ).display_text()
+
+
+def _entry_detail_text(entry) -> str:
+    usage = _entry_usage_text(entry)
+    return (
+        f"{usage}\n{entry.benchmark_summary}"
+        if entry.benchmark_summary
+        else usage
+    )

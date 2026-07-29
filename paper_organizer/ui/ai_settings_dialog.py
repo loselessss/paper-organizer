@@ -70,6 +70,7 @@ class AiSettingsDialog(QDialog):
         )
         self._scan_worker: _HardwareScanWorker | None = None
         self._recommended_model = ""
+        self._initial_force_igpu = False
 
         root = QVBoxLayout(self)
         self.scroll_area = QScrollArea()
@@ -177,6 +178,19 @@ class AiSettingsDialog(QDialog):
         for value, label in OLLAMA_RESIDENCY_CHOICES:
             self.residency_combo.addItem(label, value)
         self.resident_model_combo = QComboBox()
+        self.force_igpu_check = QCheckBox(
+            "GPU 우선 사용 (내장 GPU Vulkan 포함 · 실패 시 CPU)"
+        )
+        self.force_igpu_check.setToolTip(
+            "Intel Iris Xe 같은 내장 GPU도 Ollama가 먼저 시험하도록 합니다. "
+            "설정 변경 후 Ollama를 완전히 종료하고 다시 실행해야 합니다."
+        )
+        self.igpu_guidance = QLabel(
+            "기본값은 GPU 우선이며 사용할 수 없으면 Ollama가 CPU로 대체합니다. "
+            "내장 GPU는 시스템 RAM을 공유하므로 1.7B 모델부터 시험합니다."
+        )
+        self.igpu_guidance.setWordWrap(True)
+        self.igpu_guidance.setStyleSheet("color: #666;")
         self.residency_guidance = QLabel("")
         self.residency_guidance.setWordWrap(True)
         self.residency_guidance.setStyleSheet(
@@ -189,6 +203,8 @@ class AiSettingsDialog(QDialog):
         local_form.addRow("상주 옵션", self.residency_combo)
         local_form.addRow("상주 모델", self.resident_model_combo)
         local_form.addRow("상주 설명", self.residency_guidance)
+        local_form.addRow("GPU 가속", self.force_igpu_check)
+        local_form.addRow("", self.igpu_guidance)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
@@ -289,6 +305,8 @@ class AiSettingsDialog(QDialog):
             view.ollama_residency_mode
         )
         self.residency_combo.setCurrentIndex(max(0, residency_index))
+        self.force_igpu_check.setChecked(view.ollama_force_igpu)
+        self._initial_force_igpu = view.ollama_force_igpu
         self.consent_check.setChecked(view.cloud_processing_consent)
         language_index = self.language_combo.findData(view.summary_language)
         self.language_combo.setCurrentIndex(max(0, language_index))
@@ -554,8 +572,13 @@ class AiSettingsDialog(QDialog):
             for gpu in hardware.gpus
         ) or "GPU 미감지 · CPU 실행"
         ollama = assessment.ollama
+        running_text = ", ".join(
+            f"{model.name} {model.processor}"
+            for model in ollama.running_models
+        ) or "현재 적재 모델 없음"
         ollama_text = (
-            f"Ollama {ollama.version}, 설치 모델 {len(ollama.models)}개"
+            f"Ollama {ollama.version}, 설치 모델 {len(ollama.models)}개, "
+            f"{running_text}"
             if ollama.reachable
             else "Ollama 연결 안 됨"
         )
@@ -661,6 +684,10 @@ class AiSettingsDialog(QDialog):
                 "사양 검사가 끝난 뒤 설정을 저장하세요.",
             )
             return
+        acceleration_changed = (
+            self.force_igpu_check.isChecked()
+            != self._initial_force_igpu
+        )
         try:
             self._controller.save_preferences(
                 provider=self.provider_combo.currentData(),
@@ -676,10 +703,21 @@ class AiSettingsDialog(QDialog):
                 ollama_resident_model=str(
                     self.resident_model_combo.currentData() or ""
                 ),
+                ollama_force_igpu=self.force_igpu_check.isChecked(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "요약 엔진 설정 저장 실패", str(exc))
             return
+        if acceleration_changed:
+            state = "사용" if self.force_igpu_check.isChecked() else "사용하지 않도록"
+            QMessageBox.information(
+                self,
+                "Ollama 재시작 필요",
+                f"내장 GPU를 {state} 설정했습니다.\n\n"
+                "진행 중인 분석이 끝난 뒤 트레이의 Ollama를 완전히 종료하고 "
+                "시작 메뉴에서 다시 실행하세요. 모델을 실행한 뒤 "
+                "'사양 다시 검사'를 누르면 CPU·GPU 사용 상태를 확인할 수 있습니다.",
+            )
         self.accept()
 
     def reject(self) -> None:

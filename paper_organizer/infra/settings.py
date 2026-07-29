@@ -38,6 +38,8 @@ class AppSettings:
     selected_model: str = ""
     ollama_residency_mode: str = "auto"
     ollama_resident_model: str = ""
+    ollama_force_igpu: bool = True
+    ollama_model_benchmarks: dict[str, dict[str, Any]] = field(default_factory=dict)
     recommended_model: str = ""
     model_catalog_version: str = ""
     last_hardware_scan_at: str = ""
@@ -119,6 +121,18 @@ class AppSettings:
             raise ValueError("Unsupported ollama_residency_mode")
         if not isinstance(self.ollama_resident_model, str):
             raise ValueError("ollama_resident_model must be a string")
+        if not isinstance(self.ollama_force_igpu, bool):
+            raise ValueError("ollama_force_igpu must be a boolean")
+        if (
+            not isinstance(self.ollama_model_benchmarks, dict)
+            or any(
+                not isinstance(model, str)
+                or not model.strip()
+                or not isinstance(result, dict)
+                for model, result in self.ollama_model_benchmarks.items()
+            )
+        ):
+            raise ValueError("ollama_model_benchmarks must map models to JSON objects")
         if not isinstance(self.hardware_profile, dict):
             raise ValueError("hardware_profile must be a JSON object")
         if (

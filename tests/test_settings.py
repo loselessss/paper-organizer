@@ -90,6 +90,19 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(ollama_residency_mode="forever").validate()
 
+    def test_ollama_igpu_setting_is_boolean(self):
+        self.assertTrue(AppSettings().ollama_force_igpu)
+        AppSettings(ollama_force_igpu=True).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(ollama_force_igpu="yes").validate()
+
+    def test_ollama_model_benchmarks_are_json_objects(self):
+        AppSettings(
+            ollama_model_benchmarks={"qwen3:1.7b": {"processor": "GPU"}}
+        ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(ollama_model_benchmarks={"qwen3:1.7b": "GPU"}).validate()
+
     def test_summary_language_is_validated(self):
         AppSettings(summary_language="ko").validate()
         AppSettings(summary_language="source").validate()

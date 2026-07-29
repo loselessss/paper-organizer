@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
@@ -42,6 +43,7 @@ class OllamaModelEntry:
     managed_by_app: bool
     selectable: bool = True
     usage_guidance: str = ""
+    benchmark_summary: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +103,14 @@ class OllamaModelManagerService:
             key = _model_key(spec.model_id)
             catalog_keys.add(key)
             actual = installed.get(key)
-            entries.append(_entry_from_spec(spec, actual, key in managed))
+            entries.append(
+                _entry_from_spec(
+                    spec,
+                    actual,
+                    key in managed,
+                    _benchmark_summary(settings, spec.model_id),
+                )
+            )
         for key, actual in installed.items():
             if key in catalog_keys:
                 continue
@@ -120,6 +129,7 @@ class OllamaModelManagerService:
                         actual.name,
                         _installed_parameters_b(actual),
                     ).display_text(),
+                    benchmark_summary=_benchmark_summary(settings, actual.name),
                 )
             )
         return OllamaModelSnapshot(
@@ -213,7 +223,8 @@ class OllamaModelManagerService:
         if newly_managed:
             settings.managed_ollama_models.append(plan.model_id)
             settings.managed_ollama_models.sort(key=str.casefold)
-            save_settings(settings, self._settings_path)
+        _record_verification(settings, verification)
+        save_settings(settings, self._settings_path)
         return OllamaInstallResult(verification, newly_managed)
 
     def verify_installed(self, model: str) -> OllamaVerification:
@@ -229,7 +240,11 @@ class OllamaModelManagerService:
         )
         if entry is None:
             raise ValueError("설치된 Ollama 모델이 아닙니다.")
-        return self._client.verify(entry.model_id)
+        verification = self._client.verify(entry.model_id)
+        settings = load_settings(self._settings_path)
+        _record_verification(settings, verification)
+        save_settings(settings, self._settings_path)
+        return verification
 
     def delete(self, model: str) -> bool:
         model_id = validate_model_name(model)
@@ -256,6 +271,7 @@ class OllamaModelManagerService:
             settings.selected_model = ""
         if _model_key(settings.ollama_resident_model) == _model_key(entry.model_id):
             settings.ollama_resident_model = ""
+        settings.ollama_model_benchmarks.pop(_model_key(entry.model_id), None)
         save_settings(settings, self._settings_path)
         return selection_cleared
 
@@ -264,6 +280,7 @@ def _entry_from_spec(
     spec: ModelSpec,
     actual: InstalledOllamaModel | None,
     managed: bool,
+    benchmark_summary: str,
 ) -> OllamaModelEntry:
     return OllamaModelEntry(
         model_id=spec.model_id,
@@ -278,6 +295,7 @@ def _entry_from_spec(
             spec.model_id,
             spec.parameters_b,
         ).display_text(),
+        benchmark_summary=benchmark_summary,
     )
 
 
@@ -298,3 +316,31 @@ def _installed_parameters_b(model: InstalledOllamaModel) -> float | None:
     description = f"{model.parameter_size} {model.name}".casefold()
     match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*b(?:\b|$)", description)
     return float(match.group(1)) if match else None
+
+
+def _record_verification(settings, verification: OllamaVerification) -> None:
+    settings.ollama_model_benchmarks[_model_key(verification.model.name)] = {
+        "model": verification.model.name,
+        "processor": verification.processor,
+        "prompt_tokens_per_second": verification.prompt_tokens_per_second,
+        "output_tokens_per_second": verification.output_tokens_per_second,
+        "total_seconds": verification.total_seconds,
+        "measured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "kind": "quick_verification",
+    }
+
+
+def _benchmark_summary(settings, model: str) -> str:
+    result = settings.ollama_model_benchmarks.get(_model_key(model))
+    if not isinstance(result, dict):
+        return ""
+    processor = str(result.get("processor") or "처리 장치 미확인")
+    output_tps = result.get("output_tokens_per_second")
+    speed = (
+        f" · 출력 {float(output_tps):g} tok/s"
+        if isinstance(output_tps, (int, float)) and not isinstance(output_tps, bool)
+        else ""
+    )
+    measured_at = str(result.get("measured_at") or "")
+    date = f" · {measured_at[:10]}" if measured_at else ""
+    return f"최근 간이 검증: {processor}{speed}{date}"

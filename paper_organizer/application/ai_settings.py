@@ -63,6 +63,7 @@ class AiSettingsView:
     summary_timeout_seconds: int
     ollama_residency_mode: str
     ollama_resident_model: str
+    ollama_force_igpu: bool
 
 
 class AiSettingsController:
@@ -73,6 +74,7 @@ class AiSettingsController:
         local_ai: LocalAiAssessmentService | None = None,
         model_manager: OllamaModelManagerService | None = None,
         ollama_starter: Callable[[], bool] | None = None,
+        ollama_igpu_configurer: Callable[[bool], None] | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
@@ -81,6 +83,7 @@ class AiSettingsController:
             self._settings_path
         )
         self._ollama_starter = ollama_starter
+        self._ollama_igpu_configurer = ollama_igpu_configurer
 
     @property
     def settings_path(self) -> Path:
@@ -119,6 +122,7 @@ class AiSettingsController:
             summary_timeout_seconds=settings.summary_timeout_seconds,
             ollama_residency_mode=settings.ollama_residency_mode,
             ollama_resident_model=settings.ollama_resident_model,
+            ollama_force_igpu=settings.ollama_force_igpu,
         )
 
     def settings(self) -> AppSettings:
@@ -160,6 +164,7 @@ class AiSettingsController:
         summary_timeout_seconds: int | None = None,
         ollama_residency_mode: str | None = None,
         ollama_resident_model: str | None = None,
+        ollama_force_igpu: bool | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
         if normalized_provider not in PROVIDER_LABELS:
@@ -183,13 +188,39 @@ class AiSettingsController:
             settings.ollama_residency_mode = ollama_residency_mode
         if ollama_resident_model is not None:
             settings.ollama_resident_model = ollama_resident_model.strip()
+        previous_force_igpu = settings.ollama_force_igpu
+        if ollama_force_igpu is not None:
+            settings.ollama_force_igpu = bool(ollama_force_igpu)
         if normalized_provider == "ollama":
             settings.selected_model = normalized_model
         elif normalized_provider == "openai":
             settings.openai_model = normalized_model
         else:
             settings.anthropic_model = normalized_model
-        save_settings(settings, self._settings_path)
+        settings.validate()
+        acceleration_changed = settings.ollama_force_igpu != previous_force_igpu
+        apply_acceleration = (
+            ollama_force_igpu is not None
+            and (settings.ollama_force_igpu or acceleration_changed)
+        )
+        if apply_acceleration:
+            configurer = self._ollama_igpu_configurer
+            if configurer is None:
+                from paper_organizer.infra.ollama_acceleration import (
+                    configure_ollama_igpu,
+                )
+
+                configurer = configure_ollama_igpu
+            configurer(settings.ollama_force_igpu)
+        try:
+            save_settings(settings, self._settings_path)
+        except Exception:
+            if acceleration_changed:
+                try:
+                    configurer(previous_force_igpu)
+                except Exception:
+                    pass
+            raise
         return self.view()
 
     def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
