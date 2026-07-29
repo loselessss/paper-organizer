@@ -485,7 +485,11 @@ def _summarize_with_json_retry(
     try:
         return provider.summarize(request), 0
     except ProviderError as exc:
-        if request.json_retry or not _is_summary_format_error(exc):
+        if (
+            request.json_retry
+            or request.json_repair
+            or not _is_summary_format_error(exc)
+        ):
             raise
     retry_request = replace(
         request,
@@ -495,10 +499,21 @@ def _summarize_with_json_retry(
     try:
         return provider.summarize(retry_request), 1
     except ProviderError as exc:
+        if not _is_summary_format_error(exc):
+            raise
+    repair_request = replace(
+        request,
+        prompt_version=f"{request.prompt_version}-json-repair",
+        json_repair=True,
+    )
+    try:
+        return provider.summarize(repair_request), 2
+    except ProviderError as exc:
         if _is_summary_format_error(exc):
             raise ProviderError(
-                "AI가 두 번 연속 올바른 JSON 형식을 만들지 못했습니다. "
-                "같은 논문을 다시 시도하거나 더 큰 모델을 선택하세요."
+                "AI가 형식 교정 프롬프트를 포함해 세 번 연속 올바른 JSON을 "
+                "만들지 못했습니다. 같은 논문을 다시 시도하거나 더 큰 모델을 "
+                "선택하세요."
             ) from None
         raise
 

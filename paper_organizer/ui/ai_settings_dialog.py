@@ -47,7 +47,8 @@ class AiSettingsDialog(QDialog):
         super().__init__(parent)
         self._controller = controller
         self.setWindowTitle("요약 엔진 옵션")
-        self.resize(760, 760)
+        self.resize(1120, 720)
+        self.setMinimumWidth(980)
         self._scan_worker: _HardwareScanWorker | None = None
         self._recommended_model = ""
 
@@ -62,16 +63,14 @@ class AiSettingsDialog(QDialog):
         )
         self.engine_changes_label.setWordWrap(True)
         engine_layout.addWidget(self.engine_changes_label)
-        form = QFormLayout()
+
+        engine_columns = QHBoxLayout()
+        self.provider_group = QGroupBox("제공자·출력")
+        form = QFormLayout(self.provider_group)
         self.provider_combo = QComboBox()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_refresh_button = QPushButton("새로고침")
-        model_row = QWidget()
-        model_layout = QHBoxLayout(model_row)
-        model_layout.setContentsMargins(0, 0, 0, 0)
-        model_layout.addWidget(self.model_combo, 1)
-        model_layout.addWidget(self.model_refresh_button)
         self.model_status = QLabel("")
         self.model_status.setWordWrap(True)
         self.model_status.setStyleSheet("color: #666;")
@@ -116,8 +115,6 @@ class AiSettingsDialog(QDialog):
         self.budget_spin.setSpecialValueText("앱 자체 제한 없음")
 
         form.addRow("제공자", self.provider_combo)
-        form.addRow("모델", model_row)
-        form.addRow("", self.model_status)
         form.addRow("키 상태", self.key_status)
         form.addRow("API 키", key_buttons)
         form.addRow("클라우드 동의", self.consent_check)
@@ -126,12 +123,18 @@ class AiSettingsDialog(QDialog):
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
         form.addRow("월간 앱 비용 한도", self.budget_spin)
-        engine_layout.addLayout(form)
-        root.addWidget(engine_group)
+        engine_columns.addWidget(self.provider_group, 1)
 
-        local_group = QGroupBox("로컬 모델 선택 및 관리")
-        local_layout = QVBoxLayout(local_group)
+        self.local_model_group = QGroupBox("모델 선택·Ollama 설치 및 삭제")
+        local_layout = QVBoxLayout(self.local_model_group)
         local_form = QFormLayout()
+        self.manage_models_button = QPushButton("Ollama 설치·삭제…")
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.addWidget(self.model_combo, 1)
+        model_layout.addWidget(self.model_refresh_button)
+        model_layout.addWidget(self.manage_models_button)
         self.model_profile_combo = QComboBox()
         self.model_profile_combo.addItem("자동 (설치 모델 우선)", "auto")
         self.model_profile_combo.addItem("속도 우선", "speed")
@@ -148,11 +151,11 @@ class AiSettingsDialog(QDialog):
         self.hardware_status.setWordWrap(True)
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
-        self.manage_models_button = QPushButton("Ollama 모델 설치·삭제…")
+        local_form.addRow("활성 모델", model_row)
+        local_form.addRow("", self.model_status)
         local_form.addRow("추천 프로필", profile_row)
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
-        local_form.addRow("모델 관리", self.manage_models_button)
         local_layout.addLayout(local_form)
         self.model_candidates = QPlainTextEdit()
         self.model_candidates.setReadOnly(True)
@@ -162,13 +165,15 @@ class AiSettingsDialog(QDialog):
         )
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
-            "설치된 모델은 위 모델 목록에서 고르는 즉시 활성 모델로 저장됩니다. "
-            "새 모델 다운로드와 삭제는 모델 관리에서 사용자가 승인한 경우에만 실행합니다."
+            "설치된 모델을 고르면 즉시 활성 모델로 저장됩니다. 옆의 설치·삭제에서 "
+            "다운로드와 제거를 한 화면에서 관리하며, 파일 변경은 사용자 승인 후 실행합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
         local_layout.addWidget(local_note)
-        root.addWidget(local_group)
+        engine_columns.addWidget(self.local_model_group, 1)
+        engine_layout.addLayout(engine_columns)
+        root.addWidget(engine_group)
 
         note = QLabel(
             "API 키는 설정 JSON에 저장하지 않고 Windows 자격 증명 저장소에 "

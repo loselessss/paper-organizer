@@ -149,6 +149,82 @@ class UpdateServiceTests(unittest.TestCase):
             self.assertEqual(progress[-1].completed_bytes, len(content))
             self.assertEqual(progress[-1].total_bytes, len(content))
 
+    def test_download_reuses_verified_cached_installer(self):
+        content = b"verified installer bytes"
+        payload = release_payload(content=content)
+        calls = 0
+
+        def opener(_request, timeout):
+            nonlocal calls
+            calls += 1
+            return FakeResponse(payload)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            destination = root / "PaperOrganizer_Setup_1.2.0.exe"
+            destination.write_bytes(content)
+            service = GitHubUpdateService(
+                "1.1.0", opener=opener, download_root=root
+            )
+            update = service.check()
+            progress = []
+
+            reused = service.download(update, progress=progress.append)
+
+            self.assertEqual(reused, destination)
+            self.assertEqual(calls, 1)
+            self.assertEqual(progress[-1].completed_bytes, len(content))
+            self.assertEqual(progress[-1].bytes_per_second, 0.0)
+
+    def test_download_replaces_invalid_cached_installer(self):
+        content = b"verified installer bytes"
+        payload = release_payload(content=content)
+        calls = 0
+
+        def opener(_request, timeout):
+            nonlocal calls
+            calls += 1
+            return FakeResponse(payload if calls == 1 else content)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            destination = root / "PaperOrganizer_Setup_1.2.0.exe"
+            destination.write_bytes(b"broken")
+            service = GitHubUpdateService(
+                "1.1.0", opener=opener, download_root=root
+            )
+            update = service.check()
+
+            downloaded = service.download(update)
+
+            self.assertEqual(downloaded.read_bytes(), content)
+            self.assertEqual(calls, 2)
+
+    def test_cleanup_keeps_only_latest_future_installer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stale = root / "PaperOrganizer_Setup_1.6.1.exe"
+            old_future = root / "PaperOrganizer_Setup_1.7.0.exe"
+            newest_future = root / "PaperOrganizer_Setup_1.8.0.exe"
+            partial = root / "PaperOrganizer_Setup_1.8.0.exe.part"
+            unrelated = root / "keep-me.exe"
+            for path in (stale, old_future, newest_future, partial, unrelated):
+                path.write_bytes(b"x")
+            service = GitHubUpdateService("1.6.1", download_root=root)
+
+            removed = service.cleanup_downloads()
+
+            self.assertEqual(
+                {path.name for path in removed},
+                {
+                    stale.name,
+                    old_future.name,
+                    partial.name,
+                },
+            )
+            self.assertTrue(newest_future.exists())
+            self.assertTrue(unrelated.exists())
+
     def test_download_removes_partial_file_after_digest_failure(self):
         content = b"verified installer bytes"
         payload = release_payload(content=content)

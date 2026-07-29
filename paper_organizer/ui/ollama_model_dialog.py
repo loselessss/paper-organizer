@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from threading import Event
 import time
 
@@ -268,24 +269,31 @@ class OllamaModelDialog(QDialog):
             self._controller.select_ollama_model(model.name)
             self.model_verified.emit(model.name)
             installed_now = self._operation == "install"
+            self._mark_refresh_after_operation(
+                needed=self._operation == "install"
+            )
             QMessageBox.information(
                 self,
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
                 "활성 Ollama 모델로 선택하고 설정에 저장했습니다.",
             )
-            self._refresh_after_operation = self._operation == "install"
             return
         if self._operation == "delete":
             cleared = bool(result)
-            self.model_deleted.emit(self._operation_model, cleared)
+            deleted_model = self._operation_model
+            self._apply_deleted_model(deleted_model)
+            self.model_deleted.emit(deleted_model, cleared)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+            self.progress.setFormat("삭제 완료")
+            self._mark_refresh_after_operation()
             suffix = " 활성 모델 선택도 비웠습니다." if cleared else ""
             QMessageBox.information(
                 self,
                 "모델 삭제 완료",
                 "선택한 Ollama 모델을 삭제했습니다." + suffix,
             )
-            self._refresh_after_operation = True
 
     def _operation_failed(self, message: str) -> None:
         self.progress.setRange(0, 100)
@@ -305,9 +313,17 @@ class OllamaModelDialog(QDialog):
         self._operation = ""
         self._operation_model = ""
         self._update_actions()
-        if self._refresh_after_operation:
-            self._refresh_after_operation = False
-            QTimer.singleShot(0, self.refresh)
+        self._schedule_pending_refresh()
+
+    def _mark_refresh_after_operation(self, *, needed: bool = True) -> None:
+        self._refresh_after_operation = needed
+        self._schedule_pending_refresh()
+
+    def _schedule_pending_refresh(self) -> None:
+        if self._worker is not None or not self._refresh_after_operation:
+            return
+        self._refresh_after_operation = False
+        QTimer.singleShot(0, self.refresh)
 
     def _setup_runtime(self) -> None:
         """Ask before installing, then install or start Ollama in a worker."""
@@ -445,6 +461,36 @@ class OllamaModelDialog(QDialog):
             self.installed_models.addItem(item)
         self.installed_models.blockSignals(False)
         self._selection_changed()
+
+    def _apply_deleted_model(self, model: str) -> None:
+        """Remove a confirmed deletion from the view before the API refresh."""
+
+        if self._snapshot is None:
+            return
+        key = model.strip().casefold().removesuffix(":latest")
+        entries = []
+        for entry in self._snapshot.entries:
+            entry_key = entry.model_id.casefold().removesuffix(":latest")
+            if entry_key != key:
+                entries.append(entry)
+                continue
+            if entry.estimated_download_gb is None:
+                continue
+            entries.append(
+                replace(
+                    entry,
+                    installed=False,
+                    installed_size_gb=0.0,
+                    parameter_size="",
+                    quantization="",
+                    managed_by_app=False,
+                )
+            )
+        if self._preferred_model.casefold().removesuffix(":latest") == key:
+            self._preferred_model = ""
+        self._apply_snapshot(
+            replace(self._snapshot, entries=tuple(entries))
+        )
 
     def _selection_changed(self) -> None:
         entry = self._selected_entry()

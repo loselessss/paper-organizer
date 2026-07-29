@@ -90,8 +90,14 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             self.assertEqual(
                 dialog.manage_models_button.text(),
-                "Ollama 모델 설치·삭제…",
+                "Ollama 설치·삭제…",
             )
+            self.assertEqual(dialog.provider_group.title(), "제공자·출력")
+            self.assertEqual(
+                dialog.local_model_group.title(),
+                "모델 선택·Ollama 설치 및 삭제",
+            )
+            self.assertGreaterEqual(dialog.minimumWidth(), 980)
             self.assertEqual(model_dialog.install_button.text(), "다운로드 후 선택")
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
@@ -275,6 +281,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(controller.stop_calls, 1)
 
     def test_model_manager_opens_on_the_recommended_model(self):
+        from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QMessageBox
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -364,6 +371,26 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.progress.value(), 80)
             dialog._progress_changed(OllamaPullProgress("pulling", 10, 100))
             self.assertEqual(dialog.progress.value(), 80)
+            refresh_flag_during_message = []
+            dialog._operation = "delete"
+            dialog._operation_model = "gemma3:12b"
+            dialog._worker = object()
+            with mock.patch.object(
+                QMessageBox,
+                "information",
+                side_effect=lambda *_args: refresh_flag_during_message.append(
+                    dialog._refresh_after_operation
+                ),
+            ):
+                dialog._operation_completed(False)
+            installed_after_delete = {
+                dialog.installed_models.item(row).data(Qt.UserRole)
+                for row in range(dialog.installed_models.count())
+            }
+            self.assertNotIn("gemma3:12b", installed_after_delete)
+            self.assertEqual(refresh_flag_during_message, [True])
+            self.assertEqual(dialog.progress.format(), "삭제 완료")
+            dialog._worker = None
             dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):

@@ -20,6 +20,17 @@ class MemorySecretStore:
         self.values.pop(provider, None)
 
 
+class RecoveringModelManager:
+    def __init__(self):
+        self.calls = 0
+
+    def installed_models(self):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("Ollama에 연결할 수 없습니다.")
+        return ("qwen3:1.7b", "qwen3:4b")
+
+
 class AiSettingsControllerTests(unittest.TestCase):
     def test_saves_provider_preferences_without_api_key(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -121,6 +132,36 @@ class AiSettingsControllerTests(unittest.TestCase):
             self.assertEqual(view.model, "qwen3:8b")
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["selected_model"], "qwen3:8b")
+
+    def test_installed_models_start_stopped_ollama_and_retry(self):
+        manager = RecoveringModelManager()
+        starts = []
+        controller = AiSettingsController(
+            MemorySecretStore(),
+            Path("unused.json"),
+            model_manager=manager,
+            ollama_starter=lambda: starts.append(True) or True,
+        )
+
+        models = controller.installed_ollama_models()
+
+        self.assertEqual(models, ("qwen3:1.7b", "qwen3:4b"))
+        self.assertEqual(starts, [True])
+        self.assertEqual(manager.calls, 2)
+
+    def test_installed_models_report_runtime_start_failure(self):
+        manager = RecoveringModelManager()
+        controller = AiSettingsController(
+            MemorySecretStore(),
+            Path("unused.json"),
+            model_manager=manager,
+            ollama_starter=lambda: False,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "시작 메뉴에서 Ollama를 실행"):
+            controller.installed_ollama_models()
+
+        self.assertEqual(manager.calls, 1)
 
 
 if __name__ == "__main__":

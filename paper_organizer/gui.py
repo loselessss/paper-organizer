@@ -9,6 +9,7 @@ def main() -> int:
     from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QApplication, QDialog
 
+    from paper_organizer import __version__
     from paper_organizer.application.ai_settings import AiSettingsController
     from paper_organizer.application.background_analysis import BackgroundAnalysisService
     from paper_organizer.application.conversational_search import (
@@ -17,6 +18,7 @@ def main() -> int:
     from paper_organizer.application.lifecycle import LifecycleSettingsController
     from paper_organizer.application.library_workflow import LibraryWorkflowController
     from paper_organizer.application.summary_service import SummaryController
+    from paper_organizer.application.update_service import GitHubUpdateService
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
     from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
@@ -29,6 +31,7 @@ def main() -> int:
     single_instance = SingleInstanceGuard()
     if not single_instance.acquire():
         return 0
+    GitHubUpdateService(__version__).cleanup_downloads()
     from paper_organizer.application.background_ocr import stop_active_ocr_workers
 
     app.aboutToQuit.connect(stop_active_ocr_workers)

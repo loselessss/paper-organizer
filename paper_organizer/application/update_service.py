@@ -93,6 +93,55 @@ class GitHubUpdateService:
         self._open = opener
         self._download_root = download_root
 
+    def _downloads_directory(self) -> Path:
+        return self._download_root or (
+            Path(tempfile.gettempdir()) / "PaperOrganizer" / "updates"
+        )
+
+    def cleanup_downloads(self) -> tuple[Path, ...]:
+        """Remove stale managed downloads while retaining one future installer."""
+
+        root = self._downloads_directory()
+        if not root.is_dir():
+            return ()
+        removed: list[Path] = []
+        future_installers: list[tuple[tuple[int, int, int], Path]] = []
+        current = _version_tuple(self.current_version)
+        try:
+            entries = tuple(root.iterdir())
+        except OSError:
+            return ()
+        for path in entries:
+            if not path.is_file():
+                continue
+            name = path.name
+            if name.casefold().endswith(".exe.part"):
+                installer_name = name[:-5]
+                if _INSTALLER_RE.fullmatch(installer_name):
+                    self._try_remove(path, removed)
+                continue
+            match = _INSTALLER_RE.fullmatch(name)
+            if match is None:
+                continue
+            version = _version_tuple(match.group(1))
+            if version <= current:
+                self._try_remove(path, removed)
+            else:
+                future_installers.append((version, path))
+
+        future_installers.sort(key=lambda item: item[0], reverse=True)
+        for _version, path in future_installers[1:]:
+            self._try_remove(path, removed)
+        return tuple(removed)
+
+    @staticmethod
+    def _try_remove(path: Path, removed: list[Path]) -> None:
+        try:
+            path.unlink()
+        except OSError:
+            return
+        removed.append(path)
+
     def check(self) -> AvailableUpdate | None:
         request = Request(
             GITHUB_API_URL,
@@ -182,12 +231,27 @@ class GitHubUpdateService:
             raise UpdateError(
                 "설치파일의 SHA-256 정보가 없어 자동 업데이트를 진행할 수 없습니다."
             )
-        root = self._download_root or (
-            Path(tempfile.gettempdir()) / "PaperOrganizer" / "updates"
-        )
+        root = self._downloads_directory()
         root.mkdir(parents=True, exist_ok=True)
         destination = root / asset.name
         partial = destination.with_suffix(destination.suffix + ".part")
+        if destination.is_file():
+            if self._cached_installer_is_valid(destination, asset):
+                if progress is not None:
+                    progress(
+                        UpdateDownloadProgress(
+                            completed_bytes=destination.stat().st_size,
+                            total_bytes=asset.size,
+                            bytes_per_second=0.0,
+                        )
+                    )
+                return destination
+            try:
+                destination.unlink()
+            except OSError as exc:
+                raise UpdateError(
+                    f"손상된 업데이트 설치 파일을 교체하지 못했습니다: {exc}"
+                ) from None
         digest = hashlib.sha256()
         completed = 0
         started = time.monotonic()
@@ -234,6 +298,21 @@ class GitHubUpdateService:
             raise UpdateError("설치파일 SHA-256 검증에 실패했습니다.")
         os.replace(partial, destination)
         return destination
+
+    @staticmethod
+    def _cached_installer_is_valid(
+        destination: Path, asset: ReleaseAsset
+    ) -> bool:
+        try:
+            if asset.size and destination.stat().st_size != asset.size:
+                return False
+            digest = hashlib.sha256()
+            with destination.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        except OSError:
+            return False
+        return digest.hexdigest().lower() == asset.sha256
 
     def launch_installer(self, path: Path) -> None:
         installer = path.resolve()

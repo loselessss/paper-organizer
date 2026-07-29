@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from paper_organizer.application.local_ai import (
     LocalAiAssessment,
@@ -69,6 +70,7 @@ class AiSettingsController:
         settings_path: Path | None = None,
         local_ai: LocalAiAssessmentService | None = None,
         model_manager: OllamaModelManagerService | None = None,
+        ollama_starter: Callable[[], bool] | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
@@ -76,6 +78,7 @@ class AiSettingsController:
         self._model_manager = model_manager or OllamaModelManagerService(
             self._settings_path
         )
+        self._ollama_starter = ollama_starter
 
     @property
     def settings_path(self) -> Path:
@@ -186,7 +189,25 @@ class AiSettingsController:
         return self._model_manager.snapshot()
 
     def installed_ollama_models(self) -> tuple[str, ...]:
-        return self._model_manager.installed_models()
+        try:
+            return self._model_manager.installed_models()
+        except RuntimeError as initial_error:
+            starter = self._ollama_starter
+            if starter is None:
+                from paper_organizer.infra.ollama_installer import start_runtime
+
+                starter = start_runtime
+            if not starter():
+                raise RuntimeError(
+                    "Ollama가 설치되어 있지만 실행할 수 없습니다. "
+                    "시작 메뉴에서 Ollama를 실행한 뒤 새로고침하세요."
+                ) from initial_error
+            try:
+                return self._model_manager.installed_models()
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Ollama를 시작했지만 설치 모델을 확인하지 못했습니다: {exc}"
+                ) from exc
 
     def plan_ollama_install(self, model: str):
         return self._model_manager.plan_install(model)

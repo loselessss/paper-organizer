@@ -164,7 +164,47 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(execution.provenance["app_version"], __version__)
         self.assertTrue(execution.result.prompt_version.endswith("-json-retry"))
 
-    def test_repeated_invalid_json_reports_a_korean_recovery_hint(self):
+    def test_two_invalid_json_responses_use_a_distinct_repair_prompt(self):
+        class InvalidTwiceThenValidClient:
+            def __init__(self):
+                self.calls = []
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append(payload)
+                content = (
+                    '{"summary": "unfinished"'
+                    if len(self.calls) < 3
+                    else json.dumps(SUMMARY)
+                )
+                return {"message": {"content": content}}
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Introduction\nMain academic evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = InvalidTwiceThenValidClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(len(client.calls), 3)
+        repair_instructions = client.calls[2]["messages"][0]["content"]
+        self.assertIn("FINAL JSON RECOVERY MODE", repair_instructions)
+        self.assertIn('"summary":""', repair_instructions)
+        self.assertEqual(execution.json_retry_count, 2)
+        self.assertTrue(execution.result.prompt_version.endswith("-json-repair"))
+
+    def test_three_invalid_json_responses_report_a_korean_recovery_hint(self):
         class AlwaysInvalidClient:
             def __init__(self):
                 self.calls = 0
@@ -185,7 +225,7 @@ class SummaryServiceTests(unittest.TestCase):
         )
         client = AlwaysInvalidClient()
 
-        with self.assertRaisesRegex(ProviderError, "두 번 연속"):
+        with self.assertRaisesRegex(ProviderError, "세 번 연속"):
             run_prepared_summary(
                 prepared,
                 settings,
@@ -193,7 +233,7 @@ class SummaryServiceTests(unittest.TestCase):
                 http_client=client,
             )
 
-        self.assertEqual(client.calls, 2)
+        self.assertEqual(client.calls, 3)
 
     def test_bibliography_is_extracted_separately_from_first_page(self):
         settings = AppSettings(

@@ -183,6 +183,7 @@ class SummaryRequest:
     output_language: str = "ko"
     stage: str = "direct"
     json_retry: bool = False
+    json_repair: bool = False
     language_retry: bool = False
     advanced_analysis: bool = True
 
@@ -202,6 +203,10 @@ class SummaryRequest:
             raise ValueError("stage must be direct, section or synthesis")
         if not isinstance(self.json_retry, bool):
             raise ValueError("json_retry must be a boolean")
+        if not isinstance(self.json_repair, bool):
+            raise ValueError("json_repair must be a boolean")
+        if self.json_retry and self.json_repair:
+            raise ValueError("json_retry and json_repair cannot both be enabled")
         if not isinstance(self.language_retry, bool):
             raise ValueError("language_retry must be a boolean")
         if not isinstance(self.advanced_analysis, bool):
@@ -457,6 +462,27 @@ def system_instructions(request: SummaryRequest) -> str:
         if request.json_retry
         else ""
     )
+    json_repair = ""
+    if request.json_repair:
+        schema = (
+            SUMMARY_SCHEMA
+            if request.advanced_analysis
+            else BASIC_SUMMARY_SCHEMA
+        )
+        empty_value = {
+            name: [] if definition.get("type") == "array" else ""
+            for name, definition in schema["properties"].items()
+        }
+        json_repair = (
+            " FINAL JSON RECOVERY MODE: Both earlier attempts failed JSON validation. "
+            "Use a different response strategy: first decide each value silently, then "
+            "serialize exactly one compact JSON object modeled on this type-correct "
+            f"template: {json.dumps(empty_value, ensure_ascii=False, separators=(',', ':'))}. "
+            "Replace template values only with evidence from the document. Keep every "
+            "key exactly once, use double quotes, escape embedded quotes and line breaks, "
+            "close every string, array, and object, and output nothing before or after "
+            "the JSON object. Do not use markdown."
+        )
     language_retry = (
         " The previous response violated the OUTPUT LANGUAGE CONTRACT. Rewrite the "
         "complete JSON response in the requested language. Do not reuse explanatory "
@@ -486,7 +512,8 @@ def system_instructions(request: SummaryRequest) -> str:
         )
     return (
         f"{language} {SYSTEM_INSTRUCTIONS}{stage}{json_retry}"
-        f"{language_retry}{analysis_scope}{classification}{language_reminder}"
+        f"{json_repair}{language_retry}{analysis_scope}{classification}"
+        f"{language_reminder}"
     )
 
 
