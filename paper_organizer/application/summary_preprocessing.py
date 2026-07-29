@@ -62,6 +62,13 @@ _FIGURE_CAPTION_RE = re.compile(
     r"|^\s*(?:그림|도표|표)\s*\d+(?:[.\-:]\d+)*\b",
     re.IGNORECASE,
 )
+_GENERIC_DOCUMENT_HEADING_RE = re.compile(
+    r"^(?:"
+    r"(?:open\s+access\s+)?(?:research|original|review|case|short|brief)\s+article"
+    r"|article|open\s+access|research\s+paper|original\s+research"
+    r")$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,15 @@ class PreprocessedDocument:
     sections: tuple[SectionContext, ...]
     included_pdf_pages: tuple[int, ...]
     regex_facts: tuple[str, ...]
+
+
+def is_generic_document_heading(value: str) -> bool:
+    """Return whether a heading describes the document type, not its title."""
+
+    normalized = " ".join(str(value or "").split()).strip(" .:_-")
+    return bool(
+        normalized and _GENERIC_DOCUMENT_HEADING_RE.fullmatch(normalized)
+    )
 
 
 def remove_figure_and_table_captions(page_texts: Sequence[str]) -> tuple[str, ...]:

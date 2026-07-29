@@ -32,6 +32,9 @@ from paper_organizer.application.summary_service import (
     PreparedSummary,
     SummaryExecution,
 )
+from paper_organizer.application.summary_preprocessing import (
+    is_generic_document_heading,
+)
 from paper_organizer.core.classifier import (
     TaxonomyError,
     classify_text,
@@ -66,6 +69,7 @@ from paper_organizer.core.paperpack import (
     replace_paperpack_pdf,
     update_paperpack,
 )
+from paper_organizer.core.patent import patent_index_numbers
 from paper_organizer.core.search_index import (
     SearchHit,
     SearchIndexError,
@@ -710,6 +714,8 @@ def _is_usable_title(value: str) -> bool:
         return False
     if re.search(r"[\u00c0-\u00ff]{3,}", value):
         return False
+    if is_generic_document_heading(value):
+        return False
     folded = value.casefold().strip(" ._-")
     if re.fullmatch(
         r"(?:untitled|document|scan|제목\s*없음)(?:[\s._-]*\d+)?",
@@ -879,9 +885,6 @@ _KOREAN_ADDRESS_RE = re.compile(
     r"\([^)]*(?:동|읍|면|리)[^)]*\)"
     r")"
 )
-from paper_organizer.core.patent import patent_index_numbers
-
-
 def _korean_inid_parties(
     blocks: dict[str, list[str]],
     codes: tuple[str, ...],
@@ -1934,12 +1937,85 @@ class LibraryWorkflowController:
             raise LibraryWorkflowError("PaperPack 또는 파일 식별자가 없습니다.")
         if not source_hash:
             raise LibraryWorkflowError("번역할 AI 분석 내용이 없습니다.")
+        self.archive_analysis_translation(entry)
         return self._queue().enqueue_translation(
             path=entry.sidecar_path,
             file_sha256=file_sha256,
             title=entry.metadata.title or entry.sidecar_path.stem,
             source_hash=source_hash,
         )
+
+    def archive_analysis_translation(self, entry: LibraryEntry) -> bool:
+        """Keep only the current translation as a one-step PaperPack backup."""
+
+        sidecar = entry.sidecar_path.expanduser().resolve()
+        current = load_record(sidecar)
+        translations = current.get("translations")
+        translations = translations if isinstance(translations, dict) else {}
+        group = translations.get("analysis")
+        group = group if isinstance(group, dict) else {}
+        active = group.get("ko")
+        if not isinstance(active, dict):
+            return False
+        group["previous_ko"] = active
+        group.pop("ko", None)
+        translations["analysis"] = group
+        current["translations"] = translations
+        now = _now_iso()
+        current.setdefault("workflow", {})["updated_at"] = now
+        try:
+            if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+                update_paperpack(
+                    sidecar,
+                    current,
+                    changed_by="user:translation-retry",
+                )
+            else:
+                _atomic_json_write(sidecar, current)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"기존 AI 번역을 보관하지 못했습니다: {exc}"
+            ) from None
+        self._library_cache = None
+        return True
+
+    def restore_previous_analysis_translation(self, entry: LibraryEntry) -> bool:
+        """Swap the active translation with the single PaperPack backup."""
+
+        sidecar = entry.sidecar_path.expanduser().resolve()
+        current = load_record(sidecar)
+        translations = current.get("translations")
+        translations = translations if isinstance(translations, dict) else {}
+        group = translations.get("analysis")
+        group = group if isinstance(group, dict) else {}
+        previous = group.get("previous_ko")
+        if not isinstance(previous, dict):
+            return False
+        active = group.get("ko")
+        group["ko"] = previous
+        if isinstance(active, dict):
+            group["previous_ko"] = active
+        else:
+            group.pop("previous_ko", None)
+        translations["analysis"] = group
+        current["translations"] = translations
+        now = _now_iso()
+        current.setdefault("workflow", {})["updated_at"] = now
+        try:
+            if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+                update_paperpack(
+                    sidecar,
+                    current,
+                    changed_by="user:translation-restore",
+                )
+            else:
+                _atomic_json_write(sidecar, current)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"이전 AI 번역을 복원하지 못했습니다: {exc}"
+            ) from None
+        self._library_cache = None
+        return True
 
     def approve_category_suggestion(self, entry: LibraryEntry) -> str:
         """Save an AI-proposed category only after explicit user approval."""
@@ -2096,7 +2172,12 @@ class LibraryWorkflowController:
             bibliography["venue"] = ""
 
         def replaceable(field: str, current: Any) -> bool:
-            if field in locked or sources.get(field) == "user":
+            if field in locked:
+                return False
+            if sources.get(field) == "user" and not (
+                field == "bibliography.title"
+                and is_generic_document_heading(str(current or ""))
+            ):
                 return False
             current_source = str(sources.get(field) or "")
             return (
@@ -3036,6 +3117,9 @@ class LibraryWorkflowController:
         if not isinstance(translation_group, dict):
             translation_group = {}
             translations["analysis"] = translation_group
+        existing_translation = translation_group.get("ko")
+        if isinstance(existing_translation, dict):
+            translation_group["previous_ko"] = existing_translation
         translation_group["ko"] = {
             "text": translated,
             "source_hash": expected_source_hash,

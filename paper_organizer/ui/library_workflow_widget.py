@@ -97,6 +97,18 @@ def _format_claims_for_display(value: str) -> str:
     return "\n\n".join(paragraphs)
 
 
+def _has_previous_analysis_translation(record: dict) -> bool:
+    translations = record.get("translations")
+    translations = translations if isinstance(translations, dict) else {}
+    analysis = translations.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    previous = analysis.get("previous_ko")
+    return bool(
+        isinstance(previous, dict)
+        and str(previous.get("text") or "").strip()
+    )
+
+
 def _analysis_version_label(record: dict) -> str:
     analysis = record.get("analysis")
     analysis = analysis if isinstance(analysis, dict) else {}
@@ -1548,10 +1560,19 @@ class LibraryWidget(QWidget):
             "현재 AI 분석을 한국어로 번역합니다. 원문 색인은 바꾸지 않고 "
             "번역 보기와 원문 보기를 전환합니다."
         )
+        self.restore_translation_button = QPushButton("이전 번역 복원")
+        self.restore_translation_button.setEnabled(False)
+        self.restore_translation_button.setToolTip(
+            "PaperPack에 한 건만 보관한 직전 AI 번역으로 되돌립니다."
+        )
         self.translation_button.toggled.connect(self._translation_toggled)
+        self.restore_translation_button.clicked.connect(
+            self._restore_previous_translation
+        )
         self.save_button.clicked.connect(self._save_selected)
         self.save_button.setEnabled(False)
         edit_actions.addStretch(1)
+        edit_actions.addWidget(self.restore_translation_button)
         edit_actions.addWidget(self.translation_button)
         edit_actions.addWidget(self.save_button)
         detail_layout.addLayout(edit_actions)
@@ -1849,6 +1870,10 @@ class LibraryWidget(QWidget):
             and not _analysis_failed(entry.record)
         )
         self.translation_button.setEnabled(can_translate and not queued)
+        self.restore_translation_button.setEnabled(
+            bool(entry and _has_previous_analysis_translation(entry.record))
+            and not queued
+        )
         if queued:
             self.translation_button.setText("AI 번역 대기 중…")
         elif self.translation_button.isChecked():
@@ -1876,6 +1901,7 @@ class LibraryWidget(QWidget):
                 self.translation_button.blockSignals(False)
                 QMessageBox.warning(self, "AI 번역 요청 실패", str(exc))
                 return
+            self._translation_cache.pop(path, None)
             self.translation_button.blockSignals(True)
             self.translation_button.setChecked(False)
             self.translation_button.blockSignals(False)
@@ -1888,6 +1914,29 @@ class LibraryWidget(QWidget):
             return
         self._update_translation_button(entry)
         self._render_analysis(entry)
+
+    def _restore_previous_translation(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        try:
+            restored = self._controller.restore_previous_analysis_translation(
+                entry
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "이전 번역 복원 실패", str(exc))
+            return
+        if not restored:
+            self.status_label.setText("복원할 이전 AI 번역이 없습니다.")
+            return
+        path = str(entry.sidecar_path.resolve())
+        self._translation_cache.pop(path, None)
+        self.translation_button.blockSignals(True)
+        self.translation_button.setChecked(False)
+        self.translation_button.blockSignals(False)
+        self.refresh(True)
+        self.select_path(entry.sidecar_path)
+        self.status_label.setText("PaperPack의 이전 AI 번역을 복원했습니다.")
 
     def is_translation_busy(self) -> bool:
         return False

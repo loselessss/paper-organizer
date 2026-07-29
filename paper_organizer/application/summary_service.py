@@ -16,6 +16,7 @@ from paper_organizer import __version__
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
+    is_generic_document_heading,
     preprocess_paper_text,
     remove_figure_and_table_captions,
 )
@@ -692,7 +693,11 @@ def _validate_bibliography(
 
     source = _normalize_bibliography_text(source_text)
     title = data.title.strip()
-    title_valid = bool(title) and _normalized_value_present(title, source)
+    title_valid = bool(
+        title
+        and not is_generic_document_heading(title)
+        and _normalized_value_present(title, source)
+    )
 
     authors = tuple(
         author.strip()
