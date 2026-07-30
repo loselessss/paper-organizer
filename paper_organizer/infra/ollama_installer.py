@@ -85,6 +85,30 @@ def find_ollama_executable() -> str:
     return ""
 
 
+def find_ollama_app_executable() -> str:
+    """Return the Windows tray app path without confusing it with the CLI."""
+
+    cli = find_ollama_executable()
+    candidates = []
+    if cli:
+        candidates.append(Path(cli).with_name("ollama app.exe"))
+    candidates.extend(
+        (
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Programs"
+            / "Ollama"
+            / "ollama app.exe",
+            Path(os.environ.get("ProgramFiles", ""))
+            / "Ollama"
+            / "ollama app.exe",
+        )
+    )
+    for candidate in candidates:
+        if candidate.parent.name and _is_accessible_file(candidate):
+            return str(candidate)
+    return ""
+
+
 def find_winget_executable() -> str:
     """Return the winget path, including the Store alias folder.
 
@@ -224,13 +248,18 @@ def restart_runtime(
     executable = find_ollama_executable()
     if not executable:
         return False
+    app_executable = find_ollama_app_executable()
     probe = inspector or OllamaRuntimeInspector()
     stop_managed_runtime()
     if os.name == "nt":
-        try:
-            run_command(("taskkill", "/IM", "ollama.exe", "/T", "/F"), 15)
-        except (OSError, subprocess.SubprocessError):
-            return False
+        for process_name in ("ollama app.exe", "ollama.exe"):
+            try:
+                run_command(
+                    ("taskkill", "/IM", process_name, "/T", "/F"),
+                    15,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
     else:
         return start_runtime(
             inspector=probe,
@@ -243,12 +272,19 @@ def restart_runtime(
         sleep(0.25)
     else:
         return False
-    environment = sanitized_child_environment()
-    environment["OLLAMA_HOST"] = _OLLAMA_LOOPBACK_HOST
-    try:
-        (launcher or _launch_desktop_runtime)(executable, environment)
-    except OSError:
-        return False
+    if app_executable:
+        environment = sanitized_child_environment()
+        environment["OLLAMA_HOST"] = _OLLAMA_LOOPBACK_HOST
+        try:
+            (launcher or _launch_desktop_runtime)(app_executable, environment)
+        except OSError:
+            return False
+    else:
+        return start_runtime(
+            inspector=probe,
+            timeout_seconds=timeout_seconds,
+            sleep=sleep,
+        )
     for _ in range(max(1, timeout_seconds * 2)):
         if probe.inspect().reachable:
             return True

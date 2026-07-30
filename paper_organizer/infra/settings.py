@@ -6,7 +6,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,9 @@ class AppSettings:
     background_analysis_enabled: bool = True
     model_profile: str = "auto"
     selected_model: str = ""
+    background_model: str = ""
+    manual_model: str = ""
+    background_model_resident: bool = False
     ollama_residency_mode: str = "auto"
     ollama_resident_model: str = ""
     ollama_force_igpu: bool = True
@@ -111,6 +114,12 @@ class AppSettings:
             raise ValueError("focus_categories must be selected research categories")
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
+        if not isinstance(self.background_model, str):
+            raise ValueError("background_model must be a string")
+        if not isinstance(self.manual_model, str):
+            raise ValueError("manual_model must be a string")
+        if not isinstance(self.background_model_resident, bool):
+            raise ValueError("background_model_resident must be a boolean")
         if self.ollama_residency_mode not in {
             "auto",
             "unload",
@@ -236,3 +245,41 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> Path:
             pass
         raise
     return target
+
+
+def ollama_model_for_purpose(
+    settings: AppSettings,
+    purpose: str,
+) -> str:
+    """Return the configured local model for background or manual work."""
+
+    if purpose == "background":
+        return settings.background_model.strip() or settings.selected_model.strip()
+    if purpose == "manual":
+        return settings.manual_model.strip() or settings.selected_model.strip()
+    raise ValueError("purpose must be background or manual")
+
+
+def settings_for_summary_purpose(
+    settings: AppSettings,
+    purpose: str,
+) -> AppSettings:
+    """Build request-local settings without mutating the persisted preferences."""
+
+    if settings.summary_provider != "ollama":
+        return settings
+    model = ollama_model_for_purpose(settings, purpose)
+    if purpose == "background":
+        residency_mode = (
+            "always" if settings.background_model_resident else "unload"
+        )
+    elif purpose == "manual":
+        residency_mode = "unload"
+    else:
+        raise ValueError("purpose must be background or manual")
+    return replace(
+        settings,
+        selected_model=model,
+        ollama_residency_mode=residency_mode,
+        ollama_resident_model=model,
+    )

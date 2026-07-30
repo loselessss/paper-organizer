@@ -105,14 +105,14 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(dialog.timeout_spin.value(), 900)
             self.assertFalse(dialog.model_combo.isEditable())
             self.assertEqual(dialog.model_combo.count(), 2)
-            dialog.model_combo.setCurrentIndex(
-                dialog.model_combo.findData("qwen3:4b")
+            self.assertEqual(dialog.manual_model_combo.count(), 2)
+            dialog.manual_model_combo.setCurrentIndex(
+                dialog.manual_model_combo.findData("qwen3:4b")
             )
-            self.assertEqual(
-                ai_controller.settings().selected_model,
-                "qwen3:4b",
-            )
-            self.assertIn("일반 요약", dialog.model_guidance.text())
+            self.assertEqual(ai_controller.settings().selected_model, "")
+            self.assertIn("저장 버튼", dialog.model_status.text())
+            self.assertIn("백그라운드 1~2B급", dialog.model_guidance.text())
+            self.assertIn("수동 정밀 3~4B급", dialog.model_guidance.text())
             self.assertIn("기여·한계 미지원", dialog.model_guidance.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             with mock.patch.object(dialog, "_scan_hardware") as scan_hardware:
@@ -120,9 +120,9 @@ class UiSmokeTests(unittest.TestCase):
                     dialog.model_profile_combo.findData("balanced")
                 )
                 scan_hardware.assert_called_once_with()
-            self.assertEqual(dialog.residency_combo.currentData(), "auto")
-            self.assertEqual(dialog.resident_model_combo.count(), 2)
-            self.assertIn("미리 적재하지 않으며", dialog.residency_guidance.text())
+            self.assertFalse(dialog.background_resident_check.isChecked())
+            self.assertIn("체크 안 됨", dialog.residency_guidance.text())
+            self.assertIn("수동 요약 모델은 항상", dialog.residency_guidance.text())
             self.assertTrue(dialog.force_igpu_check.isChecked())
             self.assertIn("1.7B", dialog.igpu_guidance.text())
             self.assertIn("GPU 사용을 보장하지 않으며", dialog.igpu_guidance.text())
@@ -136,6 +136,7 @@ class UiSmokeTests(unittest.TestCase):
                 "모델 선택·Ollama 설치 및 삭제",
             )
             self.assertLessEqual(dialog.minimumWidth(), 620)
+            self.assertLessEqual(window.minimumSizeHint().width(), 1400)
             self.assertTrue(dialog.scroll_area.widgetResizable())
             dialog.resize(800, 700)
             dialog._update_responsive_layout()
@@ -458,7 +459,7 @@ class UiSmokeTests(unittest.TestCase):
                 dialog.model_table.item(recommended_row, 0).text(),
                 "★ 1",
             )
-            self.assertIn("정밀 요약", dialog.model_detail.text())
+            self.assertIn("고급 분석 8B+", dialog.model_detail.text())
             self.assertIn("품질 82.5/100", dialog.model_detail.text())
             self.assertIn(
                 "빠르고 안정적인 서지정보 입력",

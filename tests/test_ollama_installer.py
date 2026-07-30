@@ -9,6 +9,7 @@ from paper_organizer.infra.ollama_installer import (
     OLLAMA_DOWNLOAD_URL,
     WINGET_PACKAGE_ID,
     ensure_runtime,
+    find_ollama_app_executable,
     find_winget_executable,
     inspect_runtime,
     restart_runtime,
@@ -105,6 +106,20 @@ class FindWingetTests(unittest.TestCase):
             self.assertEqual(find_winget_executable(), "")
 
 
+class FindOllamaAppTests(unittest.TestCase):
+    def test_desktop_app_is_found_next_to_the_cli(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cli = Path(temp) / "ollama.exe"
+            app = Path(temp) / "ollama app.exe"
+            cli.write_bytes(b"")
+            app.write_bytes(b"")
+            with mock.patch(
+                "paper_organizer.infra.ollama_installer.find_ollama_executable",
+                return_value=str(cli),
+            ):
+                self.assertEqual(find_ollama_app_executable(), str(app))
+
+
 class ManagedRuntimeTests(unittest.TestCase):
     def test_stopped_runtime_starts_on_the_loopback_endpoint(self):
         process = mock.Mock()
@@ -159,6 +174,9 @@ class ManagedRuntimeTests(unittest.TestCase):
             "paper_organizer.infra.ollama_installer.find_ollama_executable",
             return_value="C:/ollama.exe",
         ), mock.patch(
+            "paper_organizer.infra.ollama_installer.find_ollama_app_executable",
+            return_value="C:/ollama app.exe",
+        ), mock.patch(
             "paper_organizer.infra.ollama_installer.stop_managed_runtime",
             return_value=False,
         ), mock.patch.dict(
@@ -180,8 +198,11 @@ class ManagedRuntimeTests(unittest.TestCase):
             )
 
         self.assertTrue(result)
-        self.assertEqual(commands[0][0][:3], ("taskkill", "/IM", "ollama.exe"))
-        self.assertEqual(launches[0][0], "C:/ollama.exe")
+        self.assertEqual(
+            [command[0][2] for command in commands],
+            ["ollama app.exe", "ollama.exe"],
+        )
+        self.assertEqual(launches[0][0], "C:/ollama app.exe")
         self.assertEqual(launches[0][1]["OLLAMA_IGPU_ENABLE"], "1")
         self.assertNotIn("OPENAI_API_KEY", launches[0][1])
 

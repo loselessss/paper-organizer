@@ -6,8 +6,10 @@ from pathlib import Path
 from paper_organizer.application.local_ai import LocalAiAssessmentService
 from paper_organizer.core.model_recommendation import (
     load_model_catalog,
+    memory_tier_guidance,
     model_benchmark_summary,
     model_usage_guidance,
+    recommendation_tier_overview,
     recommend_models,
 )
 from paper_organizer.infra.hardware import GpuInfo, HardwareInspector, HardwareProfile
@@ -74,10 +76,12 @@ class LocalAiTests(unittest.TestCase):
 
         self.assertEqual(benchmark.role, "벤치마크·분류 보조")
         self.assertEqual(benchmark.hallucination_risk, "매우 높음")
-        self.assertEqual(low_spec.role, "저사양 안전 요약")
+        self.assertEqual(low_spec.role, "백그라운드 1~2B급")
         self.assertFalse(low_spec.advanced_analysis)
+        self.assertEqual(standard.role, "수동 정밀 3~4B급")
         self.assertEqual(standard.summary_strategy, "구역별 요약 후 통합")
         self.assertFalse(standard.advanced_analysis)
+        self.assertEqual(advanced.role, "고급 분석 8B+")
         self.assertTrue(advanced.advanced_analysis)
         self.assertIn("충분한 RAM", advanced.caution)
 
@@ -85,7 +89,9 @@ class LocalAiTests(unittest.TestCase):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.07.29.2")
+        self.assertEqual(version, "2026.07.30")
+        self.assertEqual(models["granite3.3:2b"].parameters_b, 2.5)
+        self.assertEqual(models["granite3.3:2b"].download_gb, 1.55)
         self.assertEqual(models["granite4.1:3b"].parameters_b, 3.0)
         self.assertEqual(models["granite4.1:3b"].download_gb, 2.1)
         self.assertEqual(models["granite4.1:3b"].recommendation_rank, 1)
@@ -208,16 +214,42 @@ class LocalAiTests(unittest.TestCase):
         )
         self.assertEqual(recommendation.recommended.rating, "권장")
 
-    def test_low_memory_auto_profile_stays_with_ultralight_model(self):
+    def test_eight_gb_auto_profile_does_not_recommend_local_ai(self):
         recommendation = recommend_models(
             hardware(total_ram=8, available_ram=6),
             ollama(),
             profile="auto",
         )
-        self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:1.7b")
+        self.assertIsNone(recommendation.recommended)
         self.assertTrue(
-            all(item.spec.parameters_b <= 8 for item in recommendation.candidates)
+            all(item.rating == "비권장" for item in recommendation.candidates)
         )
+
+    def test_sixteen_gb_auto_profile_recommends_1_7b_for_background_work(self):
+        recommendation = recommend_models(
+            hardware(total_ram=16, available_ram=8),
+            ollama("granite4.1:3b"),
+            profile="auto",
+        )
+
+        self.assertEqual(
+            recommendation.recommended.spec.model_id,
+            "qwen3:1.7b",
+        )
+
+    def test_memory_tier_guidance_explains_8_16_and_24_gb_policies(self):
+        self.assertIn("지원하지 않습니다", memory_tier_guidance(8))
+        self.assertIn("시스템 여유 1GB", memory_tier_guidance(16))
+        self.assertIn("Qwen3 1.7B", memory_tier_guidance(16))
+        self.assertIn("모델 크기를 제한하지 않고", memory_tier_guidance(24))
+
+    def test_recommendation_overview_separates_background_manual_and_advanced(self):
+        overview = recommendation_tier_overview()
+
+        self.assertIn("백그라운드 1~2B급", overview)
+        self.assertIn("수동 정밀 3~4B급", overview)
+        self.assertIn("8B+", overview)
+        self.assertIn("Granite 3.3 2B", overview)
 
     def test_manual_profile_does_not_offer_removed_large_model(self):
         recommendation = recommend_models(
@@ -247,7 +279,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "granite4.1:3b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.29.2")
+            self.assertEqual(saved.model_catalog_version, "2026.07.30")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

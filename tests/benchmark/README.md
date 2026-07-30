@@ -37,8 +37,10 @@ the benchmark.
 ## Run Qwen3 and cross-family 3B/4B candidates
 
 The runner never downloads or deletes a model. When the ignored `tests/Real`
-workspace is present, the default run uses those private user papers and keeps
-their outputs outside Git. Install the desired models in Ollama first, then run
+workspace is present, the default run uses those private user papers. PDF files,
+answer keys and raw outputs remain outside Git, while sanitized anonymous scores
+are refreshed in `score_history/real_papers_v1.json`. Install the desired models
+in Ollama first, then run
 from the repository root:
 
 ```powershell
@@ -85,7 +87,10 @@ Results are written to the selected output directory:
 - `<model>/<document>.json`: exact preview, sections, token counts, score and model JSON;
 - `run.json`: combined machine-readable result.
 
-`results/` is ignored by Git. The reported runner peak memory covers the Python
+`results/` is ignored by Git. The tracked `score_history/real_papers_v1.json`
+contains only anonymous paper IDs, scores, timings, token counts and a
+non-identifying hardware label. It intentionally excludes titles, paths, answer
+keys, prompts and model output text. The reported runner peak memory covers the Python
 preprocessor process, not the separate Ollama process; use Windows Task Manager
 or another system monitor when comparing total RAM/VRAM. A failed model/document
 is recorded and the remaining matrix continues.

@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.07.29.2",
-  "verified_at": "2026-07-29",
+  "catalog_version": "2026.07.30",
+  "verified_at": "2026-07-30",
   "benchmark_hardware": "NVIDIA GeForce RTX 3080 Ti",
   "models": [
     {
@@ -46,6 +46,28 @@
         "strengths": [
           "저사양 PC용 속도·안정성 균형",
           "서지정보 입력 첫 시도 성공"
+        ]
+      }
+    },
+    {
+      "id": "granite3.3:2b",
+      "label": "IBM Granite 3.3 2B Q4",
+      "parameters_b": 2.5,
+      "download_gb": 1.55,
+      "runtime_memory_gb": 3.5,
+      "minimum_ram_gb": 6.0,
+      "recommended_ram_gb": 8.0,
+      "tier": "ultralight",
+      "quality": 2,
+      "license": "Apache-2.0",
+      "recommended_context": 8192,
+      "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "strengths": [
+          "Granite 4 1B BF16보다 높은 메모리 효율",
+          "실논문 제목 4편 모두 정확히 복구",
+          "백그라운드 2B급 비교 후보"
         ]
       }
     },

@@ -14,6 +14,8 @@ from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
 
 
 VALID_MODEL_PROFILES = {"auto", "speed", "balanced", "quality", "manual"}
+BACKGROUND_RECOMMENDED_MODEL = "qwen3:1.7b"
+LOCAL_AI_MINIMUM_TOTAL_RAM_GB = 12.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,18 +262,19 @@ def model_usage_guidance(
         )
     if parameters < 3:
         return ModelUsageGuidance(
-            role="저사양 안전 요약",
+            role="백그라운드 1~2B급",
             hallucination_risk="높음",
             summary_strategy="짧은 구역별 요약 후 축소 통합",
             advanced_analysis=False,
             caution=(
+                "16GB급 PC의 상시 백그라운드 분석에 우선 권장합니다. "
                 "정보 누락을 허용하는 대신 결과 확인이 필요합니다. "
                 "최종 실패 시 Abstract·정규식 추출본만 표시합니다."
             ),
         )
     if parameters < 8:
         return ModelUsageGuidance(
-            role="일반 요약",
+            role="수동 정밀 3~4B급",
             hallucination_risk="주의 필요",
             summary_strategy="구역별 요약 후 통합",
             advanced_analysis=False,
@@ -281,7 +284,7 @@ def model_usage_guidance(
             ),
         )
     return ModelUsageGuidance(
-        role="정밀 요약",
+        role="고급 분석 8B+",
         hallucination_risk="상대적으로 낮지만 검증 필요",
         summary_strategy="정리된 전체 구역 직접 분석",
         advanced_analysis=True,
@@ -319,11 +322,22 @@ def recommend_models(
         )
     elif profile == "auto":
         installed = [candidate for candidate in eligible if candidate.installed]
-        recommended = (
-            _highest_stable(installed, hardware.memory_total_gb)
-            if installed
-            else _highest_stable(eligible, hardware.memory_total_gb)
+        background_choice = next(
+            (
+                candidate
+                for candidate in eligible
+                if candidate.spec.model_id == BACKGROUND_RECOMMENDED_MODEL
+            ),
+            None,
         )
+        if hardware.memory_total_gb < 24 and background_choice is not None:
+            recommended = background_choice
+        else:
+            recommended = (
+                _highest_stable(installed, hardware.memory_total_gb)
+                if installed
+                else _highest_stable(eligible, hardware.memory_total_gb)
+            )
     elif profile == "speed":
         fast = [candidate for candidate in eligible if candidate.spec.parameters_b <= 4]
         recommended = _highest_stable(fast, hardware.memory_total_gb) or _smallest(eligible)
@@ -345,7 +359,13 @@ def _assess(
     reasons: list[str] = []
     warnings: list[str] = []
     required_disk = spec.download_gb * 1.5 + 2.0
-    if hardware.memory_total_gb < spec.minimum_ram_gb:
+    if hardware.memory_total_gb < LOCAL_AI_MINIMUM_TOTAL_RAM_GB:
+        rating = "비권장"
+        warnings.append(
+            "8GB급 PC에서는 로컬 AI 분석을 지원하지 않습니다. "
+            "OpenAI·Claude API 또는 RAM 16GB 이상 PC를 권장합니다."
+        )
+    elif hardware.memory_total_gb < spec.minimum_ram_gb:
         rating = "비권장"
         warnings.append(
             f"최소 RAM {spec.minimum_ram_gb:g}GB보다 시스템 RAM이 적습니다."
@@ -356,7 +376,7 @@ def _assess(
     elif (
         hardware.memory_total_gb >= spec.recommended_ram_gb
         and hardware.memory_available_gb >= min(
-            spec.runtime_memory_gb + 2.0, hardware.memory_total_gb * 0.75
+            spec.runtime_memory_gb + 1.0, hardware.memory_total_gb * 0.75
         )
     ):
         rating = "권장"
@@ -381,6 +401,37 @@ def _assess(
         reasons.append("GPU가 없어 CPU 실행 기준으로 평가했습니다.")
     reasons.append("이미 설치된 모델입니다." if installed else f"다운로드 약 {spec.download_gb:g}GB")
     return ModelCandidate(spec, rating, installed, tuple(reasons), tuple(warnings))
+
+
+def memory_tier_guidance(total_ram_gb: float) -> str:
+    """Explain the app's deliberately simple RAM policy for local models."""
+
+    if total_ram_gb < LOCAL_AI_MINIMUM_TOTAL_RAM_GB:
+        return (
+            "8GB급 RAM: 로컬 Ollama 분석은 지원하지 않습니다. "
+            "OpenAI·Claude API 또는 RAM 16GB 이상 PC를 사용하세요."
+        )
+    if total_ram_gb < 24:
+        return (
+            "16GB급 RAM: 모델 실행 예상량 외에 시스템 여유 1GB를 남깁니다. "
+            "백그라운드 분석은 Qwen3 1.7B를 권장합니다."
+        )
+    return (
+        "24GB 이상 RAM: 모델 크기를 제한하지 않고 작업 목적과 품질에 맞게 "
+        "직접 선택할 수 있습니다. 백그라운드 효율은 Qwen3 1.7B가 좋습니다."
+    )
+
+
+def recommendation_tier_overview() -> str:
+    """Return the concise role split shown above per-model recommendations."""
+
+    return (
+        "용도별 권장: 백그라운드 1~2B급은 Qwen3 1.7B 우선, "
+        "Granite 3.3 2B는 Q4 메모리 효율 비교 후보 · "
+        "수동 정밀 3~4B급은 Granite 4.1 3B 또는 Qwen3 4B · "
+        "8B+는 기여·한계가 필요한 고급 분석용이며 모델명보다 "
+        "메모리 적합도와 구조화 성공 여부를 우선합니다."
+    )
 
 
 def _highest_stable(

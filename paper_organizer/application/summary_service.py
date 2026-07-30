@@ -22,7 +22,11 @@ from paper_organizer.application.summary_preprocessing import (
 )
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
-from paper_organizer.infra.settings import default_settings_path, load_settings
+from paper_organizer.infra.settings import (
+    default_settings_path,
+    load_settings,
+    settings_for_summary_purpose,
+)
 from paper_organizer.providers.base import (
     BibliographyData,
     BibliographyRequest,
@@ -181,24 +185,45 @@ class SummaryController:
         self._ollama_starter = ollama_starter
 
     def prepare(
-        self, pdf_path: Path, mode: SummaryMode | str = SummaryMode.QUICK
+        self,
+        pdf_path: Path,
+        mode: SummaryMode | str = SummaryMode.QUICK,
+        *,
+        purpose: str = "manual",
     ) -> PreparedSummary:
-        return prepare_summary(pdf_path, load_settings(self._settings_path), mode)
+        settings = settings_for_summary_purpose(
+            load_settings(self._settings_path),
+            purpose,
+        )
+        return prepare_summary(pdf_path, settings, mode)
 
     def prepare_text(
         self,
         source_path: Path,
         page_texts: list[str],
         mode: SummaryMode | str = SummaryMode.QUICK,
+        *,
+        purpose: str = "manual",
     ) -> PreparedSummary:
+        settings = settings_for_summary_purpose(
+            load_settings(self._settings_path),
+            purpose,
+        )
         return prepare_text_summary(
-            source_path, page_texts, load_settings(self._settings_path), mode
+            source_path, page_texts, settings, mode
         )
 
     def run(
-        self, prepared: PreparedSummary, *, allow_cloud_once: bool = False
+        self,
+        prepared: PreparedSummary,
+        *,
+        allow_cloud_once: bool = False,
+        purpose: str = "manual",
     ) -> SummaryExecution:
-        settings = load_settings(self._settings_path)
+        settings = settings_for_summary_purpose(
+            load_settings(self._settings_path),
+            purpose,
+        )
         if settings.summary_provider == "ollama":
             starter = self._ollama_starter
             if starter is None:

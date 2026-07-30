@@ -21,7 +21,11 @@ from paper_organizer.infra.ollama_runtime import (
     OllamaRuntimeStatus,
 )
 from paper_organizer.infra.secrets import SecretStore
-from paper_organizer.infra.settings import default_settings_path, load_settings
+from paper_organizer.infra.settings import (
+    default_settings_path,
+    load_settings,
+    settings_for_summary_purpose,
+)
 from paper_organizer.core.paperpack import (
     PAPERPACK_SUFFIX,
     content_pages,
@@ -57,6 +61,7 @@ class BackgroundAnalysisService:
         translation: LibraryTranslationService | None = None,
         ollama_stopper: Callable[[], bool] | None = None,
         memory_available_gb: Callable[[], float] | None = None,
+        memory_total_gb: Callable[[], float] | None = None,
     ) -> None:
         self._workflow = workflow
         self._summary = summary
@@ -66,9 +71,18 @@ class BackgroundAnalysisService:
         self._ollama_starter = ollama_starter
         self._translation = translation
         self._ollama_stopper = ollama_stopper
+        hardware = HardwareInspector()
         self._memory_available_gb = (
-            memory_available_gb or HardwareInspector().available_memory_gb
+            memory_available_gb or hardware.available_memory_gb
         )
+        if memory_total_gb is not None:
+            self._memory_total_gb = memory_total_gb
+        elif memory_available_gb is not None:
+            self._memory_total_gb = lambda: max(
+                16.0, float(self._memory_available_gb())
+            )
+        else:
+            self._memory_total_gb = hardware.total_memory_gb
         self._cancel_requested = Event()
 
     def request_cancel(self) -> None:
@@ -101,8 +115,11 @@ class BackgroundAnalysisService:
     def poll_interval(self) -> int:
         return poll_interval_seconds(load_settings(self._settings_path).resource_profile)
 
-    def readiness(self) -> AnalysisReadiness:
-        settings = load_settings(self._settings_path)
+    def readiness(self, *, purpose: str = "background") -> AnalysisReadiness:
+        settings = settings_for_summary_purpose(
+            load_settings(self._settings_path),
+            purpose,
+        )
         provider = settings.summary_provider
         if provider == "ollama":
             model = settings.selected_model.strip()
@@ -124,8 +141,8 @@ class BackgroundAnalysisService:
             memory_readiness = _ollama_memory_readiness(
                 status,
                 model,
-                settings.resource_profile,
                 self._memory_available_gb,
+                self._memory_total_gb,
             )
             if not memory_readiness.ready:
                 return memory_readiness
@@ -147,7 +164,11 @@ class BackgroundAnalysisService:
         on_start=None,
         on_progress=None,
     ) -> AnalysisRunEvent:
-        settings = load_settings(self._settings_path)
+        purpose = "manual" if force else "background"
+        settings = settings_for_summary_purpose(
+            load_settings(self._settings_path),
+            purpose,
+        )
         if not force and not settings.background_analysis_enabled:
             return AnalysisRunEvent("disabled", "백그라운드 분석이 중지되어 있습니다.")
         pending = [
@@ -235,7 +256,7 @@ class BackgroundAnalysisService:
                     next_item.queue_id,
                     next_item.title,
                 )
-        readiness = self.readiness()
+        readiness = self.readiness(purpose=purpose)
         if not readiness.ready:
             self._record_waiting_reason(next_item.queue_id, readiness.reason)
             return AnalysisRunEvent(
@@ -302,12 +323,21 @@ class BackgroundAnalysisService:
                 content = {}
             pages = [text for _number, text in content_pages(content)]
             if content.get("ocr_used") and pages:
-                prepared = self._summary.prepare_text(queued_path, pages, mode)
+                prepared = self._summary.prepare_text(
+                    queued_path,
+                    pages,
+                    mode,
+                    purpose=purpose,
+                )
             else:
                 pdf = self._workflow.materialize_pdf(queued_path)
-                prepared = self._summary.prepare(pdf, mode)
+                prepared = self._summary.prepare(
+                    pdf,
+                    mode,
+                    purpose=purpose,
+                )
             self._raise_if_cancelled()
-            execution = self._summary.run(prepared)
+            execution = self._summary.run(prepared, purpose=purpose)
             self._raise_if_cancelled()
             self._workflow.apply_analysis_result(Path(item.path), execution)
             self._workflow.remove_from_queue(item.queue_id)
@@ -409,23 +439,30 @@ def _model_key(value: str) -> str:
 def _ollama_memory_readiness(
     status: OllamaRuntimeStatus,
     selected: str,
-    resource_profile: str,
     available_memory: Callable[[], float],
+    total_memory: Callable[[], float],
 ) -> AnalysisReadiness:
     """Protect the desktop from loading a model when system RAM is exhausted."""
 
     try:
         available_gb = max(0.0, float(available_memory()))
+        total_gb = max(0.0, float(total_memory()))
     except (OSError, TypeError, ValueError):
         return AnalysisReadiness(True, "가용 메모리를 확인하지 못해 분석을 계속합니다.")
 
+    if total_gb < 12.0:
+        return AnalysisReadiness(
+            False,
+            (
+                f"시스템 RAM {total_gb:.1f}GB: 8GB급 PC에서는 로컬 AI 분석을 "
+                "안전하게 실행할 수 없습니다. OpenAI·Claude API를 사용하거나 "
+                "RAM 16GB 이상 PC에서 다시 시도하세요."
+            ),
+        )
+
     key = _model_key(selected)
     loaded = any(_model_key(model.name) == key for model in status.running_models)
-    reserve_gb = {
-        "eco": 2.0,
-        "balanced": 1.5,
-        "performance": 1.0,
-    }.get(resource_profile, 2.0)
+    reserve_gb = 1.0
     if loaded:
         required_gb = max(1.0, reserve_gb)
         if available_gb >= required_gb:

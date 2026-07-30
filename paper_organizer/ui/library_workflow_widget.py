@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -639,7 +640,7 @@ class CollectionReviewWidget(QWidget):
         self.form.set_metadata(None)
         root.addWidget(self.form)
 
-        review_actions = QHBoxLayout()
+        review_actions = QGridLayout()
         self.select_all_button = QPushButton("전체 선택")
         self.open_button = QPushButton("sPDF로 열기")
         self.organize_button = QPushButton("선택 항목 분석 큐로 보내기")
@@ -650,12 +651,14 @@ class CollectionReviewWidget(QWidget):
         self.organize_button.clicked.connect(self._organize_selected)
         self.trash_button.clicked.connect(self._trash_selected)
         self.restore_button.clicked.connect(self._restore_trash)
-        review_actions.addWidget(self.select_all_button)
         for button in (self.open_button, self.organize_button, self.trash_button):
             button.setEnabled(False)
-            review_actions.addWidget(button)
-        review_actions.addWidget(self.restore_button)
-        review_actions.addStretch(1)
+        review_actions.addWidget(self.select_all_button, 0, 0)
+        review_actions.addWidget(self.open_button, 0, 1)
+        review_actions.addWidget(self.organize_button, 1, 0)
+        review_actions.addWidget(self.trash_button, 1, 1)
+        review_actions.addWidget(self.restore_button, 2, 0)
+        review_actions.setColumnStretch(1, 1)
         root.addLayout(review_actions)
         self._reload_watch_settings()
 
@@ -1042,7 +1045,7 @@ class AnalysisQueueWidget(QWidget):
             lambda _row, _column: self._show_selected_in_library()
         )
         root.addWidget(self.table, 1)
-        actions = QHBoxLayout()
+        actions = QGridLayout()
         refresh_button = QPushButton("새로고침")
         select_all_button = QPushButton("전체 선택")
         self.priority_button = QPushButton("최우선으로 표시")
@@ -1065,15 +1068,15 @@ class AnalysisQueueWidget(QWidget):
         self.immediate_stop_button.clicked.connect(
             self.immediate_stop_background_analysis
         )
-        actions.addWidget(refresh_button)
-        actions.addWidget(select_all_button)
-        actions.addWidget(self.priority_button)
-        actions.addWidget(self.run_now_button)
-        actions.addWidget(self.remove_button)
-        actions.addWidget(self.retry_button)
-        actions.addWidget(self.background_button)
-        actions.addWidget(self.immediate_stop_button)
-        actions.addStretch(1)
+        actions.addWidget(refresh_button, 0, 0)
+        actions.addWidget(select_all_button, 0, 1)
+        actions.addWidget(self.priority_button, 0, 2)
+        actions.addWidget(self.run_now_button, 1, 0)
+        actions.addWidget(self.remove_button, 1, 1)
+        actions.addWidget(self.retry_button, 1, 2)
+        actions.addWidget(self.background_button, 2, 0)
+        actions.addWidget(self.immediate_stop_button, 2, 1)
+        actions.setColumnStretch(2, 1)
         root.addLayout(actions)
         self.status_label = QLabel()
         root.addWidget(self.status_label)

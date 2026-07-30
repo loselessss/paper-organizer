@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper_organizer.infra.settings import AppSettings, load_settings, save_settings
+from paper_organizer.infra.settings import (
+    AppSettings,
+    load_settings,
+    ollama_model_for_purpose,
+    save_settings,
+    settings_for_summary_purpose,
+)
 
 
 class SettingsTests(unittest.TestCase):
@@ -89,6 +95,50 @@ class SettingsTests(unittest.TestCase):
         ).validate()
         with self.assertRaises(ValueError):
             AppSettings(ollama_residency_mode="forever").validate()
+
+    def test_background_and_manual_models_are_selected_independently(self):
+        settings = AppSettings(
+            selected_model="legacy:2b",
+            background_model="qwen3:1.7b",
+            manual_model="qwen3:4b",
+            background_model_resident=True,
+        )
+
+        background = settings_for_summary_purpose(settings, "background")
+        manual = settings_for_summary_purpose(settings, "manual")
+
+        self.assertEqual(
+            ollama_model_for_purpose(settings, "background"),
+            "qwen3:1.7b",
+        )
+        self.assertEqual(
+            ollama_model_for_purpose(settings, "manual"),
+            "qwen3:4b",
+        )
+        self.assertEqual(background.selected_model, "qwen3:1.7b")
+        self.assertEqual(background.ollama_residency_mode, "always")
+        self.assertEqual(manual.selected_model, "qwen3:4b")
+        self.assertEqual(manual.ollama_residency_mode, "unload")
+
+    def test_legacy_single_model_remains_the_fallback_for_both_purposes(self):
+        settings = AppSettings(selected_model="qwen3:1.7b")
+
+        self.assertEqual(
+            ollama_model_for_purpose(settings, "background"),
+            "qwen3:1.7b",
+        )
+        self.assertEqual(
+            ollama_model_for_purpose(settings, "manual"),
+            "qwen3:1.7b",
+        )
+
+    def test_model_split_settings_are_validated(self):
+        with self.assertRaises(ValueError):
+            AppSettings(background_model_resident="yes").validate()
+        with self.assertRaises(ValueError):
+            AppSettings(background_model=[]).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(manual_model=[]).validate()
 
     def test_ollama_igpu_setting_is_boolean(self):
         self.assertTrue(AppSettings().ollama_force_igpu)

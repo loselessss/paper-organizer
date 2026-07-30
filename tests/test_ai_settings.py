@@ -129,14 +129,93 @@ class AiSettingsControllerTests(unittest.TestCase):
     def test_verified_ollama_model_can_be_selected_and_saved_immediately(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
-            controller = AiSettingsController(MemorySecretStore(), path)
+            restarts = []
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                path,
+                ollama_restarter=lambda: bool(restarts.append(True) or True),
+            )
 
             view = controller.select_ollama_model("qwen3:8b")
+            controller.select_ollama_model("qwen3:8b")
 
             self.assertEqual(view.provider, "ollama")
             self.assertEqual(view.model, "qwen3:8b")
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["selected_model"], "qwen3:8b")
+            self.assertEqual(restarts, [True])
+
+    def test_saving_a_different_ollama_model_restarts_the_runtime_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            restarts = []
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                path,
+                ollama_restarter=lambda: bool(restarts.append(True) or True),
+            )
+            controller.select_ollama_model("qwen3:1.7b")
+            restarts.clear()
+
+            controller.save_preferences(
+                provider="ollama",
+                model="qwen3:4b",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+            )
+
+        self.assertEqual(restarts, [True])
+
+    def test_background_manual_and_residency_are_saved_together(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            restarts = []
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                path,
+                ollama_restarter=lambda: bool(restarts.append(True) or True),
+            )
+
+            view = controller.save_preferences(
+                provider="ollama",
+                model="qwen3:1.7b",
+                background_model="qwen3:1.7b",
+                manual_model="qwen3:4b",
+                background_model_resident=True,
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+            )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(view.background_model, "qwen3:1.7b")
+        self.assertEqual(view.manual_model, "qwen3:4b")
+        self.assertTrue(view.background_model_resident)
+        self.assertEqual(saved["selected_model"], "qwen3:1.7b")
+        self.assertEqual(saved["ollama_residency_mode"], "always")
+        self.assertEqual(saved["ollama_resident_model"], "qwen3:1.7b")
+        self.assertEqual(restarts, [True])
+
+    def test_manual_model_can_be_changed_without_replacing_background_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                path,
+                ollama_restarter=lambda: True,
+            )
+            controller.select_ollama_model("qwen3:1.7b")
+
+            view = controller.select_ollama_model(
+                "qwen3:4b",
+                purpose="manual",
+            )
+
+        self.assertEqual(view.background_model, "qwen3:1.7b")
+        self.assertEqual(view.manual_model, "qwen3:4b")
 
     def test_gpu_priority_is_applied_and_persisted_on_save(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -146,6 +225,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 MemorySecretStore(),
                 path,
                 ollama_igpu_configurer=changes.append,
+                ollama_restarter=lambda: True,
             )
 
             view = controller.save_preferences(
@@ -180,6 +260,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 MemorySecretStore(),
                 path,
                 ollama_igpu_configurer=changes.append,
+                ollama_restarter=lambda: True,
             )
             controller.save_preferences(
                 provider="ollama",

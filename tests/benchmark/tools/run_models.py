@@ -44,6 +44,10 @@ try:
     from .score_output import score_summary  # type: ignore[import-not-found]  # noqa: E402
 except ImportError:
     from score_output import score_summary  # noqa: E402
+try:
+    from .publish_private_scores import publish  # type: ignore[import-not-found]  # noqa: E402
+except ImportError:
+    from publish_private_scores import publish  # noqa: E402
 
 
 DEFAULT_MODELS = (
@@ -58,6 +62,10 @@ DEFAULT_MODELS = (
 )
 BENCHMARK_ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_RUNNER = REPOSITORY_ROOT / "tests" / "Real" / "run_private_benchmark.py"
+PRIVATE_RESULTS = REPOSITORY_ROOT / "tests" / "Real" / "results"
+PUBLIC_SCORE_HISTORY = (
+    BENCHMARK_ROOT / "score_history" / "real_papers_v1.json"
+)
 
 
 def private_benchmark_command(
@@ -90,6 +98,29 @@ def apply_benchmark_acceleration(
         return "GPU 우선 (내장 GPU 포함, 실패 시 CPU)"
     environment.pop(OLLAMA_IGPU_ENVIRONMENT, None)
     return "Ollama 기본 장치 선택"
+
+
+def public_hardware_label(settings: AppSettings) -> str:
+    """Build a non-identifying hardware label for committed score history."""
+
+    profile = settings.hardware_profile
+    cpu = str(profile.get("cpu_model") or "CPU 미확인").strip()
+    memory = profile.get("memory_total_gb")
+    memory_text = (
+        f"RAM {float(memory):g}GB"
+        if isinstance(memory, (int, float))
+        else "RAM 미확인"
+    )
+    raw_gpus = profile.get("gpus")
+    gpu_names = []
+    if isinstance(raw_gpus, list):
+        gpu_names = [
+            str(item.get("name") or "").strip()
+            for item in raw_gpus
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+    gpu_text = ", ".join(gpu_names) or "GPU 미확인"
+    return f"{cpu} / {gpu_text} / {memory_text}"
 
 
 class _NoSecrets:
@@ -511,11 +542,20 @@ def main() -> int:
             language=args.language,
             resume=args.resume,
         )
-        return subprocess.run(
+        completed = subprocess.run(
             command,
             cwd=str(REPOSITORY_ROOT),
             check=False,
-        ).returncode
+        )
+        if completed.returncode:
+            return completed.returncode
+        published = publish(
+            PRIVATE_RESULTS,
+            PUBLIC_SCORE_HISTORY,
+            hardware_label=public_hardware_label(load_settings()),
+        )
+        print(f"Git 점수 이력 갱신: {published}")
+        return 0
     documents = _documents(set(args.documents))
     output_dir = args.output.expanduser().resolve()
     rows: list[dict[str, Any]] = []

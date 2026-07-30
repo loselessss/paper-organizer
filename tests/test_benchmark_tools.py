@@ -8,6 +8,7 @@ from tests.benchmark.tools.run_models import (
     _documents,
     apply_benchmark_acceleration,
     private_benchmark_command,
+    public_hardware_label,
 )
 from paper_organizer.infra.ollama_acceleration import OLLAMA_IGPU_ENVIRONMENT
 from paper_organizer.infra.settings import AppSettings
@@ -43,6 +44,21 @@ class BenchmarkToolTests(unittest.TestCase):
         self.assertEqual(Path(command[1]), PRIVATE_RUNNER)
         self.assertIn("qwen3:0.6b", command)
         self.assertIn("--resume", command)
+
+    def test_public_hardware_label_excludes_user_paths(self):
+        label = public_hardware_label(
+            AppSettings(
+                hardware_profile={
+                    "cpu_model": "Test CPU",
+                    "memory_total_gb": 16,
+                    "model_disk_path": "C:/Users/Private/.ollama/models",
+                    "gpus": [{"name": "Test GPU"}],
+                }
+            )
+        )
+
+        self.assertEqual(label, "Test CPU / Test GPU / RAM 16GB")
+        self.assertNotIn("Users", label)
 
     def test_bibliography_score_checks_title_authors_year_and_venue(self):
         truth = {

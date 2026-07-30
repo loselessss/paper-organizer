@@ -87,12 +87,15 @@ class FakeSummary:
     def __init__(self, result):
         self.result = result
         self.modes = []
+        self.purposes = []
 
-    def prepare(self, path, mode):
+    def prepare(self, path, mode, *, purpose="manual"):
         self.modes.append(mode)
+        self.purposes.append(("prepare", purpose))
         return PreparedSummary(self.result.preview, "document text")
 
-    def run(self, prepared):
+    def run(self, prepared, *, purpose="manual"):
+        self.purposes.append(("run", purpose))
         return self.result
 
 
@@ -101,8 +104,10 @@ class FailingSummary:
         self.preview = preview
         self.modes = []
 
-    def prepare(self, path, mode):
+    def prepare(self, path, mode, *, purpose="manual"):
         self.modes.append(mode)
+        self.purposes = getattr(self, "purposes", [])
+        self.purposes.append(("prepare", purpose))
         return PreparedSummary(
             self.preview,
             "document text",
@@ -113,7 +118,8 @@ class FailingSummary:
             ),
         )
 
-    def run(self, prepared):
+    def run(self, prepared, *, purpose="manual"):
+        self.purposes.append(("run", purpose))
         raise SummaryRetryExhaustedError(
             "AI가 세 번 연속 올바른 JSON을 만들지 못했습니다.",
             failure_kind="json_validation",
@@ -212,9 +218,9 @@ class BackgroundAnalysisTests(unittest.TestCase):
             holder = {}
 
             class CancellingSummary(FakeSummary):
-                def run(self, prepared):
+                def run(self, prepared, *, purpose="manual"):
                     holder["service"].request_cancel()
-                    return self.result
+                    return super().run(prepared, purpose=purpose)
 
             service = BackgroundAnalysisService(
                 workflow,
@@ -282,16 +288,17 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(summary.modes, [])
         self.assertEqual(workflow.removed, [workflow.item.queue_id])
 
-    def test_managed_ollama_stops_only_for_immediate_unload_policy(self):
-        for mode, should_stop in (("unload", True), ("auto", False)):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+    def test_managed_ollama_stops_unless_background_residency_is_checked(self):
+        for resident, should_stop in ((False, True), (True, False)):
+            with self.subTest(resident=resident), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 settings_path = root / "settings.json"
                 save_settings(
                     AppSettings(
                         selected_model="qwen3:4b",
+                        background_model="qwen3:4b",
                         background_analysis_enabled=True,
-                        ollama_residency_mode=mode,
+                        background_model_resident=resident,
                     ),
                     settings_path,
                 )
@@ -364,9 +371,46 @@ class BackgroundAnalysisTests(unittest.TestCase):
 
         self.assertEqual(event.state, "completed")
         self.assertEqual(summary.modes, [SummaryMode.QUICK])
+        self.assertEqual(
+            summary.purposes,
+            [("prepare", "background"), ("run", "background")],
+        )
         self.assertEqual(workflow.removed, [workflow.item.queue_id])
         self.assertEqual(workflow.completed, [])
         self.assertFalse(workflow.failed)
+
+    def test_forced_queue_item_uses_the_manual_model_purpose(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:1.7b",
+                    background_model="qwen3:1.7b",
+                    manual_model="qwen3:4b",
+                    background_analysis_enabled=False,
+                    resource_profile="eco",
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                memory_available_gb=lambda: 32.0,
+            )
+
+            event = service.run_next(force=True)
+
+        self.assertEqual(event.state, "completed")
+        self.assertEqual(
+            summary.purposes,
+            [("prepare", "manual"), ("run", "manual")],
+        )
 
     def test_low_memory_keeps_item_pending_with_reason_then_retries_automatically(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -398,7 +442,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             self.assertEqual(workflow.item.attempt_count, 0)
             self.assertIn("가용 메모리 부족", workflow.item.last_error)
             self.assertIn("현재 1.2GB", workflow.item.last_error)
-            self.assertIn("최소 8.0GB", workflow.item.last_error)
+            self.assertIn("최소 7.0GB", workflow.item.last_error)
 
             available[0] = 32.0
             completed = service.run_next()
@@ -441,8 +485,64 @@ class BackgroundAnalysisTests(unittest.TestCase):
 
         self.assertEqual(event.state, "waiting")
         self.assertIn("실행 중인 qwen3:4b", event.message)
-        self.assertIn("시스템 여유 2.0GB", event.message)
+        self.assertIn("시스템 여유 1.0GB", event.message)
         self.assertFalse(workflow.claimed)
+
+    def test_eight_gb_pc_keeps_local_analysis_pending(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            service = BackgroundAnalysisService(
+                workflow,
+                FakeSummary(execution(root / "paper.pdf")),
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                memory_available_gb=lambda: 6.0,
+                memory_total_gb=lambda: 8.0,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "waiting")
+        self.assertIn("8GB급 PC", event.message)
+        self.assertIn("OpenAI·Claude API", event.message)
+        self.assertFalse(workflow.claimed)
+
+    def test_sixteen_gb_pc_runs_when_model_plus_one_gb_is_available(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            service = BackgroundAnalysisService(
+                workflow,
+                FakeSummary(execution(root / "paper.pdf")),
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                memory_available_gb=lambda: 7.0,
+                memory_total_gb=lambda: 16.0,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "completed")
+        self.assertTrue(workflow.claimed)
 
     def test_pending_local_analysis_starts_ollama_when_needed(self):
         with tempfile.TemporaryDirectory() as temp:

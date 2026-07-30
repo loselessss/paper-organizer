@@ -23,6 +23,7 @@ from paper_organizer.infra.settings import (
     AppSettings,
     default_settings_path,
     load_settings,
+    ollama_model_for_purpose,
     save_settings,
 )
 from paper_organizer.providers.policy import cloud_request_policy
@@ -61,6 +62,9 @@ class AiSettingsView:
     last_hardware_scan_at: str
     summary_language: str
     summary_timeout_seconds: int
+    background_model: str
+    manual_model: str
+    background_model_resident: bool
     ollama_residency_mode: str
     ollama_resident_model: str
     ollama_force_igpu: bool
@@ -122,6 +126,12 @@ class AiSettingsController:
             last_hardware_scan_at=settings.last_hardware_scan_at,
             summary_language=settings.summary_language,
             summary_timeout_seconds=settings.summary_timeout_seconds,
+            background_model=ollama_model_for_purpose(
+                settings,
+                "background",
+            ),
+            manual_model=ollama_model_for_purpose(settings, "manual"),
+            background_model_resident=settings.background_model_resident,
             ollama_residency_mode=settings.ollama_residency_mode,
             ollama_resident_model=settings.ollama_resident_model,
             ollama_force_igpu=settings.ollama_force_igpu,
@@ -159,7 +169,7 @@ class AiSettingsController:
             raise ValueError(f"Unsupported AI provider: {provider}")
         settings = self.settings()
         if normalized == "ollama":
-            return settings.selected_model
+            return ollama_model_for_purpose(settings, "background")
         if normalized == "openai":
             return settings.openai_model
         return settings.anthropic_model
@@ -187,6 +197,9 @@ class AiSettingsController:
         model_profile: str | None = None,
         summary_language: str | None = None,
         summary_timeout_seconds: int | None = None,
+        background_model: str | None = None,
+        manual_model: str | None = None,
+        background_model_resident: bool | None = None,
         ollama_residency_mode: str | None = None,
         ollama_resident_model: str | None = None,
         ollama_force_igpu: bool | None = None,
@@ -198,6 +211,10 @@ class AiSettingsController:
         if not normalized_model:
             raise ValueError("AI model cannot be empty")
         settings = load_settings(self._settings_path)
+        previous_ollama_models = (
+            ollama_model_for_purpose(settings, "background"),
+            ollama_model_for_purpose(settings, "manual"),
+        )
         settings.summary_provider = normalized_provider
         settings.cloud_processing_consent = bool(cloud_processing_consent)
         settings.cloud_request_profile = cloud_request_profile
@@ -217,7 +234,33 @@ class AiSettingsController:
         if ollama_force_igpu is not None:
             settings.ollama_force_igpu = bool(ollama_force_igpu)
         if normalized_provider == "ollama":
-            settings.selected_model = normalized_model
+            normalized_background = (
+                background_model.strip()
+                if background_model is not None
+                else normalized_model
+            )
+            normalized_manual = (
+                manual_model.strip()
+                if manual_model is not None
+                else settings.manual_model.strip() or normalized_model
+            )
+            if not normalized_background or not normalized_manual:
+                raise ValueError(
+                    "백그라운드 모델과 수동 요약 모델을 모두 선택하세요."
+                )
+            settings.selected_model = normalized_background
+            settings.background_model = normalized_background
+            settings.manual_model = normalized_manual
+            if background_model_resident is not None:
+                settings.background_model_resident = bool(
+                    background_model_resident
+                )
+            settings.ollama_residency_mode = (
+                "always"
+                if settings.background_model_resident
+                else "unload"
+            )
+            settings.ollama_resident_model = normalized_background
         elif normalized_provider == "openai":
             settings.openai_model = normalized_model
         else:
@@ -246,6 +289,26 @@ class AiSettingsController:
                 except Exception:
                     pass
             raise
+        current_ollama_models = (
+            ollama_model_for_purpose(settings, "background"),
+            ollama_model_for_purpose(settings, "manual"),
+        )
+        models_changed = any(
+            not _same_ollama_model(previous, current)
+            for previous, current in zip(
+                previous_ollama_models,
+                current_ollama_models,
+            )
+        )
+        if (
+            normalized_provider == "ollama"
+            and models_changed
+            and not self.restart_ollama_runtime()
+        ):
+            raise RuntimeError(
+                "모델 설정은 저장했지만 Ollama를 다시 시작하지 못했습니다. "
+                "Ollama를 직접 다시 실행한 뒤 분석을 시작하세요."
+            )
         return self.view()
 
     def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
@@ -288,16 +351,39 @@ class AiSettingsController:
     def verify_installed_ollama_model(self, model: str):
         return self._model_manager.verify_installed(model)
 
-    def select_ollama_model(self, model: str) -> AiSettingsView:
+    def select_ollama_model(
+        self,
+        model: str,
+        *,
+        purpose: str = "background",
+        restart_runtime: bool = True,
+    ) -> AiSettingsView:
         """Persist a verified local model as the active summary model."""
 
         normalized = model.strip()
         if not normalized:
             raise ValueError("Ollama model cannot be empty")
+        if purpose not in {"background", "manual"}:
+            raise ValueError("purpose must be background or manual")
         settings = load_settings(self._settings_path)
+        previous = ollama_model_for_purpose(settings, purpose)
         settings.summary_provider = "ollama"
-        settings.selected_model = normalized
+        if purpose == "background":
+            settings.selected_model = normalized
+            settings.background_model = normalized
+            settings.ollama_resident_model = normalized
+        else:
+            settings.manual_model = normalized
         save_settings(settings, self._settings_path)
+        if (
+            restart_runtime
+            and not _same_ollama_model(previous, normalized)
+            and not self.restart_ollama_runtime()
+        ):
+            raise RuntimeError(
+                "모델 선택은 저장했지만 Ollama를 다시 시작하지 못했습니다. "
+                "Ollama를 직접 다시 실행한 뒤 분석을 시작하세요."
+            )
         return self.view()
 
     def delete_ollama_model(self, model: str) -> bool:
@@ -329,3 +415,10 @@ def _selected_model(settings: AppSettings) -> str:
     if settings.summary_provider == "openai":
         return settings.openai_model
     return settings.anthropic_model
+
+
+def _same_ollama_model(left: str, right: str) -> bool:
+    return (
+        left.strip().casefold().removesuffix(":latest")
+        == right.strip().casefold().removesuffix(":latest")
+    )

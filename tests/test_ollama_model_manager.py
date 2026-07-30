@@ -233,7 +233,7 @@ class OllamaModelManagerTests(unittest.TestCase):
         entry = next(item for item in snapshot.entries if item.model_id == "gemma3:12b")
         self.assertTrue(entry.installed)
         self.assertFalse(entry.selectable)
-        self.assertIn("정밀 요약", entry.usage_guidance)
+        self.assertIn("고급 분석 8B+", entry.usage_guidance)
 
 
     def test_install_checks_disk_then_tracks_only_verified_model(self):
@@ -300,6 +300,9 @@ class OllamaModelManagerTests(unittest.TestCase):
             save_settings(
                 AppSettings(
                     selected_model="qwen3:4b",
+                    background_model="qwen3:4b",
+                    manual_model="qwen3:4b",
+                    background_model_resident=True,
                     ollama_resident_model="qwen3:4b",
                     managed_ollama_models=["qwen3:4b"],
                     ollama_model_benchmarks={
@@ -322,6 +325,9 @@ class OllamaModelManagerTests(unittest.TestCase):
         self.assertTrue(cleared)
         self.assertEqual(fake_client.deleted, ["qwen3:4b"])
         self.assertEqual(saved.selected_model, "")
+        self.assertEqual(saved.background_model, "")
+        self.assertEqual(saved.manual_model, "")
+        self.assertFalse(saved.background_model_resident)
         self.assertEqual(saved.ollama_resident_model, "")
         self.assertEqual(saved.managed_ollama_models, [])
         self.assertEqual(saved.ollama_model_benchmarks, {})

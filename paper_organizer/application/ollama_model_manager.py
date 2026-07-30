@@ -268,9 +268,25 @@ class OllamaModelManagerService:
             for name in settings.managed_ollama_models
             if _model_key(name) != _model_key(entry.model_id)
         ]
-        selection_cleared = _model_key(settings.selected_model) == _model_key(entry.model_id)
-        if selection_cleared:
+        selected_cleared = (
+            _model_key(settings.selected_model) == _model_key(entry.model_id)
+        )
+        background_cleared = (
+            _model_key(settings.background_model) == _model_key(entry.model_id)
+        )
+        manual_cleared = (
+            _model_key(settings.manual_model) == _model_key(entry.model_id)
+        )
+        selection_cleared = (
+            selected_cleared or background_cleared or manual_cleared
+        )
+        if selected_cleared:
             settings.selected_model = ""
+        if background_cleared:
+            settings.background_model = ""
+            settings.background_model_resident = False
+        if manual_cleared:
+            settings.manual_model = ""
         if _model_key(settings.ollama_resident_model) == _model_key(entry.model_id):
             settings.ollama_resident_model = ""
         settings.ollama_model_benchmarks.pop(_model_key(entry.model_id), None)

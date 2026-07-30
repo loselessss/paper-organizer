@@ -27,10 +27,10 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
-from paper_organizer.core.model_recommendation import model_usage_guidance
-from paper_organizer.core.ollama_residency import (
-    OLLAMA_RESIDENCY_CHOICES,
-    residency_description,
+from paper_organizer.core.model_recommendation import (
+    memory_tier_guidance,
+    model_usage_guidance,
+    recommendation_tier_overview,
 )
 from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
@@ -89,6 +89,8 @@ class AiSettingsDialog(QDialog):
         )
         self._scan_worker: _HardwareScanWorker | None = None
         self._restart_worker: _OllamaRestartWorker | None = None
+        self._restart_close_after = False
+        self._restart_status = ""
         self._recommended_model = ""
         self._initial_force_igpu = False
 
@@ -107,6 +109,7 @@ class AiSettingsDialog(QDialog):
         self.provider_combo = QComboBox()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
+        self.manual_model_combo = QComboBox()
         self.model_refresh_button = QPushButton("새로고침")
         self.model_status = QLabel("")
         self.model_status.setWordWrap(True)
@@ -194,10 +197,13 @@ class AiSettingsDialog(QDialog):
         self.hardware_status.setWordWrap(True)
         self.recommendation_status = QLabel("추천 모델 없음")
         self.recommendation_status.setWordWrap(True)
-        self.residency_combo = QComboBox()
-        for value, label in OLLAMA_RESIDENCY_CHOICES:
-            self.residency_combo.addItem(label, value)
-        self.resident_model_combo = QComboBox()
+        self.background_resident_check = QCheckBox(
+            "백그라운드 모델을 계속 상주시킴"
+        )
+        self.background_resident_check.setToolTip(
+            "체크하면 백그라운드 분석 뒤에도 해당 모델을 RAM·VRAM에 유지합니다. "
+            "수동 요약 모델은 작업이 끝나면 항상 해제합니다."
+        )
         self.force_igpu_check = QCheckBox(
             "내장 GPU도 사용 허용 (Vulkan · 사용할 수 없으면 CPU)"
         )
@@ -218,11 +224,11 @@ class AiSettingsDialog(QDialog):
             "background: #eef6ff; border: 1px solid #aec9e8; "
             "border-radius: 4px; padding: 7px; color: #173f68;"
         )
-        local_form.addRow("활성 모델", model_row)
+        local_form.addRow("백그라운드 모델", model_row)
+        local_form.addRow("수동 요약 모델", self.manual_model_combo)
         local_form.addRow("", self.model_status)
         local_form.addRow("용도 / 주의", self.model_guidance)
-        local_form.addRow("상주 옵션", self.residency_combo)
-        local_form.addRow("상주 모델", self.resident_model_combo)
+        local_form.addRow("백그라운드 상주", self.background_resident_check)
         local_form.addRow("상주 설명", self.residency_guidance)
         local_form.addRow("GPU 가속", self.force_igpu_check)
         local_form.addRow("", self.igpu_guidance)
@@ -238,8 +244,8 @@ class AiSettingsDialog(QDialog):
         )
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
-            "설치된 모델을 고르면 즉시 활성 모델로 저장됩니다. 옆의 설치·삭제에서 "
-            "다운로드와 제거를 한 화면에서 관리하며, 파일 변경은 사용자 승인 후 실행합니다."
+            "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "
+            "저장하면 모델 변경을 적용하기 위해 Ollama를 한 번 다시 시작합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
@@ -268,10 +274,10 @@ class AiSettingsDialog(QDialog):
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         self.model_combo.currentIndexChanged.connect(self._model_changed)
-        self.residency_combo.currentIndexChanged.connect(
-            self._update_residency_guidance
+        self.manual_model_combo.currentIndexChanged.connect(
+            self._model_changed
         )
-        self.resident_model_combo.currentIndexChanged.connect(
+        self.background_resident_check.toggled.connect(
             self._update_residency_guidance
         )
         self.model_refresh_button.clicked.connect(self._reload_ollama_models)
@@ -316,16 +322,9 @@ class AiSettingsDialog(QDialog):
         self.provider_combo.setCurrentIndex(selected_index)
         self.provider_combo.blockSignals(False)
         self._populate_model_combo(view.provider, view.model)
-        if view.provider != "ollama":
-            self._populate_resident_model_combo(
-                (),
-                view.ollama_resident_model
-                or self._controller.model_for_provider("ollama"),
-            )
-        residency_index = self.residency_combo.findData(
-            view.ollama_residency_mode
+        self.background_resident_check.setChecked(
+            view.background_model_resident
         )
-        self.residency_combo.setCurrentIndex(max(0, residency_index))
         self.force_igpu_check.setChecked(view.ollama_force_igpu)
         self._initial_force_igpu = view.ollama_force_igpu
         self.consent_check.setChecked(view.cloud_processing_consent)
@@ -389,13 +388,21 @@ class AiSettingsDialog(QDialog):
                 )
             for model in models:
                 self.model_combo.addItem(model, model)
-            index = self.model_combo.findData(selected)
-            self.model_combo.setCurrentIndex(index)
-            self.model_combo.setEnabled(bool(models))
-            self._populate_resident_model_combo(
-                models,
-                self._controller.view().ollama_resident_model or selected,
+            background = (
+                self._controller.view().background_model or selected
             )
+            index = self.model_combo.findData(background)
+            self.model_combo.setCurrentIndex(max(0, index))
+            self.model_combo.setEnabled(bool(models))
+            self.manual_model_combo.blockSignals(True)
+            self.manual_model_combo.clear()
+            for model in models:
+                self.manual_model_combo.addItem(model, model)
+            manual = self._controller.view().manual_model or background
+            manual_index = self.manual_model_combo.findData(manual)
+            self.manual_model_combo.setCurrentIndex(max(0, manual_index))
+            self.manual_model_combo.setEnabled(bool(models))
+            self.manual_model_combo.blockSignals(False)
         else:
             self.model_combo.setEnabled(True)
             self.model_combo.addItem(selected)
@@ -404,40 +411,10 @@ class AiSettingsDialog(QDialog):
             line_edit = self.model_combo.lineEdit()
             if line_edit is not None:
                 line_edit.setPlaceholderText("클라우드 모델 ID")
+            self.manual_model_combo.clear()
+            self.manual_model_combo.setEnabled(False)
         self.model_combo.blockSignals(False)
         self._update_model_guidance()
-
-    def _populate_resident_model_combo(
-        self,
-        models: tuple[str, ...],
-        selected: str,
-    ) -> None:
-        self.resident_model_combo.blockSignals(True)
-        self.resident_model_combo.clear()
-        choices = list(models)
-        if selected and not any(
-            _same_ollama_model(selected, model) for model in choices
-        ):
-            choices.append(selected)
-        for model in choices:
-            self.resident_model_combo.addItem(model, model)
-        index = next(
-            (
-                item
-                for item in range(self.resident_model_combo.count())
-                if _same_ollama_model(
-                    str(self.resident_model_combo.itemData(item) or ""),
-                    selected,
-                )
-            ),
-            -1,
-        )
-        if index < 0 and self.resident_model_combo.count():
-            index = 0
-        self.resident_model_combo.setCurrentIndex(index)
-        self.resident_model_combo.setEnabled(bool(choices))
-        self.resident_model_combo.blockSignals(False)
-        self._update_residency_guidance()
 
     def _reload_ollama_models(self) -> None:
         if self.provider_combo.currentData() != "ollama":
@@ -451,27 +428,26 @@ class AiSettingsDialog(QDialog):
         self._update_model_guidance()
         if self.provider_combo.currentData() != "ollama":
             return
-        model = self.model_combo.currentData()
-        if not model:
-            return
-        try:
-            self._controller.select_ollama_model(str(model))
-        except Exception as exc:
-            QMessageBox.warning(self, "Ollama 모델 적용 실패", str(exc))
-            return
-        self.model_status.setText(f"{model} 적용 완료")
+        self.model_status.setText(
+            "백그라운드·수동 모델 선택을 변경했습니다. 저장 버튼을 누르면 "
+            "Ollama를 한 번 다시 시작해 적용합니다."
+        )
 
     def _update_model_guidance(self) -> None:
         provider = self.provider_combo.currentData()
         if provider == "ollama":
-            model = str(self.model_combo.currentData() or "")
-            if not model:
+            background = str(self.model_combo.currentData() or "")
+            manual = str(self.manual_model_combo.currentData() or "")
+            if not background or not manual:
                 self.model_guidance.setText(
-                    "설치된 모델을 선택하면 실사용 용도와 환각 주의사항을 표시합니다."
+                    "백그라운드 모델과 수동 요약 모델을 모두 선택하세요."
                 )
                 return
             self.model_guidance.setText(
-                model_usage_guidance(model).display_text()
+                "백그라운드: "
+                + model_usage_guidance(background).display_text()
+                + "\n\n수동 요약: "
+                + model_usage_guidance(manual).display_text()
             )
             return
         if provider in {"openai", "anthropic"}:
@@ -484,16 +460,19 @@ class AiSettingsDialog(QDialog):
         self.model_guidance.clear()
 
     def _update_residency_guidance(self) -> None:
-        settings = self._controller.settings()
-        memory = settings.hardware_profile.get("memory_total_gb")
-        if not isinstance(memory, (int, float)):
-            memory = None
-        self.residency_guidance.setText(
-            residency_description(
-                str(self.residency_combo.currentData() or "auto"),
-                str(self.resident_model_combo.currentData() or ""),
-                memory,
+        model = str(self.model_combo.currentData() or "백그라운드 모델")
+        if self.background_resident_check.isChecked():
+            policy = (
+                "체크됨 · 첫 분석 뒤 계속 상주합니다. 앱이 유휴 상태여도 "
+                "RAM·VRAM을 사용하며, 수동 모델로 전환할 때 해제될 수 있습니다."
             )
+        else:
+            policy = (
+                "체크 안 됨 · 논문 한 편이 끝날 때마다 모델을 해제합니다. "
+                "다음 분석 시작은 조금 느리지만 메모리를 확보합니다."
+            )
+        self.residency_guidance.setText(
+            f"{model}: {policy}\n수동 요약 모델은 항상 작업 후 해제합니다."
         )
 
     def _current_model(self) -> str:
@@ -608,6 +587,7 @@ class AiSettingsDialog(QDialog):
             f"RAM {hardware.memory_available_gb:g}/{hardware.memory_total_gb:g}GB 사용 가능 · "
             f"{gpu_text} · 모델 디스크 {hardware.model_disk_free_gb:g}GB 여유 · {ollama_text}"
         )
+        memory_guidance = memory_tier_guidance(hardware.memory_total_gb)
         recommendation = assessment.recommendation
         profile_label = {
             "auto": "자동",
@@ -621,7 +601,7 @@ class AiSettingsDialog(QDialog):
             self._recommended_model = ""
             self.recommendation_status.setText(
                 f"{profile_label} 결과 · 현재 안전 여유 기준으로 추천할 "
-                "로컬 모델이 없습니다."
+                f"로컬 모델이 없습니다. {memory_guidance}"
             )
         else:
             self._recommended_model = chosen.spec.model_id
@@ -631,9 +611,13 @@ class AiSettingsDialog(QDialog):
                 f"{profile_label} 결과 · {chosen.spec.label} "
                 f"({chosen.rating}, {state}) · "
                 + explanation
-                + " 추천 결과만 바뀌며 활성 모델은 자동 변경하지 않습니다."
+                + f" {memory_guidance} "
+                "추천 결과만 바뀌며 활성 모델은 자동 변경하지 않습니다."
             )
-        lines: list[str] = []
+        lines: list[str] = [
+            f"PC 메모리 안내: {memory_guidance}",
+            recommendation_tier_overview(),
+        ]
         for candidate in recommendation.candidates:
             marker = (
                 "★ 프로필 추천 · "
@@ -687,15 +671,6 @@ class AiSettingsDialog(QDialog):
             selected = "" if selection_cleared else self._current_model()
             self._populate_model_combo("ollama", selected)
             return
-        try:
-            models = self._controller.installed_ollama_models()
-        except Exception:
-            models = ()
-        view = self._controller.view()
-        self._populate_resident_model_combo(
-            models,
-            view.ollama_resident_model,
-        )
 
     def _save_preferences(self) -> None:
         if self._scan_worker is not None and self._scan_worker.isRunning():
@@ -729,9 +704,14 @@ class AiSettingsDialog(QDialog):
                 model_profile=self.model_profile_combo.currentData(),
                 summary_language=self.language_combo.currentData(),
                 summary_timeout_seconds=self.timeout_spin.value(),
-                ollama_residency_mode=self.residency_combo.currentData(),
-                ollama_resident_model=str(
-                    self.resident_model_combo.currentData() or ""
+                background_model=str(
+                    self.model_combo.currentData() or ""
+                ),
+                manual_model=str(
+                    self.manual_model_combo.currentData() or ""
+                ),
+                background_model_resident=(
+                    self.background_resident_check.isChecked()
                 ),
                 ollama_force_igpu=self.force_igpu_check.isChecked(),
             )
@@ -740,22 +720,37 @@ class AiSettingsDialog(QDialog):
             return
         if acceleration_changed:
             state = "사용" if self.force_igpu_check.isChecked() else "사용하지 않도록"
-            self.scroll_area.setEnabled(False)
-            self.buttons.setEnabled(False)
             self.hardware_status.setText(
                 f"내장 GPU를 {state} 설정했습니다. Ollama를 다시 시작하는 중…"
             )
-            worker = _OllamaRestartWorker(self._controller, self)
-            worker.completed.connect(self._restart_completed)
-            worker.failed.connect(self._restart_failed)
-            worker.finished.connect(worker.deleteLater)
-            self._restart_worker = worker
-            worker.start()
+            self._start_ollama_restart(
+                close_after=True,
+                status="GPU 설정 적용 및 Ollama 재시작 완료",
+            )
             return
         self.accept()
 
+    def _start_ollama_restart(
+        self, *, close_after: bool, status: str
+    ) -> None:
+        self.scroll_area.setEnabled(False)
+        self.buttons.setEnabled(False)
+        self._restart_close_after = close_after
+        self._restart_status = status
+        worker = _OllamaRestartWorker(self._controller, self)
+        worker.completed.connect(self._restart_completed)
+        worker.failed.connect(self._restart_failed)
+        worker.finished.connect(worker.deleteLater)
+        self._restart_worker = worker
+        worker.start()
+
     def _restart_completed(self) -> None:
         self._restart_worker = None
+        if not self._restart_close_after:
+            self.scroll_area.setEnabled(True)
+            self.buttons.setEnabled(True)
+            self.model_status.setText(self._restart_status)
+            return
         QMessageBox.information(
             self,
             "Ollama 재시작 완료",
@@ -770,7 +765,12 @@ class AiSettingsDialog(QDialog):
         self._restart_worker = None
         self.scroll_area.setEnabled(True)
         self.buttons.setEnabled(True)
-        self.hardware_status.setText("Ollama 자동 재시작에 실패했습니다.")
+        if self._restart_close_after:
+            self.hardware_status.setText("Ollama 자동 재시작에 실패했습니다.")
+        else:
+            self.model_status.setText(
+                "모델 선택은 저장했지만 Ollama 자동 재시작에 실패했습니다."
+            )
         QMessageBox.warning(self, "Ollama 재시작 실패", message)
 
     def reject(self) -> None:

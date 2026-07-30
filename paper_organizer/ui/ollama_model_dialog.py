@@ -95,8 +95,12 @@ class _ModelOperationWorker(QThread):
                     on_progress=self.progress.emit,
                     cancel=self._cancel,
                 )
+                self._controller.select_ollama_model(
+                    result.verification.model.name
+                )
             elif self._operation == "verify":
                 result = self._controller.verify_installed_ollama_model(self._model)
+                self._controller.select_ollama_model(result.model.name)
             elif self._operation == "delete":
                 result = self._controller.delete_ollama_model(self._model)
             else:
@@ -331,7 +335,6 @@ class OllamaModelDialog(QDialog):
                 )
                 + acceleration_warning
             )
-            self._controller.select_ollama_model(model.name)
             self.model_verified.emit(model.name)
             installed_now = self._operation == "install"
             self._mark_refresh_after_operation(
@@ -342,7 +345,7 @@ class OllamaModelDialog(QDialog):
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
                 f"{verification.message}{acceleration_warning}\n"
-                "활성 Ollama 모델로 선택하고 설정에 저장했습니다.",
+                "활성 Ollama 모델로 선택하고 Ollama를 재시작했습니다.",
             )
             return
         if self._operation == "delete":

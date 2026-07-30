@@ -14,6 +14,7 @@ from paper_organizer.application.library_workflow import (
     LibraryWorkflowController,
 )
 from paper_organizer.infra.secrets import SecretStore
+from paper_organizer.infra.settings import settings_for_summary_purpose
 from paper_organizer.providers.base import (
     JsonHttpClient,
     ProviderError,
@@ -88,7 +89,10 @@ class LibraryTranslationService:
         if not source_text:
             raise ValueError("번역할 AI 분석 내용이 없습니다.")
         source_hash = analysis_translation_source_hash(entry.record)
-        settings = self._workflow.settings()
+        settings = settings_for_summary_purpose(
+            self._workflow.settings(),
+            "manual",
+        )
         if (
             settings.summary_provider in {"openai", "anthropic"}
             and not settings.cloud_processing_consent
