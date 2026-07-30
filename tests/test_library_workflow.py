@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -321,7 +322,95 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(saved["curation"]["revision"], 2)
             self.assertEqual(saved["curation"]["last_edited_by"], "user")
 
-    def test_library_entry_can_be_permanently_deleted_with_derived_state(self):
+    def test_legacy_generic_user_title_is_repaired_from_embedded_pdf(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "legacy-title.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((45, 70), "Research Article", fontsize=10)
+            page.insert_text(
+                (45, 125),
+                "Chaperone Plasmid Set",
+                fontsize=26,
+            )
+            page.insert_textbox(
+                fitz.Rect(45, 190, 560, 780),
+                "Abstract\n"
+                + "This study presents a reliable scientific method for cells. " * 18
+                + "\nIntroduction\n"
+                + "The experiment uses controlled conditions. " * 18,
+                fontsize=8,
+            )
+            for heading in ("Methods", "Results", "Conclusion", "References"):
+                extra = document.new_page()
+                extra.insert_textbox(
+                    fitz.Rect(45, 45, 560, 780),
+                    heading
+                    + "\n"
+                    + "The scientific paper contains reproducible evidence. " * 24,
+                    fontsize=8,
+                )
+            document.set_metadata({"title": "Research Article"})
+            document.save(source)
+            document.close()
+            old = time.time() - 120
+            os.utime(source, (old, old))
+
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Research Article"),
+            )
+            saved = load_paperpack_metadata(organized.sidecar_path)
+            self.assertEqual(
+                saved["curation"]["field_sources"]["bibliography.title"],
+                "user",
+            )
+
+            fresh = LibraryWorkflowController(root / "settings.json")
+            repaired = fresh.list_library()[0]
+
+            self.assertEqual(repaired.metadata.title, "Chaperone Plasmid Set")
+            saved = load_paperpack_metadata(organized.sidecar_path)
+            self.assertEqual(
+                saved["curation"]["field_sources"]["bibliography.title"],
+                "auto:regex",
+            )
+            self.assertEqual(
+                saved["curation"]["last_edited_by"],
+                "auto:title-repair",
+            )
+
+    def test_true_user_title_named_research_article_is_not_repaired(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            controller.organize(
+                item,
+                EditablePaperMetadata(title="Original Extracted Title"),
+            )
+            entry = controller.list_library()[0]
+            controller.update_library_metadata(
+                entry,
+                EditablePaperMetadata(title="Research Article"),
+            )
+
+            fresh = LibraryWorkflowController(root / "settings.json")
+            preserved = fresh.list_library()[0]
+
+            self.assertEqual(preserved.metadata.title, "Research Article")
+            self.assertEqual(
+                load_paperpack_metadata(preserved.sidecar_path)["curation"][
+                    "field_sources"
+                ]["bibliography.title"],
+                "user",
+            )
+
+    def test_library_entry_moves_to_recoverable_trash_with_derived_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             controller, input_dir, library = self._controller(root)
@@ -343,7 +432,7 @@ class LibraryWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = controller.permanently_delete_library_entries([entry])
+            result = controller.trash_library_entries([entry])
 
             self.assertEqual(result.deleted, 1)
             self.assertEqual(result.problems, ())
@@ -358,8 +447,25 @@ class LibraryWorkflowTests(unittest.TestCase):
                 (library / "index" / "library.json").read_text(encoding="utf-8")
             )
             self.assertEqual(index["work_count"], 0)
+            trash_entry = next(
+                value
+                for value in controller.list_trash()
+                if value.kind == "library_entry"
+            )
+            self.assertEqual(trash_entry.original_path, organized.pdf_path)
+            self.assertTrue(trash_entry.trashed_path.is_file())
 
-    def test_library_entry_cannot_be_deleted_while_analysis_is_running(self):
+            restored = controller.restore_trash(trash_entry)
+
+            self.assertEqual(restored, organized.pdf_path)
+            self.assertTrue(restored.is_file())
+            self.assertEqual(controller.list_library()[0].metadata.title, "Delete Me")
+            self.assertEqual(len(controller.analysis_queue()), 1)
+            self.assertFalse(
+                any(value.kind == "library_entry" for value in controller.list_trash())
+            )
+
+    def test_library_entry_cannot_be_trashed_while_analysis_is_running(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             controller, input_dir, _library = self._controller(root)
@@ -373,11 +479,46 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertIsNotNone(claimed)
 
             with self.assertRaisesRegex(Exception, "분석 중"):
-                controller.permanently_delete_library_entries(
+                controller.trash_library_entries(
                     controller.list_library()
                 )
 
             self.assertTrue(organized.pdf_path.exists())
+
+    def test_library_trash_retries_a_transient_windows_file_lock(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Retry Locked Move"),
+            )
+            entry = controller.list_library()[0]
+            real_move = shutil.move
+            attempts = 0
+
+            def transient_lock(source, destination):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    error = PermissionError(
+                        "다른 프로세스가 파일을 사용 중이므로 프로세스가 액세스 할 수 없습니다."
+                    )
+                    error.winerror = 32
+                    raise error
+                return real_move(source, destination)
+
+            with patch(
+                "paper_organizer.application.library_workflow.shutil.move",
+                side_effect=transient_lock,
+            ):
+                result = controller.trash_library_entries([entry])
+
+            self.assertEqual(result.deleted, 1)
+            self.assertEqual(attempts, 2)
+            self.assertFalse(organized.pdf_path.exists())
 
     def test_organize_can_remove_input_pdf_after_verified_pack_creation(self):
         with tempfile.TemporaryDirectory() as temp:

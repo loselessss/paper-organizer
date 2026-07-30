@@ -311,7 +311,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(
                 window.library_widget.delete_button.text(),
-                "선택 항목 완전 삭제",
+                "선택 항목을 앱 휴지통으로 이동",
             )
             self.assertTrue(window.queue_widget.table.acceptDrops())
             self.assertEqual(
@@ -1065,7 +1065,7 @@ class UiSmokeTests(unittest.TestCase):
                 def paperpack_working_copy(self, _path):
                     return None
 
-                def permanently_delete_library_entries(self, entries):
+                def trash_library_entries(self, entries):
                     self.deleted.extend(entries)
                     return mock.Mock(deleted=len(entries), problems=())
 

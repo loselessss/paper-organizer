@@ -9,8 +9,9 @@ import re
 import shutil
 import statistics
 import tempfile
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -65,6 +66,7 @@ from paper_organizer.core.paperpack import (
     inspect_paperpack,
     iter_paperpacks,
     load_paperpack_content,
+    load_paperpack_history,
     load_paperpack_metadata,
     replace_paperpack_pdf,
     update_paperpack,
@@ -503,6 +505,27 @@ def _unique_paperpack_destination(directory: Path, original_name: str) -> Path:
     return candidate
 
 
+def _move_file_with_retry(source: Path, destination: Path) -> None:
+    """Move a file after short-lived Windows preview/indexer locks clear."""
+
+    last_error: OSError | None = None
+    for attempt in range(4):
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+            return
+        except OSError as exc:
+            retryable = isinstance(exc, PermissionError) or getattr(
+                exc, "winerror", None
+            ) in {5, 32, 33}
+            if not retryable or attempt == 3:
+                raise
+            last_error = exc
+            time.sleep(0.1 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+
+
 def _identity_from_record(record: dict[str, Any]) -> DocumentIdentity:
     identity = record.get("identity")
     file_data = record.get("file")
@@ -594,6 +617,27 @@ def _metadata_for_library_entry(
     except (OSError, PaperPackError, TypeError, ValueError):
         pass
     return metadata
+
+
+def _history_has_explicit_user_title_change(
+    history: Iterable[dict[str, Any]],
+) -> bool:
+    """Protect a generic title when a later user revision actually selected it."""
+
+    previous: str | None = None
+    for revision in history:
+        metadata = revision.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        bibliography = metadata.get("bibliography")
+        if not isinstance(bibliography, dict):
+            continue
+        title = " ".join(str(bibliography.get("title") or "").split())
+        changed_by = str(revision.get("changed_by") or "")
+        if changed_by.startswith("user") and (previous is None or title != previous):
+            return True
+        previous = title
+    return False
 
 
 def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadata:
@@ -1196,6 +1240,7 @@ class LibraryWorkflowController:
         self._cache: dict[Path, tuple[int, int, ReviewItem]] = {}
         self._short_documents: dict[Path, tuple[int, int]] = {}
         self._library_cache: list[LibraryEntry] | None = None
+        self._legacy_title_repair_checked = False
 
     def settings(self) -> AppSettings:
         return load_settings(self._settings_path)
@@ -1721,6 +1766,98 @@ class LibraryWorkflowController:
         if data.get("restored_at"):
             raise LibraryWorkflowError("이미 복원된 작업입니다.")
         storage_mode = str(data.get("storage_mode") or "moved")
+        if data.get("kind") == "library_entry":
+            items = data.get("items")
+            if not isinstance(items, list) or not items:
+                raise LibraryWorkflowError("라이브러리 휴지통 기록이 올바르지 않습니다.")
+            papers_root = (root / "papers").resolve()
+            restore_plan: list[tuple[Path, Path]] = []
+            for raw in items:
+                if not isinstance(raw, dict):
+                    raise LibraryWorkflowError(
+                        "라이브러리 휴지통 파일 기록이 올바르지 않습니다."
+                    )
+                trashed = manifest.parent / str(raw.get("trashed_name") or "")
+                destination = Path(str(raw.get("original_path") or "")).resolve()
+                if (
+                    not trashed.is_file()
+                    or not _inside((root / "trash").resolve(), trashed.resolve())
+                    or not _inside(papers_root, destination)
+                ):
+                    raise LibraryWorkflowError(
+                        "복원할 PaperPack 또는 연관 파일 경로가 올바르지 않습니다."
+                    )
+                if sha256_file(trashed) != str(raw.get("stored_sha256") or ""):
+                    raise LibraryWorkflowError(
+                        "휴지통의 PaperPack 또는 연관 파일 내용이 바뀌었습니다."
+                    )
+                if destination.exists():
+                    raise LibraryWorkflowError(
+                        f"원래 위치에 같은 이름의 파일이 이미 있습니다: {destination.name}"
+                    )
+                restore_plan.append((trashed, destination))
+            restored_items: list[tuple[Path, Path]] = []
+            try:
+                for trashed, destination in restore_plan:
+                    _move_file_with_retry(trashed, destination)
+                    restored_items.append((trashed, destination))
+                data["restored_at"] = _now_iso()
+                data["restored_path"] = str(Path(str(data["original_path"])).resolve())
+                _atomic_json_write(manifest, data)
+            except Exception as exc:
+                for trashed, destination in reversed(restored_items):
+                    if destination.exists() and not trashed.exists():
+                        try:
+                            _move_file_with_retry(destination, trashed)
+                        except OSError:
+                            pass
+                raise LibraryWorkflowError(
+                    f"라이브러리 항목을 복원하지 못했습니다: {exc}"
+                ) from None
+            primary = Path(str(data["original_path"])).resolve()
+            queue = self._queue()
+            queue_items = data.get("queue_items", [])
+            if not isinstance(queue_items, list):
+                queue_items = []
+            for raw in queue_items:
+                if not isinstance(raw, dict) or raw.get("status") == "completed":
+                    continue
+                try:
+                    if raw.get("task_type") == "translation" and raw.get("source_hash"):
+                        queued = queue.enqueue_translation(
+                            path=primary,
+                            file_sha256=str(raw.get("file_sha256") or data.get("sha256") or ""),
+                            title=str(raw.get("title") or primary.stem),
+                            source_hash=str(raw["source_hash"]),
+                        )
+                    else:
+                        queued = queue.enqueue(
+                            path=primary,
+                            file_sha256=str(raw.get("file_sha256") or data.get("sha256") or ""),
+                            title=str(raw.get("title") or primary.stem),
+                            status=(
+                                str(raw.get("status"))
+                                if raw.get("status")
+                                in {
+                                    "pending_review",
+                                    "organized_pending_analysis",
+                                    "failed",
+                                }
+                                else "organized_pending_analysis"
+                            ),
+                        )
+                    if int(raw.get("priority", 0)):
+                        queue.set_priority(queued.queue_id, True)
+                except (OSError, AnalysisQueueError):
+                    pass
+            try:
+                rebuild_library_index(root)
+                if primary.suffix.casefold() == PAPERPACK_SUFFIX:
+                    update_search_entry(root, primary)
+            except (OSError, PaperPackError, SearchIndexError):
+                pass
+            self._library_cache = None
+            return primary
         if storage_mode == "reference":
             destination = Path(str(data["original_path"]))
             _forget_ignored_file_id(root, str(data.get("sha256", "")))
@@ -2673,9 +2810,84 @@ class LibraryWorkflowController:
         _input_dir, root = self.configured_paths()
         return AnalysisQueueStore(root)
 
+    def repair_legacy_generic_titles(self) -> tuple[int, tuple[str, ...]]:
+        """Repair old auto-detected headings that were incorrectly marked as user edits."""
+
+        _input_dir, root = self.configured_paths()
+        repaired = 0
+        problems: list[str] = []
+        for paperpack in iter_paperpacks(root):
+            try:
+                record = load_paperpack_metadata(paperpack)
+                bibliography = record.get("bibliography")
+                curation = record.get("curation")
+                if not isinstance(bibliography, dict) or not isinstance(curation, dict):
+                    continue
+                title = " ".join(str(bibliography.get("title") or "").split())
+                sources = curation.get("field_sources")
+                if (
+                    not is_generic_document_heading(title)
+                    or not isinstance(sources, dict)
+                    or sources.get("bibliography.title") != "user"
+                    or "bibliography.title" in curation.get("locked_fields", [])
+                ):
+                    continue
+                if _history_has_explicit_user_title_change(
+                    load_paperpack_history(paperpack)
+                ):
+                    continue
+                pages = [
+                    text
+                    for _number, text in content_pages(
+                        load_paperpack_content(paperpack)
+                    )
+                ]
+                with tempfile.TemporaryDirectory(
+                    prefix="paper-organizer-title-repair-"
+                ) as temp:
+                    extracted = extract_paperpack_pdf(
+                        paperpack,
+                        Path(temp) / "source.pdf",
+                    )
+                    candidate = _default_metadata(extracted, pages).title.strip()
+                if (
+                    not _is_usable_title(candidate)
+                    or candidate.casefold() == title.casefold()
+                ):
+                    continue
+                bibliography["title"] = candidate
+                sources["bibliography.title"] = "auto:regex"
+                curation["revision"] = int(curation.get("revision", 0)) + 1
+                curation["last_edited_at"] = _now_iso()
+                curation["last_edited_by"] = "auto:title-repair"
+                record.setdefault("workflow", {})["updated_at"] = _now_iso()
+                update_paperpack(
+                    paperpack,
+                    record,
+                    changed_by="auto:title-repair",
+                )
+                repaired += 1
+            except (OSError, TypeError, ValueError, PaperPackError) as exc:
+                problems.append(f"{paperpack.name}: 제목 복구 실패: {exc}")
+        if repaired:
+            try:
+                rebuild_library_index(root)
+            except Exception as exc:
+                problems.append(f"통합 색인 재생성 실패: {exc}")
+            try:
+                _count, search_problems = rebuild_search_index(root)
+                problems.extend(f"검색 색인: {problem}" for problem in search_problems)
+            except (OSError, SearchIndexError) as exc:
+                problems.append(f"검색 색인 재생성 실패: {exc}")
+            self._library_cache = None
+        return repaired, tuple(problems)
+
     def list_library(self, query: str = "") -> list[LibraryEntry]:
         _input_dir, root = self.configured_paths()
         normalized_query = " ".join(query.casefold().split())
+        if not self._legacy_title_repair_checked:
+            self._legacy_title_repair_checked = True
+            self.repair_legacy_generic_titles()
         if self._library_cache is None:
             entries: list[LibraryEntry] = []
             if root.is_dir():
@@ -2741,24 +2953,25 @@ class LibraryWorkflowController:
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
 
-    def permanently_delete_library_entries(
+    def trash_library_entries(
         self, entries: Iterable[LibraryEntry]
     ) -> LibraryDeletionResult:
-        """Permanently remove approved library files and their derived state."""
+        """Move approved library files to recoverable app trash."""
 
         selected = list(entries)
         if not selected:
-            raise LibraryWorkflowError("완전 삭제할 라이브러리 항목을 선택하세요.")
+            raise LibraryWorkflowError("앱 휴지통으로 옮길 라이브러리 항목을 선택하세요.")
         _input_dir, root = self.configured_paths()
         papers_root = (root / "papers").resolve()
         queue = self._queue()
-        queue_by_id = {item.queue_id: item for item in queue.load()}
+        queue_items = queue.load()
         plans: list[
             tuple[
                 LibraryEntry,
                 tuple[Path, ...],
                 str,
                 str,
+                tuple[AnalysisQueueItem, ...],
             ]
         ] = []
         seen: set[Path] = set()
@@ -2773,7 +2986,7 @@ class LibraryWorkflowController:
             is_legacy_sidecar = sidecar.name.endswith(SIDECAR_SUFFIX)
             if not sidecar.is_file() or not (is_paperpack or is_legacy_sidecar):
                 raise LibraryWorkflowError(
-                    f"삭제할 PaperPack 또는 색인 파일을 찾을 수 없습니다: {sidecar.name}"
+                    f"옮길 PaperPack 또는 색인 파일을 찾을 수 없습니다: {sidecar.name}"
                 )
             try:
                 record = load_record(sidecar)
@@ -2786,13 +2999,16 @@ class LibraryWorkflowController:
                 PaperPackError,
             ) as exc:
                 raise LibraryWorkflowError(
-                    f"삭제 대상을 검증할 수 없습니다: {sidecar.name}: {exc}"
+                    f"휴지통 이동 대상을 검증할 수 없습니다: {sidecar.name}: {exc}"
                 ) from None
-            queue_id = f"sha256:{identity.file_sha256}"
-            queue_item = queue_by_id.get(queue_id)
-            if queue_item is not None and queue_item.status == "analyzing":
+            related_queue = tuple(
+                item
+                for item in queue_items
+                if item.file_sha256 == identity.file_sha256
+            )
+            if any(item.status == "analyzing" for item in related_queue):
                 raise LibraryWorkflowError(
-                    f"현재 분석 중인 항목은 삭제할 수 없습니다: "
+                    f"현재 분석 중인 항목은 휴지통으로 옮길 수 없습니다: "
                     f"{entry.metadata.title or sidecar.stem}"
                 )
             targets = [sidecar]
@@ -2824,21 +3040,30 @@ class LibraryWorkflowController:
                     tuple(unique_targets),
                     identity.file_sha256,
                     identity.file_id,
+                    related_queue,
                 )
             )
 
         deleted = 0
         problems: list[str] = []
-        for entry, targets, file_sha256, file_id in plans:
+        for entry, targets, file_sha256, file_id, related_queue in plans:
             title = entry.metadata.title or entry.sidecar_path.stem
-            queue_id = f"sha256:{file_sha256}"
-            current = next(
-                (item for item in queue.load() if item.queue_id == queue_id),
-                None,
+            current_queue = tuple(
+                item
+                for item in queue.load()
+                if item.file_sha256 == file_sha256
             )
-            if current is not None and current.status == "analyzing":
-                problems.append(f"{title}: 분석이 시작되어 삭제하지 않았습니다.")
+            if any(item.status == "analyzing" for item in current_queue):
+                problems.append(
+                    f"{title}: 분석이 시작되어 휴지통으로 옮기지 않았습니다."
+                )
                 continue
+            operation_id = (
+                f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-"
+                f"{uuid.uuid4().hex[:8]}"
+            )
+            operation_dir = root / "trash" / operation_id
+            moved: list[tuple[Path, Path]] = []
             try:
                 if entry.sidecar_path.suffix.casefold() == PAPERPACK_SUFFIX:
                     _source, _workspace, edit_state = self._paperpack_edit_paths(
@@ -2849,17 +3074,82 @@ class LibraryWorkflowController:
                         edit_state.parent.rmdir()
                     except OSError:
                         pass
-                for target in targets:
-                    target.unlink()
-            except (OSError, LibraryWorkflowError) as exc:
-                problems.append(f"{title}: 파일 삭제 실패: {exc}")
+                operation_dir.mkdir(parents=True, exist_ok=False)
+                stored_items: list[dict[str, Any]] = []
+                used_names: set[str] = set()
+                for index, target in enumerate(targets, start=1):
+                    trashed_name = target.name
+                    if trashed_name.casefold() in used_names:
+                        trashed_name = f"{index:02d}-{target.name}"
+                    used_names.add(trashed_name.casefold())
+                    trashed = operation_dir / trashed_name
+                    stored_sha256 = sha256_file(target)
+                    _move_file_with_retry(target, trashed)
+                    moved.append((target, trashed))
+                    stored_items.append(
+                        {
+                            "original_path": str(target),
+                            "trashed_name": trashed_name,
+                            "stored_sha256": stored_sha256,
+                        }
+                    )
+                primary_name = next(
+                    (
+                        value["trashed_name"]
+                        for value in stored_items
+                        if Path(value["original_path"]).resolve()
+                        == entry.sidecar_path.resolve()
+                    ),
+                    stored_items[0]["trashed_name"],
+                )
+                _atomic_json_write(
+                    operation_dir / "manifest.json",
+                    {
+                        "schema_version": 3,
+                        "operation_id": operation_id,
+                        "storage_mode": "moved",
+                        "kind": "library_entry",
+                        "created_at": _now_iso(),
+                        "original_path": str(entry.sidecar_path.resolve()),
+                        "trashed_name": primary_name,
+                        "sha256": file_sha256,
+                        "duplicate_of": "",
+                        "estimated_title": title,
+                        "items": stored_items,
+                        "queue_items": [
+                            asdict(item) for item in (current_queue or related_queue)
+                        ],
+                        "restored_at": None,
+                    },
+                )
+            except (OSError, TypeError, ValueError, LibraryWorkflowError) as exc:
+                rollback_problems: list[str] = []
+                for original, trashed in reversed(moved):
+                    if trashed.exists() and not original.exists():
+                        try:
+                            _move_file_with_retry(trashed, original)
+                        except OSError as rollback_exc:
+                            rollback_problems.append(str(rollback_exc))
+                try:
+                    operation_dir.rmdir()
+                except OSError:
+                    pass
+                detail = (
+                    f" · 되돌리기 확인 필요: {'; '.join(rollback_problems)}"
+                    if rollback_problems
+                    else ""
+                )
+                problems.append(
+                    f"{title}: 앱 휴지통 이동 실패: {exc}{detail}. "
+                    "sPDF와 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
+                )
                 continue
             deleted += 1
-            try:
-                if current is not None:
-                    queue.remove(queue_id)
-            except (OSError, AnalysisQueueError) as exc:
-                problems.append(f"{title}: 분석 큐 정리 실패: {exc}")
+            for queue_item in current_queue:
+                try:
+                    queue.remove(queue_item.queue_id)
+                except (OSError, AnalysisQueueError) as exc:
+                    problems.append(f"{title}: 분석 큐 정리 실패: {exc}")
             try:
                 remove_search_entry(root, file_id)
             except (OSError, SearchIndexError) as exc:
@@ -2900,6 +3190,13 @@ class LibraryWorkflowController:
                 problems.append(f"통합 색인 재생성 실패: {exc}")
         self._library_cache = None
         return LibraryDeletionResult(deleted, tuple(problems))
+
+    def permanently_delete_library_entries(
+        self, entries: Iterable[LibraryEntry]
+    ) -> LibraryDeletionResult:
+        """Backward-compatible name; library removal is always recoverable."""
+
+        return self.trash_library_entries(entries)
 
     def rebuild_search_index(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
         """Rebuild the disposable full-text cache from every paperpack."""

@@ -538,6 +538,26 @@ def load_paperpack_metadata(path: Path) -> dict[str, Any]:
         raise PaperPackError(f"could not read paperpack metadata: {exc}") from None
 
 
+def load_paperpack_history(path: Path) -> tuple[dict[str, Any], ...]:
+    """Return verified revision records without retaining the ZIP handle."""
+
+    try:
+        with zipfile.ZipFile(path.expanduser().resolve(), "r") as archive:
+            manifest = _read_manifest(archive)
+            history: list[dict[str, Any]] = []
+            for revision in range(1, int(manifest["revision"]) + 1):
+                name = _history_entry(revision)
+                info = archive.getinfo(name)
+                if info.file_size > MAX_METADATA_BYTES * 2:
+                    raise PaperPackError(f"paperpack history entry is too large: {name}")
+                history.append(
+                    _decode_object(archive.read(name), f"history revision {revision}")
+                )
+            return tuple(history)
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise PaperPackError(f"could not read paperpack history: {exc}") from None
+
+
 def load_paperpack_content(path: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(path.expanduser().resolve(), "r") as archive:

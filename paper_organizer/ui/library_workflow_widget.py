@@ -1596,8 +1596,7 @@ class LibraryWidget(QWidget):
         self.open_button = QPushButton("sPDF로 열기")
         self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
         self.discard_pdf_button = QPushButton("편집본 폐기")
-        self.delete_button = QPushButton("선택 항목 완전 삭제")
-        self.delete_button.setStyleSheet("color: #a40000;")
+        self.delete_button = QPushButton("선택 항목을 앱 휴지통으로 이동")
         self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
         self.reanalyze_all_button = QPushButton("전체 논문 재요약")
         self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
@@ -2353,7 +2352,7 @@ class LibraryWidget(QWidget):
             approve_action.setEnabled(bool(suggestion))
             approve_action.triggered.connect(self._approve_category)
         menu.addSeparator()
-        delete_action = menu.addAction("선택 항목 완전 삭제…")
+        delete_action = menu.addAction("선택 항목을 앱 휴지통으로 이동…")
         delete_action.triggered.connect(self._delete_selected)
         menu.exec_(self.table.viewport().mapToGlobal(position))
 
@@ -2389,28 +2388,28 @@ class LibraryWidget(QWidget):
             titles += f"\n• 외 {len(entries) - 5}건"
         if QMessageBox.question(
             self,
-            "라이브러리 완전 삭제",
+            "라이브러리에서 제거",
             f"선택한 {len(entries)}건의 PaperPack과 저장된 PDF·분석 내용을 "
-            "완전히 삭제할까요?\n\n"
+            "앱 휴지통으로 옮길까요?\n\n"
             f"{titles}\n\n"
-            "이 작업은 제외 목록이나 앱 휴지통으로 보내지 않으며 복원할 수 없습니다. "
+            "나중에 수집 화면의 제외·휴지통 목록에서 원래 위치로 복원할 수 있습니다. "
             "감시 폴더에 남아 있는 원본 PDF는 삭제하지 않습니다.",
         ) != QMessageBox.Yes:
             return
         try:
-            result = self._controller.permanently_delete_library_entries(entries)
+            result = self._controller.trash_library_entries(entries)
         except Exception as exc:
-            QMessageBox.warning(self, "라이브러리 삭제 실패", str(exc))
+            QMessageBox.warning(self, "앱 휴지통 이동 실패", str(exc))
             return
         self.refresh(True)
         self.status_label.setText(
-            f"라이브러리 항목 {result.deleted}건을 완전히 삭제했습니다."
+            f"라이브러리 항목 {result.deleted}건을 앱 휴지통으로 옮겼습니다."
             + (f" · 확인 필요 {len(result.problems)}건" if result.problems else "")
         )
         if result.problems:
             QMessageBox.warning(
                 self,
-                "일부 삭제 작업 확인 필요",
+                "일부 휴지통 이동 확인 필요",
                 "\n".join(result.problems[:10]),
             )
         if result.deleted:
