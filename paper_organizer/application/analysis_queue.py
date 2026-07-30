@@ -240,6 +240,28 @@ class AnalysisQueueStore:
         self._replace(items, updated)
         return updated
 
+    def set_waiting_reason(
+        self, queue_id: str, message: str
+    ) -> AnalysisQueueItem:
+        """Persist why a pending item cannot start without consuming an attempt."""
+
+        items = self.load()
+        existing = self._find(items, queue_id)
+        if existing.status != "organized_pending_analysis":
+            raise AnalysisQueueError("분석 대기 중인 항목에만 대기 사유를 기록할 수 있습니다.")
+        safe_message = " ".join(message.split())[:500]
+        if existing.last_error == safe_message:
+            return existing
+        updated = AnalysisQueueItem(
+            **{
+                **asdict(existing),
+                "last_error": safe_message,
+                "updated_at": _now_iso(),
+            }
+        )
+        self._replace(items, updated)
+        return updated
+
     def claim_next(self) -> AnalysisQueueItem | None:
         """Atomically mark the highest-priority organized paper as analyzing."""
 

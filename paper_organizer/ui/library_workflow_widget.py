@@ -1023,7 +1023,7 @@ class AnalysisQueueWidget(QWidget):
         root.addWidget(note)
         self.table = _AnalysisQueueDropTable(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["우선순위", "상태", "제목", "실패 사유", "파일"]
+            ["우선순위", "상태", "제목", "대기/실패 사유", "파일"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -1116,7 +1116,9 @@ class AnalysisQueueWidget(QWidget):
                 "높음" if item.priority else "보통",
                 status_text,
                 item.title,
-                item.last_error if item.status == "failed" else "",
+                item.last_error
+                if item.status in {"organized_pending_analysis", "failed"}
+                else "",
                 item.path,
             ]
             sort_keys = [1 - int(bool(item.priority)), None, None, None, None]

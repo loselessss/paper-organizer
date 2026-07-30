@@ -76,6 +76,9 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
         from paper_organizer.ui.ollama_model_dialog import _download_detail
+        from paper_organizer.ui.ollama_model_dialog import (
+            _igpu_cpu_fallback_warning,
+        )
         from paper_organizer.ui.startup_splash import CREATOR, create_splash
 
         with tempfile.TemporaryDirectory() as temp:
@@ -122,6 +125,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("미리 적재하지 않으며", dialog.residency_guidance.text())
             self.assertTrue(dialog.force_igpu_check.isChecked())
             self.assertIn("1.7B", dialog.igpu_guidance.text())
+            self.assertIn("GPU 사용을 보장하지 않으며", dialog.igpu_guidance.text())
             self.assertEqual(
                 dialog.manage_models_button.text(),
                 "Ollama 설치·삭제…",
@@ -149,7 +153,15 @@ class UiSmokeTests(unittest.TestCase):
             self.assertFalse(model_dialog.install_button.isEnabled())
             self.assertFalse(model_dialog.delete_button.isEnabled())
             self.assertGreaterEqual(model_dialog.minimumWidth(), 760)
-            self.assertTrue(model_dialog.progress.alignment() & Qt.AlignLeft)
+            self.assertTrue(model_dialog.progress.alignment() & Qt.AlignCenter)
+            self.assertEqual(
+                model_dialog.layout().contentsMargins().left(),
+                18,
+            )
+            self.assertEqual(
+                model_dialog.layout().contentsMargins().right(),
+                18,
+            )
             model_dialog._worker = object()
             model_dialog._operation = "install"
             model_dialog._update_actions()
@@ -164,6 +176,12 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertIn("16.0MB/s", download_text)
             self.assertIn("남음", download_text)
+            self.assertIn(
+                "현재 모델은 CPU로 실행 중",
+                _igpu_cpu_fallback_warning(True, "CPU"),
+            )
+            self.assertEqual(_igpu_cpu_fallback_warning(False, "CPU"), "")
+            self.assertEqual(_igpu_cpu_fallback_warning(True, "GPU"), "")
             self.assertFalse(
                 bool(model_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
             )
@@ -477,6 +495,8 @@ class UiSmokeTests(unittest.TestCase):
             start_worker.assert_called_once_with("delete", "gemma3:12b")
             dialog._progress_changed(OllamaPullProgress("pulling", 80, 100))
             self.assertEqual(dialog.progress.value(), 80)
+            self.assertEqual(dialog.progress.format(), "80%")
+            self.assertIn("다운로드 중", dialog.progress_status.text())
             dialog._progress_changed(OllamaPullProgress("pulling", 10, 100))
             self.assertEqual(dialog.progress.value(), 80)
             refresh_flag_during_message = []
@@ -857,7 +877,7 @@ class UiSmokeTests(unittest.TestCase):
         from paper_organizer.application.background_analysis import AnalysisRunEvent
         from paper_organizer.ui.library_workflow_widget import AnalysisQueueWidget
 
-        def queue_item(key, title, priority, status):
+        def queue_item(key, title, priority, status, last_error=""):
             return AnalysisQueueItem(
                 queue_id=f"sha256:{key}",
                 path=f"C:/library/{key}.paperpack",
@@ -867,6 +887,7 @@ class UiSmokeTests(unittest.TestCase):
                 priority=priority,
                 added_at="2026-07-23T00:00:00+00:00",
                 updated_at="2026-07-23T00:00:00+00:00",
+                last_error=last_error,
             )
 
         class FakeController:
@@ -885,11 +906,27 @@ class UiSmokeTests(unittest.TestCase):
 
         items = [
             queue_item("a", "Alpha", 0, "completed"),
-            queue_item("b", "Beta", 1, "organized_pending_analysis"),
+            queue_item(
+                "b",
+                "Beta",
+                1,
+                "organized_pending_analysis",
+                "가용 메모리 부족: 현재 1.2GB",
+            ),
             queue_item("c", "Gamma", 0, "failed"),
         ]
         widget = AnalysisQueueWidget(FakeController(items))
         self.assertEqual(widget.table.rowCount(), 2)
+        self.assertEqual(
+            widget.table.horizontalHeaderItem(3).text(),
+            "대기/실패 사유",
+        )
+        beta_row = next(
+            row
+            for row in range(widget.table.rowCount())
+            if widget.table.item(row, 2).text() == "Beta"
+        )
+        self.assertIn("가용 메모리 부족", widget.table.item(beta_row, 3).text())
         self.assertNotIn(
             "Alpha",
             {

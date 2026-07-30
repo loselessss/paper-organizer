@@ -172,6 +172,41 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertTrue(saved["ollama_force_igpu"])
         self.assertEqual(changes, [True, True])
 
+    def test_saved_gpu_priority_is_reapplied_on_app_start(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            changes = []
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                path,
+                ollama_igpu_configurer=changes.append,
+            )
+            controller.save_preferences(
+                provider="ollama",
+                model="qwen3:1.7b",
+                cloud_processing_consent=False,
+                cloud_request_profile="conservative",
+                cloud_max_parallel_requests=1,
+                cloud_monthly_budget_usd=0,
+                ollama_force_igpu=True,
+            )
+            changes.clear()
+
+            controller.synchronize_ollama_acceleration()
+
+        self.assertEqual(changes, [True])
+
+    def test_ollama_restart_uses_injected_restarter(self):
+        calls = []
+        controller = AiSettingsController(
+            MemorySecretStore(),
+            Path("unused.json"),
+            ollama_restarter=lambda: bool(calls.append(True) or True),
+        )
+
+        self.assertTrue(controller.restart_ollama_runtime())
+        self.assertEqual(calls, [True])
+
     def test_installed_models_start_stopped_ollama_and_retry(self):
         manager = RecoveringModelManager()
         starts = []

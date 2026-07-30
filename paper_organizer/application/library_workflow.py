@@ -1924,6 +1924,11 @@ class LibraryWorkflowController:
     def claim_next_analysis(self) -> AnalysisQueueItem | None:
         return self._queue().claim_next()
 
+    def set_queue_waiting_reason(
+        self, queue_id: str, message: str
+    ) -> AnalysisQueueItem:
+        return self._queue().set_waiting_reason(queue_id, message)
+
     def complete_analysis(self, queue_id: str) -> AnalysisQueueItem:
         return self._queue().mark_completed(queue_id)
 

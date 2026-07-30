@@ -956,6 +956,10 @@ def _adaptive_context_window(
         memory_gb = float(hardware.get("memory_total_gb") or 0)
     except (TypeError, ValueError):
         memory_gb = 0.0
+    try:
+        available_memory_gb = float(hardware.get("memory_available_gb") or 0)
+    except (TypeError, ValueError):
+        available_memory_gb = 0.0
     gpu_vram = 0.0
     gpus = hardware.get("gpus", [])
     for gpu in gpus if isinstance(gpus, list) else []:
@@ -976,7 +980,24 @@ def _adaptive_context_window(
             continue
 
     if 3.0 <= parameters < 6.0:
-        maximum = 24_576 if memory_gb >= 12 or gpu_vram >= 6 else 16_384
+        if gpu_vram >= 6:
+            maximum = 24_576
+        elif (
+            settings.resource_profile != "eco"
+            and memory_gb >= 24
+            and available_memory_gb >= 10
+        ):
+            maximum = 24_576
+        elif (
+            settings.resource_profile != "eco"
+            and memory_gb >= 16
+            and available_memory_gb >= 7
+        ):
+            maximum = 16_384
+        else:
+            # Intel/AMD iGPUs share system RAM. A 16K context made a 3B model
+            # consume about 3.6 GB on a 16 GB PC, leaving too little for the UI.
+            maximum = 8_192
     elif 6.0 <= parameters <= 10.0:
         maximum = 16_384
         if memory_gb >= 16 or gpu_vram >= 8:
@@ -990,7 +1011,7 @@ def _adaptive_context_window(
         return None
 
     needed = math.ceil(character_count / 4) + CONTEXT_TOKEN_RESERVE
-    for bucket in (16_384, 24_576, 40_960):
+    for bucket in (8_192, 16_384, 24_576, 40_960):
         if needed <= bucket:
             return min(bucket, maximum)
     return maximum

@@ -80,6 +80,29 @@ class AnalysisQueueTests(unittest.TestCase):
                 [pending.queue_id],
             )
 
+    def test_waiting_reason_persists_without_consuming_an_attempt_and_claim_clears_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = AnalysisQueueStore(root)
+            queued = store.enqueue(
+                path=root / "paper.paperpack",
+                file_sha256="f" * 64,
+                title="Memory Wait",
+                status="organized_pending_analysis",
+            )
+
+            waiting = store.set_waiting_reason(
+                queued.queue_id,
+                "가용 메모리 부족: 현재 1.2GB, 최소 7.0GB가 필요합니다.",
+            )
+
+            self.assertEqual(waiting.status, "organized_pending_analysis")
+            self.assertEqual(waiting.attempt_count, 0)
+            self.assertIn("가용 메모리 부족", store.load()[0].last_error)
+            claimed = store.claim_next()
+            self.assertEqual(claimed.attempt_count, 1)
+            self.assertEqual(claimed.last_error, "")
+
     def test_translation_uses_the_same_persistent_serial_queue(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

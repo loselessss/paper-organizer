@@ -14,6 +14,8 @@ from paper_organizer.application.summary_service import (
     SummaryMode,
     ollama_model_supports_ocr,
 )
+from paper_organizer.core.model_recommendation import load_model_catalog
+from paper_organizer.infra.hardware import HardwareInspector
 from paper_organizer.infra.ollama_runtime import (
     OllamaRuntimeInspector,
     OllamaRuntimeStatus,
@@ -54,6 +56,7 @@ class BackgroundAnalysisService:
         ollama_starter: Callable[[], bool] | None = None,
         translation: LibraryTranslationService | None = None,
         ollama_stopper: Callable[[], bool] | None = None,
+        memory_available_gb: Callable[[], float] | None = None,
     ) -> None:
         self._workflow = workflow
         self._summary = summary
@@ -63,6 +66,9 @@ class BackgroundAnalysisService:
         self._ollama_starter = ollama_starter
         self._translation = translation
         self._ollama_stopper = ollama_stopper
+        self._memory_available_gb = (
+            memory_available_gb or HardwareInspector().available_memory_gb
+        )
         self._cancel_requested = Event()
 
     def request_cancel(self) -> None:
@@ -115,6 +121,14 @@ class BackgroundAnalysisService:
                 return AnalysisReadiness(False, "Ollama가 실행될 때까지 기다리는 중입니다.")
             if not _model_installed(status, model):
                 return AnalysisReadiness(False, f"Ollama 모델 {model}이 설치되지 않았습니다.")
+            memory_readiness = _ollama_memory_readiness(
+                status,
+                model,
+                settings.resource_profile,
+                self._memory_available_gb,
+            )
+            if not memory_readiness.ready:
+                return memory_readiness
             return AnalysisReadiness(True, f"로컬 Ollama {model} 준비됨")
         if not settings.cloud_processing_consent:
             return AnalysisReadiness(
@@ -153,10 +167,14 @@ class BackgroundAnalysisService:
                 settings.summary_provider == "ollama"
                 and not ollama_model_supports_ocr(settings.selected_model)
             ):
+                reason = (
+                    "OCR 문서는 8B 이상 Ollama 모델에서만 분석합니다. "
+                    "AI 설정에서 8B 모델을 선택하세요."
+                )
+                self._record_waiting_reason(next_item.queue_id, reason)
                 return AnalysisRunEvent(
                     "waiting",
-                    "OCR 문서는 8B 이상 Ollama 모델에서만 분석합니다. "
-                    "AI 설정에서 8B 모델을 선택하세요.",
+                    reason,
                     next_item.queue_id,
                     next_item.title,
                 )
@@ -219,7 +237,13 @@ class BackgroundAnalysisService:
                 )
         readiness = self.readiness()
         if not readiness.ready:
-            return AnalysisRunEvent("waiting", readiness.reason)
+            self._record_waiting_reason(next_item.queue_id, readiness.reason)
+            return AnalysisRunEvent(
+                "waiting",
+                readiness.reason,
+                next_item.queue_id,
+                next_item.title,
+            )
         item = self._workflow.claim_next_analysis()
         if item is None:
             return AnalysisRunEvent("idle", "다른 작업이 대기열을 갱신했습니다.")
@@ -353,6 +377,16 @@ class BackgroundAnalysisService:
         if self._cancel_requested.is_set():
             raise RuntimeError("analysis cancelled")
 
+    def _record_waiting_reason(self, queue_id: str, reason: str) -> None:
+        recorder = getattr(self._workflow, "set_queue_waiting_reason", None)
+        if recorder is None:
+            return
+        try:
+            recorder(queue_id, reason)
+        except Exception:
+            # A transient queue write problem must not turn a safe wait into a failure.
+            pass
+
 
 def poll_interval_seconds(resource_profile: str) -> int:
     return {"eco": 30, "balanced": 10, "performance": 2}.get(
@@ -361,11 +395,86 @@ def poll_interval_seconds(resource_profile: str) -> int:
 
 
 def _model_installed(status: OllamaRuntimeStatus, selected: str) -> bool:
-    key = selected.casefold().removesuffix(":latest")
+    key = _model_key(selected)
     return any(
-        model.name.casefold().removesuffix(":latest") == key
+        _model_key(model.name) == key
         for model in status.models
     )
+
+
+def _model_key(value: str) -> str:
+    return value.strip().casefold().removesuffix(":latest")
+
+
+def _ollama_memory_readiness(
+    status: OllamaRuntimeStatus,
+    selected: str,
+    resource_profile: str,
+    available_memory: Callable[[], float],
+) -> AnalysisReadiness:
+    """Protect the desktop from loading a model when system RAM is exhausted."""
+
+    try:
+        available_gb = max(0.0, float(available_memory()))
+    except (OSError, TypeError, ValueError):
+        return AnalysisReadiness(True, "가용 메모리를 확인하지 못해 분석을 계속합니다.")
+
+    key = _model_key(selected)
+    loaded = any(_model_key(model.name) == key for model in status.running_models)
+    reserve_gb = {
+        "eco": 2.0,
+        "balanced": 1.5,
+        "performance": 1.0,
+    }.get(resource_profile, 2.0)
+    if loaded:
+        required_gb = max(1.0, reserve_gb)
+        if available_gb >= required_gb:
+            return AnalysisReadiness(True, f"가용 메모리 {available_gb:.1f}GB")
+        return AnalysisReadiness(
+            False,
+            (
+                f"가용 메모리 부족: 현재 {available_gb:.1f}GB, 실행 중인 "
+                f"{selected}을 유지하려면 시스템 여유 {required_gb:.1f}GB가 "
+                "필요합니다. 다른 앱을 닫으면 자동으로 다시 시도합니다."
+            ),
+        )
+
+    runtime_gb = _estimated_runtime_memory_gb(status, selected)
+    required_gb = runtime_gb + reserve_gb
+    if available_gb >= required_gb:
+        return AnalysisReadiness(True, f"가용 메모리 {available_gb:.1f}GB")
+    return AnalysisReadiness(
+        False,
+        (
+            f"가용 메모리 부족: 현재 {available_gb:.1f}GB, {selected} 시작 예상 "
+            f"{runtime_gb:.1f}GB + 시스템 여유 {reserve_gb:.1f}GB = 최소 "
+            f"{required_gb:.1f}GB가 필요합니다. 다른 앱을 닫거나 더 작은 모델을 "
+            "선택하면 자동으로 다시 시도합니다."
+        ),
+    )
+
+
+def _estimated_runtime_memory_gb(
+    status: OllamaRuntimeStatus, selected: str
+) -> float:
+    key = _model_key(selected)
+    try:
+        _version, specs = load_model_catalog()
+        spec = next(
+            (value for value in specs if _model_key(value.model_id) == key),
+            None,
+        )
+        if spec is not None:
+            return spec.runtime_memory_gb
+    except (OSError, TypeError, ValueError):
+        pass
+    installed = next(
+        (model for model in status.models if _model_key(model.name) == key),
+        None,
+    )
+    if installed is not None and installed.size_gb > 0:
+        return max(2.0, installed.size_gb * 1.5)
+    return 4.0
 
 
 def _safe_error(exc: BaseException) -> str:

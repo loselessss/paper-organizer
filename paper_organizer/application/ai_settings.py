@@ -75,6 +75,7 @@ class AiSettingsController:
         model_manager: OllamaModelManagerService | None = None,
         ollama_starter: Callable[[], bool] | None = None,
         ollama_igpu_configurer: Callable[[bool], None] | None = None,
+        ollama_restarter: Callable[[], bool] | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
@@ -84,6 +85,7 @@ class AiSettingsController:
         )
         self._ollama_starter = ollama_starter
         self._ollama_igpu_configurer = ollama_igpu_configurer
+        self._ollama_restarter = ollama_restarter
 
     @property
     def settings_path(self) -> Path:
@@ -127,6 +129,29 @@ class AiSettingsController:
 
     def settings(self) -> AppSettings:
         return load_settings(self._settings_path)
+
+    def synchronize_ollama_acceleration(self) -> None:
+        """Reapply the saved iGPU preference before this app may start Ollama."""
+
+        settings = load_settings(self._settings_path)
+        configurer = self._ollama_igpu_configurer
+        if configurer is None:
+            from paper_organizer.infra.ollama_acceleration import (
+                configure_ollama_igpu,
+            )
+
+            configurer = configure_ollama_igpu
+        configurer(settings.ollama_force_igpu)
+
+    def restart_ollama_runtime(self) -> bool:
+        """Restart Ollama after the user changes its process-level GPU setting."""
+
+        restarter = self._ollama_restarter
+        if restarter is None:
+            from paper_organizer.infra.ollama_installer import restart_runtime
+
+            restarter = restart_runtime
+        return restarter()
 
     def model_for_provider(self, provider: str) -> str:
         normalized = provider.strip().lower()

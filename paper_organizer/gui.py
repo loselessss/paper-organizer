@@ -34,6 +34,7 @@ def main() -> int:
     )
     from paper_organizer.application.summary_service import SummaryController
     from paper_organizer.application.update_service import GitHubUpdateService
+    from paper_organizer.infra.ollama_installer import stop_managed_runtime
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
     from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
@@ -50,6 +51,7 @@ def main() -> int:
     from paper_organizer.application.background_ocr import stop_active_ocr_workers
 
     app.aboutToQuit.connect(stop_active_ocr_workers)
+    app.aboutToQuit.connect(stop_managed_runtime)
     app.aboutToQuit.connect(single_instance.close)
     lifecycle = LifecycleSettingsController()
     was_first_run = lifecycle.first_run_required()
@@ -59,6 +61,11 @@ def main() -> int:
             return 0
     secret_store = default_secret_store()
     ai_settings = AiSettingsController(secret_store)
+    acceleration_warning = ""
+    try:
+        ai_settings.synchronize_ollama_acceleration()
+    except (OSError, RuntimeError) as exc:
+        acceleration_warning = f"GPU 가속 설정을 Windows에 반영하지 못했습니다: {exc}"
     summary = SummaryController(secret_store)
     workflow = LibraryWorkflowController()
     conversational_search = ConversationalSearchController(
@@ -107,6 +114,8 @@ def main() -> int:
             )
         elif error:
             window.statusBar().showMessage(f"시작 색인 읽기 경고: {error}")
+        if acceleration_warning:
+            window.statusBar().showMessage(acceleration_warning)
         runtime["window"] = window
         activate_when_ready = bool(runtime.pop("activate_when_ready", False))
         if (

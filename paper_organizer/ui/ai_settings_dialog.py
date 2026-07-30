@@ -51,6 +51,25 @@ class _HardwareScanWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class _OllamaRestartWorker(QThread):
+    completed = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, controller: AiSettingsController, parent=None) -> None:
+        super().__init__(parent)
+        self._controller = controller
+
+    def run(self) -> None:
+        try:
+            if not self._controller.restart_ollama_runtime():
+                raise RuntimeError(
+                    "Ollama를 다시 시작하지 못했습니다. 시작 메뉴에서 직접 실행하세요."
+                )
+            self.completed.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class AiSettingsDialog(QDialog):
     def __init__(self, controller: AiSettingsController, parent=None) -> None:
         super().__init__(parent)
@@ -69,6 +88,7 @@ class AiSettingsDialog(QDialog):
             max(280, min(480, available_height - 80)),
         )
         self._scan_worker: _HardwareScanWorker | None = None
+        self._restart_worker: _OllamaRestartWorker | None = None
         self._recommended_model = ""
         self._initial_force_igpu = False
 
@@ -179,15 +199,16 @@ class AiSettingsDialog(QDialog):
             self.residency_combo.addItem(label, value)
         self.resident_model_combo = QComboBox()
         self.force_igpu_check = QCheckBox(
-            "GPU 우선 사용 (내장 GPU Vulkan 포함 · 실패 시 CPU)"
+            "내장 GPU도 사용 허용 (Vulkan · 사용할 수 없으면 CPU)"
         )
         self.force_igpu_check.setToolTip(
-            "Intel Iris Xe 같은 내장 GPU도 Ollama가 먼저 시험하도록 합니다. "
+            "Ollama가 Intel Iris Xe 같은 내장 GPU를 후보에서 제외하지 않도록 합니다. "
             "설정 변경 후 Ollama를 완전히 종료하고 다시 실행해야 합니다."
         )
         self.igpu_guidance = QLabel(
-            "기본값은 GPU 우선이며 사용할 수 없으면 Ollama가 CPU로 대체합니다. "
-            "내장 GPU는 시스템 RAM을 공유하므로 1.7B 모델부터 시험합니다."
+            "외장 GPU는 Ollama가 자동으로 우선 사용합니다. 이 옵션은 내장 GPU도 "
+            "후보에 포함하지만 GPU 사용을 보장하지 않으며, 드라이버·메모리 조건이 "
+            "맞지 않으면 CPU로 실행됩니다. 내장 GPU는 1.7B 모델부터 시험하세요."
         )
         self.igpu_guidance.setWordWrap(True)
         self.igpu_guidance.setStyleSheet("color: #666;")
@@ -238,12 +259,12 @@ class AiSettingsDialog(QDialog):
         self.scroll_area.setWidget(scroll_content)
         root.addWidget(self.scroll_area, 1)
 
-        buttons = QDialogButtonBox(
+        self.buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
-        buttons.accepted.connect(self._save_preferences)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        self.buttons.accepted.connect(self._save_preferences)
+        self.buttons.rejected.connect(self.reject)
+        root.addWidget(self.buttons)
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         self.model_combo.currentIndexChanged.connect(self._model_changed)
@@ -688,6 +709,15 @@ class AiSettingsDialog(QDialog):
             self.force_igpu_check.isChecked()
             != self._initial_force_igpu
         )
+        if acceleration_changed and QMessageBox.question(
+            self,
+            "Ollama GPU 설정 변경",
+            "GPU 설정을 저장하면 Ollama를 바로 다시 시작합니다.\n\n"
+            "현재 진행 중인 다른 앱의 Ollama 작업도 중단됩니다. 계속할까요?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        ) != QMessageBox.Yes:
+            return
         try:
             self._controller.save_preferences(
                 provider=self.provider_combo.currentData(),
@@ -710,17 +740,47 @@ class AiSettingsDialog(QDialog):
             return
         if acceleration_changed:
             state = "사용" if self.force_igpu_check.isChecked() else "사용하지 않도록"
-            QMessageBox.information(
-                self,
-                "Ollama 재시작 필요",
-                f"내장 GPU를 {state} 설정했습니다.\n\n"
-                "진행 중인 분석이 끝난 뒤 트레이의 Ollama를 완전히 종료하고 "
-                "시작 메뉴에서 다시 실행하세요. 모델을 실행한 뒤 "
-                "'사양 다시 검사'를 누르면 CPU·GPU 사용 상태를 확인할 수 있습니다.",
+            self.scroll_area.setEnabled(False)
+            self.buttons.setEnabled(False)
+            self.hardware_status.setText(
+                f"내장 GPU를 {state} 설정했습니다. Ollama를 다시 시작하는 중…"
             )
+            worker = _OllamaRestartWorker(self._controller, self)
+            worker.completed.connect(self._restart_completed)
+            worker.failed.connect(self._restart_failed)
+            worker.finished.connect(worker.deleteLater)
+            self._restart_worker = worker
+            worker.start()
+            return
         self.accept()
 
+    def _restart_completed(self) -> None:
+        self._restart_worker = None
+        QMessageBox.information(
+            self,
+            "Ollama 재시작 완료",
+            "GPU 설정을 저장하고 Ollama를 다시 시작했습니다.\n\n"
+            "이 옵션은 내장 GPU를 후보에 포함하며 GPU 실행 자체를 강제하지는 "
+            "않습니다. 모델 검증 또는 사양 다시 검사에서 실제 CPU·GPU 상태를 "
+            "확인할 수 있습니다.",
+        )
+        self.accept()
+
+    def _restart_failed(self, message: str) -> None:
+        self._restart_worker = None
+        self.scroll_area.setEnabled(True)
+        self.buttons.setEnabled(True)
+        self.hardware_status.setText("Ollama 자동 재시작에 실패했습니다.")
+        QMessageBox.warning(self, "Ollama 재시작 실패", message)
+
     def reject(self) -> None:
+        if self._restart_worker is not None and self._restart_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Ollama 재시작 중",
+                "Ollama 재시작이 끝난 뒤 창을 닫으세요.",
+            )
+            return
         if self._scan_worker is not None and self._scan_worker.isRunning():
             QMessageBox.information(
                 self,

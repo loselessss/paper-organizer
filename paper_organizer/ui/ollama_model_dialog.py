@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -141,6 +142,8 @@ class OllamaModelDialog(QDialog):
         self.setMinimumSize(760, 560)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(8)
         warning = QLabel(
             "Ollama 모델 저장소는 다른 앱과 공유될 수 있습니다. Paper Organizer를 "
             "제거해도 모델은 자동 삭제하지 않으며, 아래 삭제 버튼을 누르고 확인한 "
@@ -200,16 +203,51 @@ class OllamaModelDialog(QDialog):
         self.model_detail.setWordWrap(True)
         root.addWidget(self.model_detail)
 
+        progress_panel = QFrame()
+        progress_panel.setObjectName("modelProgressPanel")
+        progress_panel.setStyleSheet(
+            "QFrame#modelProgressPanel {"
+            " background-color: #f5f7fa;"
+            " border: 1px solid #c8ced7;"
+            " border-radius: 6px;"
+            "}"
+        )
+        progress_layout = QVBoxLayout(progress_panel)
+        progress_layout.setContentsMargins(12, 9, 12, 10)
+        progress_layout.setSpacing(6)
+        progress_heading = QLabel("모델 작업 상태")
+        heading_font = progress_heading.font()
+        heading_font.setBold(True)
+        progress_heading.setFont(heading_font)
+        progress_layout.addWidget(progress_heading)
+
+        self.progress_status = QLabel("모델 작업 대기 중")
+        self.progress_status.setWordWrap(True)
+        self.progress_status.setMinimumHeight(20)
+        progress_layout.addWidget(self.progress_status)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("대기 중")
-        self.progress.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.progress.setMinimumHeight(24)
+        self.progress.setAlignment(Qt.AlignCenter)
+        self.progress.setMinimumHeight(30)
         self.progress.setStyleSheet(
-            "QProgressBar { text-align: left; padding-left: 8px; }"
+            "QProgressBar {"
+            " border: 1px solid #7d8793;"
+            " border-radius: 4px;"
+            " background-color: #ffffff;"
+            " color: #20252b;"
+            " font-weight: 600;"
+            " text-align: center;"
+            "}"
+            "QProgressBar::chunk {"
+            " background-color: #45a35a;"
+            " border-radius: 3px;"
+            "}"
         )
-        root.addWidget(self.progress)
+        progress_layout.addWidget(self.progress)
+        root.addWidget(progress_panel)
 
         action_row = QHBoxLayout()
         self.install_button = QPushButton("다운로드 후 선택")
@@ -263,10 +301,19 @@ class OllamaModelDialog(QDialog):
             self._apply_snapshot(result)
             return
         if self._operation in {"install", "verify"}:
-            model = (
-                result.verification.model
+            verification = (
+                result.verification
                 if self._operation == "install"
-                else result.model
+                else result
+            )
+            model = (
+                verification.model
+                if self._operation == "install"
+                else verification.model
+            )
+            acceleration_warning = _igpu_cpu_fallback_warning(
+                self._controller.view().ollama_force_igpu,
+                verification.processor,
             )
             self.progress.setRange(0, 100)
             self.progress.setValue(100)
@@ -274,6 +321,15 @@ class OllamaModelDialog(QDialog):
                 "설치 및 서지정보 입력 검증 완료"
                 if self._operation == "install"
                 else "서지정보 입력 검증 완료"
+            )
+            self.progress_status.setText(
+                f"{model.name} · "
+                + (
+                    "다운로드와 서지정보 입력 검증을 마쳤습니다."
+                    if self._operation == "install"
+                    else "서지정보 입력 검증을 마쳤습니다."
+                )
+                + acceleration_warning
             )
             self._controller.select_ollama_model(model.name)
             self.model_verified.emit(model.name)
@@ -285,7 +341,7 @@ class OllamaModelDialog(QDialog):
                 self,
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
-                f"{result.verification.message if installed_now else result.message}\n"
+                f"{verification.message}{acceleration_warning}\n"
                 "활성 Ollama 모델로 선택하고 설정에 저장했습니다.",
             )
             return
@@ -297,6 +353,7 @@ class OllamaModelDialog(QDialog):
             self.progress.setRange(0, 100)
             self.progress.setValue(100)
             self.progress.setFormat("삭제 완료")
+            self.progress_status.setText(f"{deleted_model} · 삭제 완료")
             self._mark_refresh_after_operation()
             suffix = " 활성 모델 선택도 비웠습니다." if cleared else ""
             QMessageBox.information(
@@ -309,12 +366,14 @@ class OllamaModelDialog(QDialog):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("작업 실패")
+        self.progress_status.setText(f"작업 실패 · {message}")
         QMessageBox.warning(self, "Ollama 모델 작업 실패", message)
 
     def _operation_cancelled(self, message: str) -> None:
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("다운로드 취소됨")
+        self.progress_status.setText(f"다운로드 취소됨 · {message}")
         self.runtime_status.setText(message)
         self._refresh_after_operation = True
 
@@ -563,7 +622,10 @@ class OllamaModelDialog(QDialog):
             ) != QMessageBox.Yes:
                 return
             self.progress.setRange(0, 0)
-            self.progress.setFormat("설치 모델을 검증하는 중…")
+            self.progress.setFormat("")
+            self.progress_status.setText(
+                f"{entry.model_id} · 설치 모델의 서지정보 입력을 검증하는 중…"
+            )
             self._start_worker("verify", entry.model_id)
             return
         if entry.estimated_download_gb is None:
@@ -587,7 +649,8 @@ class OllamaModelDialog(QDialog):
             return
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setFormat("다운로드 준비 중…")
+        self.progress.setFormat("0%")
+        self.progress_status.setText(f"{entry.model_id} · 다운로드 준비 중…")
         self._download_last_at = time.monotonic()
         self._download_last_bytes = 0
         self._download_speed_bps = 0.0
@@ -609,13 +672,16 @@ class OllamaModelDialog(QDialog):
         ) != QMessageBox.Yes:
             return
         self.progress.setRange(0, 0)
-        self.progress.setFormat("삭제 및 설치 목록 확인 중…")
+        self.progress.setFormat("")
+        self.progress_status.setText(
+            f"{entry.model_id} · 삭제 후 설치 목록을 확인하는 중…"
+        )
         self._start_worker("delete", entry.model_id)
 
     def _cancel_download(self) -> None:
         if self._worker is not None and self._operation == "install":
             self.cancel_button.setEnabled(False)
-            self.progress.setFormat("안전한 지점에서 취소하는 중…")
+            self.progress_status.setText("안전한 지점에서 다운로드를 취소하는 중…")
             self._worker.request_cancel()
 
     def _progress_changed(self, progress) -> None:
@@ -639,10 +705,14 @@ class OllamaModelDialog(QDialog):
             progress.total_bytes,
             self._download_speed_bps,
         )
+        status = _progress_status_text(progress.status)
         if progress.percent is None:
             self.progress.setRange(0, 100)
             self.progress.setValue(self._download_highest_percent)
-            self.progress.setFormat(f"{progress.status}{detail}")
+            self.progress.setFormat(f"{self._download_highest_percent}%")
+            self.progress_status.setText(
+                f"{self._operation_model} · {status}{detail}"
+            )
         else:
             if progress.status.casefold() == "success":
                 self._download_highest_percent = 100
@@ -653,8 +723,10 @@ class OllamaModelDialog(QDialog):
                 )
             self.progress.setRange(0, 100)
             self.progress.setValue(self._download_highest_percent)
-            self.progress.setFormat(
-                f"{progress.status} — {self._download_highest_percent}%{detail}"
+            self.progress.setFormat(f"{self._download_highest_percent}%")
+            self.progress_status.setText(
+                f"{self._operation_model} · {status} — "
+                f"{self._download_highest_percent}%{detail}"
             )
 
     def _selected_entry(self):
@@ -740,12 +812,39 @@ def _download_detail(completed: int, total: int, speed_bps: float) -> str:
         if total > 0:
             transferred += f"/{total / (1024 ** 3):.2f}GB"
         parts.append(transferred)
-    if speed_bps > 0:
+    if speed_bps >= 0.05 * (1024 ** 2) and (total <= 0 or completed < total):
         parts.append(f"{speed_bps / (1024 ** 2):.1f}MB/s")
         if total > completed:
             eta = max(0, round((total - completed) / speed_bps))
             parts.append(f"약 {eta // 60}분 {eta % 60}초 남음")
     return f" · {' · '.join(parts)}" if parts else ""
+
+
+def _progress_status_text(status: str) -> str:
+    """Translate Ollama's terse pull states for the visible progress panel."""
+
+    normalized = " ".join(status.strip().casefold().split())
+    translations = {
+        "pulling manifest": "모델 정보를 확인하는 중",
+        "pulling": "다운로드 중",
+        "verifying sha256 digest": "다운로드 파일을 검증하는 중",
+        "writing manifest": "설치 정보를 저장하는 중",
+        "removing any unused layers": "불필요한 임시 파일을 정리하는 중",
+        "success": "다운로드 완료 · 서지정보 입력 검증을 준비하는 중",
+    }
+    return translations.get(normalized, status.strip() or "다운로드 상태 확인 중")
+
+
+def _igpu_cpu_fallback_warning(force_igpu: bool, processor: str) -> str:
+    """Explain when an opted-in iGPU setting has not reached the running server."""
+
+    if not force_igpu or processor.strip().casefold() != "cpu":
+        return ""
+    return (
+        "\nGPU 옵션은 켜져 있지만 현재 모델은 CPU로 실행 중입니다. "
+        "진행 중인 분석을 마친 뒤 Ollama를 완전히 종료하고 다시 실행한 후 "
+        "검증하세요."
+    )
 
 
 def _entry_usage_text(entry) -> str:

@@ -11,6 +11,7 @@ from paper_organizer.infra.ollama_installer import (
     ensure_runtime,
     find_winget_executable,
     inspect_runtime,
+    restart_runtime,
     start_runtime,
     stop_managed_runtime,
 )
@@ -149,6 +150,40 @@ class ManagedRuntimeTests(unittest.TestCase):
             self.assertTrue(stop_managed_runtime())
         process.terminate.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=10)
+
+    def test_restart_replaces_tray_and_server_with_sanitized_environment(self):
+        commands = []
+        launches = []
+        inspector = FakeInspector(stopped(), running())
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.find_ollama_executable",
+            return_value="C:/ollama.exe",
+        ), mock.patch(
+            "paper_organizer.infra.ollama_installer.stop_managed_runtime",
+            return_value=False,
+        ), mock.patch.dict(
+            os.environ,
+            {
+                "OLLAMA_IGPU_ENABLE": "1",
+                "OPENAI_API_KEY": "should-not-reach-child",
+            },
+        ):
+            result = restart_runtime(
+                inspector=inspector,
+                run_command=lambda command, timeout: (
+                    commands.append((tuple(command), timeout)) or completed(0)
+                ),
+                launcher=lambda executable, environment: launches.append(
+                    (executable, environment)
+                ),
+                sleep=lambda _seconds: None,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(commands[0][0][:3], ("taskkill", "/IM", "ollama.exe"))
+        self.assertEqual(launches[0][0], "C:/ollama.exe")
+        self.assertEqual(launches[0][1]["OLLAMA_IGPU_ENABLE"], "1")
+        self.assertNotIn("OPENAI_API_KEY", launches[0][1])
 
 
 class EnsureRuntimeTests(unittest.TestCase):

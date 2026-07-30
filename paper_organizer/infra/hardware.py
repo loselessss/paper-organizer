@@ -79,6 +79,12 @@ class HardwareInspector:
             model_disk_free_gb=_gib(disk.free),
         )
 
+    def available_memory_gb(self) -> float:
+        """Return current available system memory without the slower GPU scan."""
+
+        _total, available = _memory_bytes()
+        return _gib(available)
+
     def _gpus(self) -> tuple[GpuInfo, ...]:
         nvidia = self._nvidia_gpus()
         if nvidia:

@@ -585,12 +585,41 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertFalse(prepared.preview.sends_to_cloud)
         self.assertFalse(prepared.preview.requires_cloud_consent)
 
-    def test_qwen_4b_uses_up_to_24k_context_and_trims_to_fit(self):
+    def test_qwen_4b_on_shared_16gb_memory_uses_safe_8k_context(self):
         settings = AppSettings(
             summary_provider="ollama",
             selected_model="qwen3:4b",
             resource_profile="balanced",
-            hardware_profile={"memory_total_gb": 16, "gpus": []},
+            hardware_profile={
+                "memory_total_gb": 16,
+                "memory_available_gb": 5,
+                "gpus": [],
+            },
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            ["Main academic evidence and methods. " * 4_000],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        self.assertEqual(prepared.preview.context_window, 8_192)
+        self.assertTrue(prepared.preview.truncated)
+        self.assertLessEqual(
+            prepared.preview.estimated_input_tokens,
+            8_192 - 3_000,
+        )
+
+    def test_qwen_4b_with_dedicated_vram_keeps_24k_context(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:4b",
+            resource_profile="balanced",
+            hardware_profile={
+                "memory_total_gb": 16,
+                "memory_available_gb": 5,
+                "gpus": [{"vram_total_gb": 12}],
+            },
         )
         prepared = prepare_text_summary(
             Path("paper.paperpack"),
@@ -600,11 +629,6 @@ class SummaryServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(prepared.preview.context_window, 24_576)
-        self.assertTrue(prepared.preview.truncated)
-        self.assertLessEqual(
-            prepared.preview.estimated_input_tokens,
-            24_576 - 3_000,
-        )
 
     def test_phi4_mini_uses_catalog_size_for_small_model_policy(self):
         settings = AppSettings(
@@ -620,7 +644,7 @@ class SummaryServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
-        self.assertEqual(prepared.preview.context_window, 16_384)
+        self.assertEqual(prepared.preview.context_window, 8_192)
 
     def test_truncation_keeps_each_scientific_section(self):
         settings = AppSettings(

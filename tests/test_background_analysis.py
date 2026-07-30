@@ -26,6 +26,7 @@ from paper_organizer.core.paperpack import (
 from paper_organizer.infra.ollama_runtime import (
     InstalledOllamaModel,
     OllamaRuntimeStatus,
+    RunningOllamaModel,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers.base import SummaryData, SummaryResult
@@ -141,12 +142,19 @@ class FakeWorkflow:
         self.needs_ocr = False
         self.ocr_completed = []
         self.retried = []
+        self.waiting_reasons = []
 
     def analysis_queue(self):
         return [] if self.claimed else [self.item]
 
     def claim_next_analysis(self):
         self.claimed = True
+        self.item = replace(self.item, last_error="")
+        return self.item
+
+    def set_queue_waiting_reason(self, queue_id, message):
+        self.waiting_reasons.append((queue_id, message))
+        self.item = replace(self.item, last_error=message)
         return self.item
 
     def paperpack_needs_ocr(self, path):
@@ -215,6 +223,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 settings_path,
                 ollama=FakeOllama(),
                 ollama_stopper=lambda: stopped.set() or True,
+                memory_available_gb=lambda: 32.0,
             )
             holder["service"] = service
 
@@ -263,6 +272,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 settings_path,
                 ollama=FakeOllama(),
                 translation=translation,
+                memory_available_gb=lambda: 32.0,
             )
 
             event = service.run_next()
@@ -292,6 +302,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                     MemorySecrets(),
                     settings_path,
                     ollama=FakeOllama(),
+                    memory_available_gb=lambda: 32.0,
                 )
 
                 with mock.patch(
@@ -317,6 +328,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 MemorySecrets(),
                 settings_path,
                 ollama=FakeOllama(reachable=False),
+                memory_available_gb=lambda: 32.0,
             )
 
             event = service.run_next()
@@ -345,6 +357,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 MemorySecrets(),
                 settings_path,
                 ollama=FakeOllama(),
+                memory_available_gb=lambda: 32.0,
             )
 
             event = service.run_next()
@@ -354,6 +367,82 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(workflow.removed, [workflow.item.queue_id])
         self.assertEqual(workflow.completed, [])
         self.assertFalse(workflow.failed)
+
+    def test_low_memory_keeps_item_pending_with_reason_then_retries_automatically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                    resource_profile="eco",
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            summary = FakeSummary(execution(root / "paper.pdf"))
+            available = [1.2]
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                memory_available_gb=lambda: available[0],
+            )
+
+            waiting = service.run_next()
+            self.assertEqual(waiting.state, "waiting")
+            self.assertFalse(workflow.claimed)
+            self.assertEqual(workflow.item.attempt_count, 0)
+            self.assertIn("가용 메모리 부족", workflow.item.last_error)
+            self.assertIn("현재 1.2GB", workflow.item.last_error)
+            self.assertIn("최소 8.0GB", workflow.item.last_error)
+
+            available[0] = 32.0
+            completed = service.run_next()
+
+        self.assertEqual(completed.state, "completed")
+        self.assertTrue(workflow.claimed)
+        self.assertEqual(workflow.item.last_error, "")
+        self.assertEqual(summary.modes, [SummaryMode.QUICK])
+
+    def test_loaded_model_only_requires_the_system_memory_reserve(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                    resource_profile="eco",
+                ),
+                settings_path,
+            )
+            ollama = FakeOllama()
+            ollama.status = replace(
+                ollama.status,
+                running_models=(
+                    RunningOllamaModel("qwen3:4b", "100% GPU", 5.0, 5.0),
+                ),
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            service = BackgroundAnalysisService(
+                workflow,
+                FakeSummary(execution(root / "paper.pdf")),
+                MemorySecrets(),
+                settings_path,
+                ollama=ollama,
+                memory_available_gb=lambda: 0.8,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "waiting")
+        self.assertIn("실행 중인 qwen3:4b", event.message)
+        self.assertIn("시스템 여유 2.0GB", event.message)
+        self.assertFalse(workflow.claimed)
 
     def test_pending_local_analysis_starts_ollama_when_needed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -396,6 +485,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 settings_path,
                 ollama=ollama,
                 ollama_starter=start_ollama,
+                memory_available_gb=lambda: 32.0,
             )
 
             event = service.run_next(force=True)
@@ -422,6 +512,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 MemorySecrets(),
                 settings_path,
                 ollama=FakeOllama(),
+                memory_available_gb=lambda: 32.0,
             )
 
             event = service.run_next()
@@ -454,6 +545,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 settings_path,
                 ollama=FakeOllama(reachable=False),
                 ollama_starter=lambda: False,
+                memory_available_gb=lambda: 32.0,
             )
             started = []
             progress = []
