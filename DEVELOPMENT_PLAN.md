@@ -671,12 +671,12 @@ Paper Organizer 설치본에는 요약용 LLM 가중치를 포함하지 않는�
 | 용량군 | 다운로드 예시 | 권장 용도 |
 |---|---|---|
 | 초경량, 약 0.5~1.5GB | Qwen3 0.6B `523MB`, 1.7B `1.4GB`; Gemma 3 1B `815MB` | 구역별 사실 추출·계층형 요약 벤치마크, 저사양 CPU |
-| 경량, 약 2~4GB | Granite 4.1 3B `2.1GB`; Phi-4 Mini `2.5GB`; Ministral 3 3B `3.0GB`; Qwen3 4B `2.5GB` | 일반 논문 요약, 실논문 벤치마크 기반 추천 |
+| 경량, 약 2~4GB | Granite 4.1 3B `2.1GB`; Phi-4 Mini `2.5GB`; Ministral 3 3B `3.0GB`; Qwen3 4B `2.5GB`; Qwen3.5 2B `2.7GB`; Qwen3.5 4B `3.4GB` | 일반 논문 요약, 실논문 벤치마크 기반 추천 |
 | 경량, 약 2.5~4GB | Qwen3 4B `2.5GB`; Phi-4 Mini `2.5GB`; Ministral 3 3B Q4_K_M `3.0GB`; Gemma 3 4B `3.3GB`; Gemma 3 4B IT QAT `4.0GB` | 구역별 요약과 기본 메타데이터 추출·교차 모델 벤치마크 |
 | 균형, 약 5GB | Qwen3 8B `5.2GB` | 일반적인 정밀 요약·실험정보 추출의 상한 |
 | 초대형, 100GB 이상 | Qwen3 235B `142GB` | 개인용 백그라운드 앱에서는 추천·표시 대상에서 기본 제외 |
 
-공식 확인 자료: [Ollama Qwen3 모델 목록](https://ollama.com/library/qwen3), [Qwen3 전체 태그](https://registry.ollama.com/library/qwen3/tags), [Granite 4.1](https://ollama.com/library/granite4.1), [Gemma 3 전체 태그](https://ollama.com/library/gemma3/tags), [Phi-4 Mini](https://ollama.com/library/phi4-mini), [Ministral 3](https://ollama.com/library/ministral-3/tags).
+공식 확인 자료: [Ollama Qwen3 모델 목록](https://ollama.com/library/qwen3), [Qwen3 전체 태그](https://registry.ollama.com/library/qwen3/tags), [Ollama Qwen3.5 모델 목록](https://ollama.com/library/qwen3.5), [Granite 4.1](https://ollama.com/library/granite4.1), [Gemma 3 전체 태그](https://ollama.com/library/gemma3/tags), [Phi-4 Mini](https://ollama.com/library/phi4-mini), [Ministral 3](https://ollama.com/library/ministral-3/tags).
 
 다운로드 크기와 실제 실행 RAM/VRAM은 같지 않다. 컨텍스트 캐시와 런타임 오버헤드가 추가되므로 추천기는 파일 용량만 보고 모델을 고르지 않고 하드웨어 여유와 짧은 실측 벤치마크를 함께 사용한다. 현재 0.6B·1.7B·4B는 구역별 계층형 요약 후보로 벤치마크하고, 8B를 통합 요약과 기여·한계 분석의 품질 상한으로 제안한다. 12B 이상은 Paper Organizer의 요약 이득에 비해 자원 사용량이 커 카탈로그에서 제외한다.
 
@@ -690,6 +690,30 @@ Paper Organizer 설치본에는 요약용 LLM 가중치를 포함하지 않는�
 논문 한 편 처리 후 언로드한다. 수동 모델은 작업이 끝나면 항상 언로드한다.
 기본 조합은 백그라운드 Qwen3 1.7B와 수동 Qwen3 4B이며, 24GB 이상 시스템은
 벤치마크 결과에 따라 더 큰 모델을 직접 선택할 수 있다.
+
+#### Qwen 경량 후속 모델 검증
+
+Qwen3.5 2B와 4B를 각각 기존 Qwen3 1.7B 백그라운드 모델과 Qwen3 4B 수동 모델의
+교체 후보로 등록한다. Qwen3.5는 멀티모달·장문 컨텍스트를 지원하지만 Paper
+Organizer의 텍스트 요약에서는 컨텍스트를 기존 8K 정책으로 제한해 불필요한
+RAM·VRAM 사용을 막는다. 같은 비공개 실논문과 리뷰 논문, 같은 프롬프트·출력
+스키마로 다음 항목을 비교한다.
+
+- 서지정보와 문서 유형 정확도, 최종 점수와 금지 환각 발생 수
+- 구조화 출력 성공률과 재시도 횟수
+- 논문 한 편당 처리 시간과 입출력 tokens/s
+- 실제 CPU/GPU 배치, 최대 RAM·VRAM과 앱 종료 여부
+- 연구논문과 리뷰논문의 분리 점수
+
+Qwen3.5 2B가 Qwen3 1.7B보다 품질이 높고 16GB 시스템에서 안정적으로 동작할 때만
+백그라운드 추천을 교체한다. Qwen3.5 4B도 같은 방식으로 검증한 뒤 수동 요약 후보
+순위를 조정하며, 설치 용량이 커졌다는 이유만으로 자동 교체하지 않는다.
+
+Qwen4는 현재 공식 경량 공개 일정이 확인되지 않았으므로 이름만으로 카탈로그에
+추가하지 않는다. Qwen 공식 저장소와 공식 모델 허브에서 공개 가중치, 라이선스,
+1~4B급 체크포인트와 llama.cpp/Ollama 지원이 모두 확인된 뒤 동일 벤치마크 절차로
+후보에 편입한다. 비공식 변환본이나 소문만 있는 모델은 기본 추천과 자동 다운로드
+대상에서 제외한다.
 
 #### 첫 실행과 다운로드 흐름
 
