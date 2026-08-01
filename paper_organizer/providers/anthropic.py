@@ -9,6 +9,10 @@ from .base import (
     BIBLIOGRAPHY_SCHEMA,
     BibliographyRequest,
     BibliographyResult,
+    DOCUMENT_TYPE_INSTRUCTIONS,
+    DOCUMENT_TYPE_SCHEMA,
+    DocumentTypeRequest,
+    DocumentTypeResult,
     SEARCH_ANSWER_INSTRUCTIONS,
     SEARCH_ANSWER_SCHEMA,
     SEARCH_PLAN_INSTRUCTIONS,
@@ -27,6 +31,7 @@ from .base import (
     SummaryResult,
     parse_search_answer_json,
     parse_bibliography_json,
+    parse_document_type_json,
     parse_search_plan_json,
     parse_summary_json,
     require_api_key,
@@ -120,6 +125,28 @@ class AnthropicProvider:
             model=self.model,
             prompt_version=request.prompt_version,
             data=parse_bibliography_json(_collect_text(response)),
+            input_tokens=_optional_int(usage.get("input_tokens")),
+            output_tokens=_optional_int(usage.get("output_tokens")),
+        )
+
+    def classify_document_type(
+        self, request: DocumentTypeRequest
+    ) -> DocumentTypeResult:
+        request.validate()
+        require_cloud_consent(request)
+        response = self._structured_message(
+            system=DOCUMENT_TYPE_INSTRUCTIONS,
+            user=request.document_text,
+            schema=DOCUMENT_TYPE_SCHEMA,
+            max_tokens=request.max_output_tokens,
+        )
+        usage = response.get("usage")
+        usage = usage if isinstance(usage, Mapping) else {}
+        return DocumentTypeResult(
+            provider=self.name,
+            model=self.model,
+            prompt_version="paper-document-type-v1",
+            data=parse_document_type_json(_collect_text(response)),
             input_tokens=_optional_int(usage.get("input_tokens")),
             output_tokens=_optional_int(usage.get("output_tokens")),
         )

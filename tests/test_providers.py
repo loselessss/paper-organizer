@@ -8,6 +8,7 @@ from paper_organizer.providers import (
     AnthropicProvider,
     BibliographyRequest,
     CloudConsentRequiredError,
+    DocumentTypeRequest,
     OllamaProvider,
     OpenAIProvider,
     ProviderError,
@@ -304,6 +305,53 @@ class ProviderTests(unittest.TestCase):
                 )
                 self.assertIn("ResearchGate", instructions)
                 self.assertIn("Reviews and meta-analyses still have authors", instructions)
+
+    def test_ambiguous_document_type_uses_one_field_schema_for_every_provider(self):
+        encoded = json.dumps({"document_type": "review_paper"})
+        cases = (
+            (
+                OpenAIProvider("secret", http_client=FakeHttpClient({
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": encoded}],
+                    }],
+                })),
+                True,
+            ),
+            (
+                AnthropicProvider("secret", http_client=FakeHttpClient({
+                    "content": [{"type": "text", "text": encoded}],
+                })),
+                True,
+            ),
+            (
+                OllamaProvider("qwen3:4b", http_client=FakeHttpClient({
+                    "message": {"content": encoded},
+                })),
+                False,
+            ),
+        )
+        for provider, cloud_consent in cases:
+            with self.subTest(provider=provider.name):
+                result = provider.classify_document_type(
+                    DocumentTypeRequest(
+                        "Title and Abstract excerpt",
+                        cloud_consent=cloud_consent,
+                    )
+                )
+                payload = provider._http.calls[0]["payload"]
+                if provider.name == "openai":
+                    schema = payload["text"]["format"]["schema"]
+                    instructions = payload["instructions"]
+                elif provider.name == "anthropic":
+                    schema = payload["output_config"]["format"]["schema"]
+                    instructions = payload["system"]
+                else:
+                    schema = payload["format"]
+                    instructions = payload["messages"][0]["content"]
+                self.assertEqual(schema["required"], ["document_type"])
+                self.assertEqual(result.data.document_type, "review_paper")
+                self.assertIn("title-page and Abstract", instructions)
 
     def test_compact_summary_omits_advanced_fields_for_every_provider(self):
         compact = {

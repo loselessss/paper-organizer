@@ -17,6 +17,7 @@ class DocumentTypeDecision:
     document_type: str
     patent_office: str = ""
     reason: str = ""
+    requires_ai_confirmation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,15 +133,29 @@ def classify_document_type(page_texts: Iterable[str]) -> DocumentTypeDecision:
     ))
     if _KR_NUMBER.search(front) and (kr_heading or inid):
         return DocumentTypeDecision(PATENT, "KR", "한국 특허공보 표제와 번호 형식 확인")
-    markers = (
-        "systematic review", "scoping review", "narrative review", "literature review",
-        "review article", "umbrella review", "meta-analysis", "meta analysis",
-        "this review synthesizes", "this review examines", "this review summarizes",
-        "this paper reviews", "a review of",
-        "체계적 문헌고찰", "범위 문헌고찰", "메타분석", "종설", "리뷰 논문",
+    strong_review_markers = (
+        "systematic review", "scoping review", "narrative review",
+        "umbrella review", "meta-analysis", "meta analysis",
+        "체계적 문헌고찰", "범위 문헌고찰", "메타분석", "종설",
     )
-    if any(marker in folded for marker in markers):
-        return DocumentTypeDecision(REVIEW_PAPER, reason="리뷰논문 표제·초록 표현 확인")
     if re.search(r"(?im)^\s*(?:review|review paper|review article)\s*$", front):
         return DocumentTypeDecision(REVIEW_PAPER, reason="첫 장의 리뷰논문 유형 표기 확인")
+    if any(marker in folded for marker in strong_review_markers):
+        return DocumentTypeDecision(REVIEW_PAPER, reason="명시적인 리뷰논문 표제·초록 표현 확인")
+    weak_review_markers = (
+        "this review synthesizes",
+        "this review examines",
+        "this review summarizes",
+        "this paper reviews",
+        "a review of",
+        "literature review",
+        "review article",
+        "리뷰 논문",
+    )
+    if any(marker in folded for marker in weak_review_markers):
+        return DocumentTypeDecision(
+            REVIEW_PAPER,
+            reason="문장형 리뷰 표현을 확인해 AI 재판정 필요",
+            requires_ai_confirmation=True,
+        )
     return DocumentTypeDecision(RESEARCH_PAPER, reason="특허 고정 형식이 없어 연구논문으로 분류")

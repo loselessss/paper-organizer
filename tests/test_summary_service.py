@@ -57,10 +57,16 @@ class MemorySecretStore:
 
 
 class FakeHttpClient:
-    def __init__(self, summary=None, bibliography=None):
+    def __init__(
+        self,
+        summary=None,
+        bibliography=None,
+        document_type="review_paper",
+    ):
         self.calls: list[dict[str, Any]] = []
         self.summary = summary or SUMMARY
         self.bibliography = bibliography or BIBLIOGRAPHY
+        self.document_type = document_type
 
     def post_json(self, url, headers, payload, timeout_seconds):
         self.calls.append({"url": url, "headers": headers, "payload": payload})
@@ -70,11 +76,12 @@ class FakeHttpClient:
             else payload.get("text", {}).get("format", {}).get("schema")
         )
         is_section = not isinstance(schema, dict)
+        required = set(schema.get("required", ())) if isinstance(schema, dict) else set()
         response_summary = (
-            dict(self.bibliography)
-            if isinstance(schema, dict)
-            and set(schema.get("required", ()))
-            == {"title", "authors", "year", "venue"}
+            {"document_type": self.document_type}
+            if required == {"document_type"}
+            else dict(self.bibliography)
+            if required == {"title", "authors", "year", "venue"}
             else dict(self.summary)
         )
         if isinstance(schema, dict):
@@ -184,6 +191,87 @@ class SummaryServiceTests(unittest.TestCase):
                 pages,
                 AppSettings(selected_model="qwen3.5:4b"),
             )
+
+    def test_ambiguous_review_phrase_is_confirmed_before_prompt_selection(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("ambiguous.paperpack"),
+            [
+                "A review of catalytic scaffolds\n"
+                "Abstract\nThis paper reviews catalytic scaffolds and compares "
+                "published evidence across enzyme families. " * 12
+                + "\nIntroduction\nLiterature evidence and synthesis. " * 20,
+            ],
+            settings,
+            SummaryMode.FULL,
+        )
+        self.assertTrue(prepared.requires_document_type_confirmation)
+
+        review_client = FakeHttpClient(document_type="review_paper")
+        review = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=review_client,
+        )
+
+        self.assertEqual(review.preview.document_type, "review_paper")
+        self.assertEqual(review.preview.document_type_source, "ai:ollama")
+        self.assertEqual(
+            review_client.calls[0]["payload"]["format"]["required"],
+            ["document_type"],
+        )
+        self.assertIn(
+            "review paper, not a primary research report",
+            review_client.calls[1]["payload"]["messages"][0]["content"],
+        )
+
+        research_client = FakeHttpClient(document_type="research_paper")
+        research = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=research_client,
+        )
+        self.assertEqual(research.preview.document_type, "research_paper")
+        self.assertEqual(research.preview.document_type_source, "ai:ollama")
+        self.assertIn(
+            "primary research paper",
+            research_client.calls[1]["payload"]["messages"][0]["content"],
+        )
+
+    def test_failed_or_uncertain_ai_type_confirmation_falls_back_to_research(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("ambiguous.paperpack"),
+            [
+                "A review of catalytic scaffolds\n"
+                "Abstract\nThis paper reviews a topic but the document type is "
+                "not clear from this excerpt. " * 15,
+            ],
+            settings,
+            SummaryMode.FULL,
+        )
+
+        for ai_value in ("uncertain", "invalid"):
+            with self.subTest(ai_value=ai_value):
+                execution = run_prepared_summary(
+                    prepared,
+                    settings,
+                    MemorySecretStore(),
+                    http_client=FakeHttpClient(document_type=ai_value),
+                )
+                self.assertEqual(execution.preview.document_type, "research_paper")
+                self.assertEqual(
+                    execution.preview.document_type_source,
+                    "auto:regex",
+                )
 
     def test_invalid_json_is_retried_once_with_stricter_instructions(self):
         class InvalidThenValidClient:

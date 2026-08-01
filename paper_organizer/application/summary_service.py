@@ -16,6 +16,8 @@ from paper_organizer import __version__
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 from paper_organizer.core.document_type import (
     PATENT,
+    RESEARCH_PAPER,
+    REVIEW_PAPER,
     classify_document_type,
     detect_document_bundle,
 )
@@ -37,6 +39,7 @@ from paper_organizer.providers.base import (
     BibliographyData,
     BibliographyRequest,
     BibliographyResult,
+    DocumentTypeRequest,
     JsonHttpClient,
     ProviderError,
     SummaryData,
@@ -114,6 +117,7 @@ class SummaryPreview:
     output_language: str = "ko"
     summary_strategy: str = "direct"
     document_type: str = "research_paper"
+    document_type_source: str = "auto:regex"
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +139,8 @@ class PreparedSummary:
     document_text: str = field(repr=False)
     section_contexts: tuple[str, ...] = field(default=(), repr=False)
     bibliography_text: str = field(default="", repr=False)
+    document_type_text: str = field(default="", repr=False)
+    requires_document_type_confirmation: bool = False
     regex_fallback: RegexSummaryFallback = field(
         default_factory=RegexSummaryFallback,
         repr=False,
@@ -167,6 +173,8 @@ class SummaryExecution:
             "included_sections": list(self.preview.included_sections),
             "output_language": self.preview.output_language,
             "summary_strategy": self.preview.summary_strategy,
+            "document_type": self.preview.document_type,
+            "document_type_source": self.preview.document_type_source,
             "json_retry_count": self.json_retry_count,
             "language_retry_count": self.language_retry_count,
             "bibliography_retry_count": self.bibliography_retry_count,
@@ -353,7 +361,8 @@ def _prepared_from_chunks(
         raise SummaryPreparationError(
             "복수 문서 묶음은 AI 요약하지 않습니다. 문서를 각각 분리한 뒤 다시 분석하세요."
         )
-    document_type = classify_document_type(page_texts).document_type
+    document_type_decision = classify_document_type(page_texts)
+    document_type = document_type_decision.document_type
     is_patent = document_type == PATENT
     if is_patent:
         page_texts = [_remove_patent_page_markers(text) for text in page_texts]
@@ -379,6 +388,10 @@ def _prepared_from_chunks(
         page_texts,
         tuple(index + 1 for index in page_indexes),
     )
+    bibliography_text = _bibliography_context(page_texts[0])
+    document_type_text = (
+        f"[TITLE PAGE]\n{bibliography_text}\n\n[ABSTRACT]\n{abstract_text}"
+    )[:16_000]
     summary_strategy = (
         "abstract_only" if abstract_text else "bibliography_only"
     ) if abstract_only_model else (
@@ -431,7 +444,11 @@ def _prepared_from_chunks(
         section_contexts=(
             () if abstract_only_model else _section_contexts(processed)
         ),
-        bibliography_text=_bibliography_context(page_texts[0]),
+        bibliography_text=bibliography_text,
+        document_type_text=document_type_text,
+        requires_document_type_confirmation=(
+            document_type_decision.requires_ai_confirmation
+        ),
         regex_fallback=(
             RegexSummaryFallback(
                 abstract=abstract_text,
@@ -481,6 +498,7 @@ def run_prepared_summary(
         )
     provider = build_provider(settings, secret_store, http_client=http_client)
     consent = settings.cloud_processing_consent or allow_cloud_once
+    prepared = _confirm_ambiguous_document_type(prepared, provider, consent)
     bibliography_result: BibliographyResult | None = None
     bibliography_retry_count = 0
     bibliography_verified_fields: tuple[str, ...] = ()
@@ -919,6 +937,42 @@ def _publication_year_present(year: str, source_text: str) -> bool:
         if match.start() < front_boundary and not re.match(r"\s*\)", after):
             return True
     return False
+
+
+def _confirm_ambiguous_document_type(
+    prepared: PreparedSummary,
+    provider: SummaryProvider,
+    cloud_consent: bool,
+) -> PreparedSummary:
+    """Use AI only to verify weak sentence-level review markers."""
+
+    if not prepared.requires_document_type_confirmation:
+        return prepared
+    document_type = RESEARCH_PAPER
+    source = "auto:regex"
+    try:
+        result = provider.classify_document_type(
+            DocumentTypeRequest(
+                document_text=prepared.document_type_text,
+                cloud_consent=cloud_consent,
+                context_window=prepared.preview.context_window,
+            )
+        )
+    except ProviderError:
+        pass
+    else:
+        if result.data.document_type in {RESEARCH_PAPER, REVIEW_PAPER}:
+            document_type = result.data.document_type
+            source = f"ai:{result.provider}"
+    return replace(
+        prepared,
+        preview=replace(
+            prepared.preview,
+            document_type=document_type,
+            document_type_source=source,
+        ),
+        requires_document_type_confirmation=False,
+    )
 
 
 def _abstract_source(

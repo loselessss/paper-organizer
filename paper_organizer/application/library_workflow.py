@@ -2302,7 +2302,7 @@ class LibraryWorkflowController:
         ):
             record.setdefault("document", {})["type"] = detected_type
             record.setdefault("detection", {})["document_type"] = detected_type
-            sources["document.type"] = "auto:regex"
+            sources["document.type"] = execution.preview.document_type_source
         values = {
             "summary": data.summary,
             "research_question": data.research_question,

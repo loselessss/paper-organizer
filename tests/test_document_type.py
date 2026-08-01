@@ -25,7 +25,10 @@ class DocumentTypeTests(unittest.TestCase):
 
     def test_review_is_marked_before_summarization(self) -> None:
         text = "A systematic review and meta-analysis\nAbstract\nThis review synthesizes evidence."
-        self.assertEqual(classify_document_type([text]).document_type, "review_paper")
+        decision = classify_document_type([text])
+
+        self.assertEqual(decision.document_type, "review_paper")
+        self.assertFalse(decision.requires_ai_confirmation)
 
     def test_review_of_phrase_in_title_is_marked_as_review(self) -> None:
         text = (
@@ -33,7 +36,10 @@ class DocumentTypeTests(unittest.TestCase):
             "Abstract\nThis paper reviews evidence for a public-health assessment."
         )
 
-        self.assertEqual(classify_document_type([text]).document_type, "review_paper")
+        decision = classify_document_type([text])
+
+        self.assertEqual(decision.document_type, "review_paper")
+        self.assertTrue(decision.requires_ai_confirmation)
 
     def test_two_korean_patent_title_pages_are_a_bundle(self) -> None:
         first = (

@@ -50,6 +50,18 @@ BIBLIOGRAPHY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+DOCUMENT_TYPE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "document_type": {
+            "type": "string",
+            "enum": ["research_paper", "review_paper", "uncertain"],
+        },
+    },
+    "required": ["document_type"],
+    "additionalProperties": False,
+}
+
 BASIC_SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -132,6 +144,16 @@ BIBLIOGRAPHY_INSTRUCTIONS = (
     "Google Scholar, Semantic Scholar, institutional repositories, publisher download "
     "banners, web domains, database names, patent offices, applicants, and assignees "
     "are distribution metadata, not a venue. Use empty values rather than guessing."
+)
+
+DOCUMENT_TYPE_INSTRUCTIONS = (
+    "Classify the supplied title-page and Abstract excerpt only. Return review_paper "
+    "only when the paper itself surveys, synthesizes, or meta-analyzes prior literature. "
+    "Return research_paper when it reports its own experiment, observation, dataset, "
+    "case, method evaluation, or other primary results. A sentence that merely says "
+    "the paper reviews a topic is not sufficient if the Abstract describes new primary "
+    "work. Ignore cited references and publisher or repository labels. Return uncertain "
+    "when the excerpt does not contain enough evidence. Do not infer from outside knowledge."
 )
 
 PATENT_SUMMARY_INSTRUCTIONS = (
@@ -293,6 +315,27 @@ class BibliographyRequest:
             raise ValueError("is_patent must be a boolean")
         if not isinstance(self.retry, bool):
             raise ValueError("retry must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentTypeRequest:
+    document_text: str
+    cloud_consent: bool = False
+    max_output_tokens: int = 64
+    context_window: int | None = None
+
+    def validate(self) -> None:
+        if not self.document_text.strip():
+            raise ValueError("document_text cannot be empty")
+        if not isinstance(self.cloud_consent, bool):
+            raise ValueError("cloud_consent must be a boolean")
+        if not 32 <= self.max_output_tokens <= 512:
+            raise ValueError("max_output_tokens must be between 32 and 512")
+        if (
+            self.context_window is not None
+            and not 4_096 <= self.context_window <= 262_144
+        ):
+            raise ValueError("context_window must be between 4096 and 262144")
 
 
 @dataclass(frozen=True, slots=True)
@@ -735,6 +778,36 @@ class BibliographyResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentTypeData:
+    document_type: str
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "DocumentTypeData":
+        expected = set(DOCUMENT_TYPE_SCHEMA["required"])
+        if set(raw) != expected:
+            missing = sorted(expected - set(raw))
+            extra = sorted(set(raw) - expected)
+            raise ProviderError(
+                f"Invalid document type fields; missing={missing}, extra={extra}"
+            )
+        document_type = raw["document_type"]
+        allowed = set(DOCUMENT_TYPE_SCHEMA["properties"]["document_type"]["enum"])
+        if not isinstance(document_type, str) or document_type not in allowed:
+            raise ProviderError("Document type classification is invalid")
+        return cls(document_type=document_type)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentTypeResult:
+    provider: str
+    model: str
+    prompt_version: str
+    data: DocumentTypeData
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SummaryData:
     summary: str
     research_question: str
@@ -824,6 +897,10 @@ class SummaryProvider(Protocol):
         self, request: BibliographyRequest
     ) -> BibliographyResult: ...
 
+    def classify_document_type(
+        self, request: DocumentTypeRequest
+    ) -> DocumentTypeResult: ...
+
     def summarize(self, request: SummaryRequest) -> SummaryResult: ...
 
     def plan_search(self, request: SearchPlanRequest) -> SearchPlanResult: ...
@@ -856,6 +933,11 @@ def parse_summary_json(
 def parse_bibliography_json(text: str) -> BibliographyData:
     raw = _parse_json_object(text, "bibliography")
     return BibliographyData.from_mapping(raw)
+
+
+def parse_document_type_json(text: str) -> DocumentTypeData:
+    raw = _parse_json_object(text, "document type")
+    return DocumentTypeData.from_mapping(raw)
 
 
 def _extract_json_object(text: str) -> Mapping[str, Any] | None:

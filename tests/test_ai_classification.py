@@ -57,6 +57,8 @@ def execution(
     *,
     summary_strategy: str = "direct",
     patent_claims_text: str = "",
+    document_type: str = "research_paper",
+    document_type_source: str = "auto:regex",
     **overrides,
 ) -> SummaryExecution:
     data = SummaryData(
@@ -91,6 +93,8 @@ def execution(
         sends_to_cloud=False,
         requires_cloud_consent=False,
         summary_strategy=summary_strategy,
+        document_type=document_type,
+        document_type_source=document_type_source,
     )
     result = SummaryResult(
         provider="ollama",
@@ -225,6 +229,29 @@ class SystemInstructionTests(unittest.TestCase):
 
 
 class AiClassificationTests(unittest.TestCase):
+    def test_ai_confirmed_document_type_source_is_persisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, library, pack = self._organized(root)
+            pdf = controller.materialize_pdf(pack)
+
+            controller.apply_analysis_result(
+                pack,
+                execution(
+                    pdf,
+                    document_type="review_paper",
+                    document_type_source="ai:ollama",
+                ),
+            )
+
+            final = next((library / "papers").rglob("*.paperpack"))
+            record = load_paperpack_metadata(final)
+            self.assertEqual(record["document"]["type"], "review_paper")
+            self.assertEqual(
+                record["curation"]["field_sources"]["document.type"],
+                "ai:ollama",
+            )
+
     def test_patent_ignores_ai_journal_venue(self):
         record = {
             "detection": {"document_type": "patent"},

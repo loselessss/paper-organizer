@@ -8,6 +8,10 @@ from .base import (
     BIBLIOGRAPHY_SCHEMA,
     BibliographyRequest,
     BibliographyResult,
+    DOCUMENT_TYPE_INSTRUCTIONS,
+    DOCUMENT_TYPE_SCHEMA,
+    DocumentTypeRequest,
+    DocumentTypeResult,
     SEARCH_ANSWER_INSTRUCTIONS,
     SEARCH_ANSWER_SCHEMA,
     SEARCH_PLAN_INSTRUCTIONS,
@@ -26,6 +30,7 @@ from .base import (
     SummaryResult,
     parse_search_answer_json,
     parse_bibliography_json,
+    parse_document_type_json,
     parse_search_plan_json,
     parse_summary_json,
 )
@@ -113,6 +118,28 @@ class OllamaProvider:
             model=self.model,
             prompt_version=request.prompt_version,
             data=parse_bibliography_json(_message_content(response)),
+            input_tokens=_optional_int(response.get("prompt_eval_count")),
+            output_tokens=_optional_int(response.get("eval_count")),
+        )
+
+    def classify_document_type(
+        self, request: DocumentTypeRequest
+    ) -> DocumentTypeResult:
+        request.validate()
+        options = _deterministic_options(request.max_output_tokens)
+        if request.context_window is not None:
+            options["num_ctx"] = request.context_window
+        response = self._chat_json(
+            DOCUMENT_TYPE_INSTRUCTIONS,
+            request.document_text,
+            DOCUMENT_TYPE_SCHEMA,
+            options,
+        )
+        return DocumentTypeResult(
+            provider=self.name,
+            model=self.model,
+            prompt_version="paper-document-type-v1",
+            data=parse_document_type_json(_message_content(response)),
             input_tokens=_optional_int(response.get("prompt_eval_count")),
             output_tokens=_optional_int(response.get("eval_count")),
         )
