@@ -111,6 +111,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(ai_controller.settings().selected_model, "")
             self.assertIn("저장 버튼", dialog.model_status.text())
+            self.assertIn("창 없이", dialog.model_status.text())
             self.assertIn("백그라운드 서지·Abstract", dialog.model_guidance.text())
             self.assertIn("수동 정밀 3~4B급", dialog.model_guidance.text())
             self.assertIn("기여·한계 미지원", dialog.model_guidance.text())

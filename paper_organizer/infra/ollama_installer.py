@@ -25,7 +25,6 @@ _START_TIMEOUT_SECONDS = 60
 _OLLAMA_LOOPBACK_HOST = "127.0.0.1:11434"
 
 CommandRunner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
-RuntimeLauncher = Callable[[str, dict[str, str]], None]
 _managed_process: subprocess.Popen | None = None
 
 
@@ -220,35 +219,18 @@ def stop_managed_runtime() -> bool:
     return True
 
 
-def _launch_desktop_runtime(executable: str, environment: dict[str, str]) -> None:
-    """Launch the Windows tray app, which owns its local server child."""
-
-    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-        subprocess, "CREATE_NO_WINDOW", 0
-    )
-    subprocess.Popen(
-        [executable],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=environment,
-        creationflags=flags,
-    )
-
-
 def restart_runtime(
     *,
     inspector: OllamaRuntimeInspector | None = None,
     run_command: CommandRunner = _run,
-    launcher: RuntimeLauncher | None = None,
     sleep: Callable[[float], None] = time.sleep,
     timeout_seconds: int = _START_TIMEOUT_SECONDS,
 ) -> bool:
-    """Restart the shared Windows Ollama tray/server after a GPU setting change."""
+    """Restart Ollama as a hidden server after a process-level setting change."""
 
     executable = find_ollama_executable()
     if not executable:
         return False
-    app_executable = find_ollama_app_executable()
     probe = inspector or OllamaRuntimeInspector()
     stop_managed_runtime()
     if os.name == "nt":
@@ -272,24 +254,11 @@ def restart_runtime(
         sleep(0.25)
     else:
         return False
-    if app_executable:
-        environment = sanitized_child_environment()
-        environment["OLLAMA_HOST"] = _OLLAMA_LOOPBACK_HOST
-        try:
-            (launcher or _launch_desktop_runtime)(app_executable, environment)
-        except OSError:
-            return False
-    else:
-        return start_runtime(
-            inspector=probe,
-            timeout_seconds=timeout_seconds,
-            sleep=sleep,
-        )
-    for _ in range(max(1, timeout_seconds * 2)):
-        if probe.inspect().reachable:
-            return True
-        sleep(0.5)
-    return False
+    return start_runtime(
+        inspector=probe,
+        timeout_seconds=timeout_seconds,
+        sleep=sleep,
+    )
 
 
 def ensure_runtime(

@@ -163,6 +163,16 @@ class AiSettingsController:
             restarter = restart_runtime
         return restarter()
 
+    def start_ollama_runtime(self) -> bool:
+        """Ensure the headless Ollama server is running without restarting it."""
+
+        starter = self._ollama_starter
+        if starter is None:
+            from paper_organizer.infra.ollama_installer import start_runtime
+
+            starter = start_runtime
+        return starter()
+
     def model_for_provider(self, provider: str) -> str:
         normalized = provider.strip().lower()
         if normalized not in PROVIDER_LABELS:
@@ -303,11 +313,11 @@ class AiSettingsController:
         if (
             normalized_provider == "ollama"
             and models_changed
-            and not self.restart_ollama_runtime()
+            and not self.start_ollama_runtime()
         ):
             raise RuntimeError(
-                "모델 설정은 저장했지만 Ollama를 다시 시작하지 못했습니다. "
-                "Ollama를 직접 다시 실행한 뒤 분석을 시작하세요."
+                "모델 설정은 저장했지만 Ollama 서버를 시작하지 못했습니다. "
+                "AI 설정에서 Ollama 설치 상태를 확인하세요."
             )
         return self.view()
 
@@ -321,15 +331,10 @@ class AiSettingsController:
         try:
             return self._model_manager.installed_models()
         except RuntimeError as initial_error:
-            starter = self._ollama_starter
-            if starter is None:
-                from paper_organizer.infra.ollama_installer import start_runtime
-
-                starter = start_runtime
-            if not starter():
+            if not self.start_ollama_runtime():
                 raise RuntimeError(
-                    "Ollama가 설치되어 있지만 실행할 수 없습니다. "
-                    "시작 메뉴에서 Ollama를 실행한 뒤 새로고침하세요."
+                    "Ollama가 설치되어 있지만 서버를 시작할 수 없습니다. "
+                    "설치 상태를 확인한 뒤 새로고침하세요."
                 ) from initial_error
             try:
                 return self._model_manager.installed_models()
@@ -356,7 +361,7 @@ class AiSettingsController:
         model: str,
         *,
         purpose: str = "background",
-        restart_runtime: bool = True,
+        start_server: bool = True,
     ) -> AiSettingsView:
         """Persist a verified local model as the active summary model."""
 
@@ -376,13 +381,13 @@ class AiSettingsController:
             settings.manual_model = normalized
         save_settings(settings, self._settings_path)
         if (
-            restart_runtime
+            start_server
             and not _same_ollama_model(previous, normalized)
-            and not self.restart_ollama_runtime()
+            and not self.start_ollama_runtime()
         ):
             raise RuntimeError(
-                "모델 선택은 저장했지만 Ollama를 다시 시작하지 못했습니다. "
-                "Ollama를 직접 다시 실행한 뒤 분석을 시작하세요."
+                "모델 선택은 저장했지만 Ollama 서버를 시작하지 못했습니다. "
+                "AI 설정에서 Ollama 설치 상태를 확인하세요."
             )
         return self.view()
 

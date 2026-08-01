@@ -182,6 +182,12 @@ ResearchGate 등 배포 플랫폼 차단 목록은 입력 정리와 검증에 �
 `find_winget_executable()`, `find_ollama_executable()`처럼 기본 설치 경로까지
 확인하세요. 새 외부 도구를 붙일 때도 같은 패턴을 쓰면 됩니다.
 
+**요약 모델 변경은 Ollama 프로세스 재시작 사유가 아닙니다.**
+Ollama 요청이 모델 ID를 직접 전달하므로 실행 중인 서버는 그대로 재사용합니다.
+꺼져 있을 때만 `start_runtime()`으로 창 없는 `ollama serve`를 시작하세요. GPU
+환경값 변경처럼 재시작이 필요한 경우에도 `restart_runtime()`은 트레이 앱을 열지
+않고 숨김 서버만 다시 시작합니다.
+
 ---
 
 ## 6. 완료 상태와 다음에 할 일

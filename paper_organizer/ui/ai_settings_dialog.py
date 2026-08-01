@@ -63,7 +63,7 @@ class _OllamaRestartWorker(QThread):
         try:
             if not self._controller.restart_ollama_runtime():
                 raise RuntimeError(
-                    "Ollama를 다시 시작하지 못했습니다. 시작 메뉴에서 직접 실행하세요."
+                    "Ollama 서버를 다시 시작하지 못했습니다. 설치 상태를 확인하세요."
                 )
             self.completed.emit()
         except Exception as exc:
@@ -248,7 +248,8 @@ class AiSettingsDialog(QDialog):
         local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
             "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "
-            "저장하면 모델 변경을 적용하기 위해 Ollama를 한 번 다시 시작합니다."
+            "모델을 저장해도 실행 중인 Ollama 서버는 재시작하지 않습니다. 서버가 "
+            "꺼져 있을 때만 창 없이 백그라운드로 시작합니다."
         )
         local_note.setWordWrap(True)
         local_note.setStyleSheet("color: #666;")
@@ -433,7 +434,7 @@ class AiSettingsDialog(QDialog):
             return
         self.model_status.setText(
             "백그라운드·수동 모델 선택을 변경했습니다. 저장 버튼을 누르면 "
-            "Ollama를 한 번 다시 시작해 적용합니다."
+            "즉시 적용하며, 필요할 때만 Ollama 서버를 창 없이 시작합니다."
         )
 
     def _update_model_guidance(self) -> None:
@@ -690,7 +691,7 @@ class AiSettingsDialog(QDialog):
         if acceleration_changed and QMessageBox.question(
             self,
             "Ollama GPU 설정 변경",
-            "GPU 설정을 저장하면 Ollama를 바로 다시 시작합니다.\n\n"
+            "GPU 설정을 저장하면 Ollama 서버를 창 없이 바로 다시 시작합니다.\n\n"
             "현재 진행 중인 다른 앱의 Ollama 작업도 중단됩니다. 계속할까요?",
             QMessageBox.Yes | QMessageBox.Cancel,
             QMessageBox.Yes,
@@ -724,7 +725,7 @@ class AiSettingsDialog(QDialog):
         if acceleration_changed:
             state = "사용" if self.force_igpu_check.isChecked() else "사용하지 않도록"
             self.hardware_status.setText(
-                f"내장 GPU를 {state} 설정했습니다. Ollama를 다시 시작하는 중…"
+                f"내장 GPU를 {state} 설정했습니다. Ollama 서버를 다시 시작하는 중…"
             )
             self._start_ollama_restart(
                 close_after=True,
@@ -757,7 +758,7 @@ class AiSettingsDialog(QDialog):
         QMessageBox.information(
             self,
             "Ollama 재시작 완료",
-            "GPU 설정을 저장하고 Ollama를 다시 시작했습니다.\n\n"
+            "GPU 설정을 저장하고 Ollama 서버를 창 없이 다시 시작했습니다.\n\n"
             "이 옵션은 내장 GPU를 후보에 포함하며 GPU 실행 자체를 강제하지는 "
             "않습니다. 모델 검증 또는 사양 다시 검사에서 실제 CPU·GPU 상태를 "
             "확인할 수 있습니다.",
@@ -772,7 +773,7 @@ class AiSettingsDialog(QDialog):
             self.hardware_status.setText("Ollama 자동 재시작에 실패했습니다.")
         else:
             self.model_status.setText(
-                "모델 선택은 저장했지만 Ollama 자동 재시작에 실패했습니다."
+                "모델 선택은 저장했지만 Ollama 서버 시작에 실패했습니다."
             )
         QMessageBox.warning(self, "Ollama 재시작 실패", message)
 

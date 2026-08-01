@@ -138,6 +138,12 @@ class ManagedRuntimeTests(unittest.TestCase):
         environment = popen.call_args.kwargs["env"]
         self.assertEqual(command, ["C:/ollama.exe", "serve"])
         self.assertEqual(environment["OLLAMA_HOST"], "127.0.0.1:11434")
+        self.assertEqual(popen.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(
+            popen.call_args.kwargs["creationflags"],
+            getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
 
     def test_runtime_that_exits_during_startup_fails_immediately(self):
         process = mock.Mock()
@@ -166,33 +172,46 @@ class ManagedRuntimeTests(unittest.TestCase):
         process.terminate.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=10)
 
-    def test_restart_replaces_tray_and_server_with_sanitized_environment(self):
+    def test_restart_replaces_tray_and_server_with_hidden_server(self):
         commands = []
-        launches = []
-        inspector = FakeInspector(stopped(), running())
-        with mock.patch(
-            "paper_organizer.infra.ollama_installer.find_ollama_executable",
-            return_value="C:/ollama.exe",
-        ), mock.patch(
-            "paper_organizer.infra.ollama_installer.find_ollama_app_executable",
-            return_value="C:/ollama app.exe",
-        ), mock.patch(
-            "paper_organizer.infra.ollama_installer.stop_managed_runtime",
-            return_value=False,
-        ), mock.patch.dict(
-            os.environ,
-            {
-                "OLLAMA_IGPU_ENABLE": "1",
-                "OPENAI_API_KEY": "should-not-reach-child",
-            },
+        inspector = FakeInspector(stopped())
+        with (
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.find_ollama_executable",
+                return_value="C:/ollama.exe",
+            ),
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.stop_managed_runtime",
+                return_value=False,
+            ),
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.start_runtime",
+                return_value=True,
+            ) as start,
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.subprocess.Popen"
+            ) as popen,
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.sanitized_child_environment"
+            ) as child_environment,
+            mock.patch(
+                "paper_organizer.infra.ollama_installer.find_ollama_app_executable"
+            ) as find_app,
+            mock.patch(
+                "paper_organizer.infra.ollama_installer._managed_process", None
+            ),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "OLLAMA_IGPU_ENABLE": "1",
+                    "OPENAI_API_KEY": "should-not-reach-child",
+                },
+            ),
         ):
             result = restart_runtime(
                 inspector=inspector,
                 run_command=lambda command, timeout: (
                     commands.append((tuple(command), timeout)) or completed(0)
-                ),
-                launcher=lambda executable, environment: launches.append(
-                    (executable, environment)
                 ),
                 sleep=lambda _seconds: None,
             )
@@ -202,9 +221,14 @@ class ManagedRuntimeTests(unittest.TestCase):
             [command[0][2] for command in commands],
             ["ollama app.exe", "ollama.exe"],
         )
-        self.assertEqual(launches[0][0], "C:/ollama app.exe")
-        self.assertEqual(launches[0][1]["OLLAMA_IGPU_ENABLE"], "1")
-        self.assertNotIn("OPENAI_API_KEY", launches[0][1])
+        start.assert_called_once_with(
+            inspector=inspector,
+            timeout_seconds=60,
+            sleep=mock.ANY,
+        )
+        find_app.assert_not_called()
+        popen.assert_not_called()
+        child_environment.assert_not_called()
 
 
 class EnsureRuntimeTests(unittest.TestCase):

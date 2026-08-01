@@ -129,11 +129,11 @@ class AiSettingsControllerTests(unittest.TestCase):
     def test_verified_ollama_model_can_be_selected_and_saved_immediately(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
-            restarts = []
+            starts = []
             controller = AiSettingsController(
                 MemorySecretStore(),
                 path,
-                ollama_restarter=lambda: bool(restarts.append(True) or True),
+                ollama_starter=lambda: bool(starts.append(True) or True),
             )
 
             view = controller.select_ollama_model("qwen3:8b")
@@ -143,19 +143,21 @@ class AiSettingsControllerTests(unittest.TestCase):
             self.assertEqual(view.model, "qwen3:8b")
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["selected_model"], "qwen3:8b")
-            self.assertEqual(restarts, [True])
+            self.assertEqual(starts, [True])
 
-    def test_saving_a_different_ollama_model_restarts_the_runtime_once(self):
+    def test_saving_a_different_ollama_model_only_ensures_server_once(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
+            starts = []
             restarts = []
             controller = AiSettingsController(
                 MemorySecretStore(),
                 path,
+                ollama_starter=lambda: bool(starts.append(True) or True),
                 ollama_restarter=lambda: bool(restarts.append(True) or True),
             )
             controller.select_ollama_model("qwen3:1.7b")
-            restarts.clear()
+            starts.clear()
 
             controller.save_preferences(
                 provider="ollama",
@@ -166,16 +168,17 @@ class AiSettingsControllerTests(unittest.TestCase):
                 cloud_monthly_budget_usd=0,
             )
 
-        self.assertEqual(restarts, [True])
+        self.assertEqual(starts, [True])
+        self.assertEqual(restarts, [])
 
     def test_background_manual_and_residency_are_saved_together(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
-            restarts = []
+            starts = []
             controller = AiSettingsController(
                 MemorySecretStore(),
                 path,
-                ollama_restarter=lambda: bool(restarts.append(True) or True),
+                ollama_starter=lambda: bool(starts.append(True) or True),
             )
 
             view = controller.save_preferences(
@@ -197,7 +200,7 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertEqual(saved["selected_model"], "qwen3:1.7b")
         self.assertEqual(saved["ollama_residency_mode"], "always")
         self.assertEqual(saved["ollama_resident_model"], "qwen3:1.7b")
-        self.assertEqual(restarts, [True])
+        self.assertEqual(starts, [True])
 
     def test_manual_model_can_be_changed_without_replacing_background_model(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -205,7 +208,7 @@ class AiSettingsControllerTests(unittest.TestCase):
             controller = AiSettingsController(
                 MemorySecretStore(),
                 path,
-                ollama_restarter=lambda: True,
+                ollama_starter=lambda: True,
             )
             controller.select_ollama_model("qwen3:1.7b")
 
@@ -225,6 +228,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 MemorySecretStore(),
                 path,
                 ollama_igpu_configurer=changes.append,
+                ollama_starter=lambda: True,
                 ollama_restarter=lambda: True,
             )
 
@@ -260,6 +264,7 @@ class AiSettingsControllerTests(unittest.TestCase):
                 MemorySecretStore(),
                 path,
                 ollama_igpu_configurer=changes.append,
+                ollama_starter=lambda: True,
                 ollama_restarter=lambda: True,
             )
             controller.save_preferences(
@@ -288,6 +293,17 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertTrue(controller.restart_ollama_runtime())
         self.assertEqual(calls, [True])
 
+    def test_ollama_start_uses_injected_starter(self):
+        calls = []
+        controller = AiSettingsController(
+            MemorySecretStore(),
+            Path("unused.json"),
+            ollama_starter=lambda: bool(calls.append(True) or True),
+        )
+
+        self.assertTrue(controller.start_ollama_runtime())
+        self.assertEqual(calls, [True])
+
     def test_installed_models_start_stopped_ollama_and_retry(self):
         manager = RecoveringModelManager()
         starts = []
@@ -313,7 +329,7 @@ class AiSettingsControllerTests(unittest.TestCase):
             ollama_starter=lambda: False,
         )
 
-        with self.assertRaisesRegex(RuntimeError, "시작 메뉴에서 Ollama를 실행"):
+        with self.assertRaisesRegex(RuntimeError, "서버를 시작할 수 없습니다"):
             controller.installed_ollama_models()
 
         self.assertEqual(manager.calls, 1)

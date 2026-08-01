@@ -345,7 +345,8 @@ class OllamaModelDialog(QDialog):
                 "모델 설치 완료" if installed_now else "모델 검증 완료",
                 f"{model.name} {'설치와 검증을 마쳤습니다' if installed_now else '검증을 마쳤습니다'}.\n"
                 f"{verification.message}{acceleration_warning}\n"
-                "활성 Ollama 모델로 선택하고 Ollama를 재시작했습니다.",
+                "활성 Ollama 모델로 선택했습니다. 실행 중인 서버는 유지하고, "
+                "필요할 때만 창 없는 서버를 시작합니다.",
             )
             return
         if self._operation == "delete":
