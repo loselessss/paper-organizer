@@ -153,11 +153,14 @@ REVIEW_SUMMARY_INSTRUCTIONS = (
     " This document is a review paper, not a primary research report. Summarize each "
     "section as synthesis of the literature, preserving the review's scope and cited "
     "evidence without inventing individual experiments. Use research_question for the "
-    "review objective and scope; methods for search sources, date range, eligibility, "
-    "screening, and synthesis method; summary for major themes, taxonomy, consensus, "
-    "conflicts, and evidence strength; contributions for the review's integrative "
+    "review objective and scope; methods for an explicitly stated search or selection "
+    "method, or otherwise for the concrete literature domains surveyed; summary for "
+    "named systems, organisms, mechanisms, process relationships, applications, major "
+    "themes, consensus, conflicts, and evidence strength; contributions for the review's integrative "
     "framework or conclusions; and limitations for explicit evidence gaps, bias, "
-    "heterogeneity, and future research needs. Do not present cited studies' authors "
+    "heterogeneity, and future research needs. Never label a review systematic or "
+    "invent databases, date ranges, eligibility criteria, screening, or taxonomy unless "
+    "the supplied text explicitly states them. Do not present cited studies' authors "
     "as this paper's authors or isolated cited findings as the review's own experiment."
 )
 
@@ -481,12 +484,31 @@ def system_instructions(request: SummaryRequest) -> str:
             if request.is_patent
             else ""
         )
+        review = (
+            " This is a review-paper section. Prioritize concrete content over review "
+            "labels: preserve named systems, organisms or populations, mechanisms, "
+            "engineering or analytical strategies, process order and dependencies, "
+            "target products or applications, and every separately stated central "
+            "conclusion. Also preserve objective, scope, explicit selection or synthesis "
+            "methods, conflicts, evidence strength, and gaps when present. Never call the "
+            "review systematic or invent databases, criteria, screening, or taxonomy. "
+            "Treat cited studies only as evidence synthesized by the review."
+            if request.document_type == "review_paper"
+            else ""
+        )
+        evidence_focus = (
+            "the review's concrete subjects, mechanisms, strategies, relationships, "
+            "applications, conclusions, explicit methods, conflicts, and gaps"
+            if request.document_type == "review_paper"
+            else "the research purpose, methods, findings, numeric values, and negations"
+        )
+        word_limit = 150 if request.document_type == "review_paper" else 120
         return (
             f"{language} Use only the supplied labeled paper section. Return plain "
-            "text only, not JSON or markdown. In at most 120 words, preserve the "
-            "research purpose, methods, findings, numeric values, and negations that "
+            f"text only, not JSON or markdown. In at most {word_limit} words, preserve "
+            f"{evidence_focus} that "
             "are actually present. Do not infer from other sections. Ignore reference, "
-            f"bibliography, and works-cited entries.{patent}{retry}"
+            f"bibliography, and works-cited entries.{patent}{review}{retry}"
         )
 
     if request.output_language == "ko":
@@ -513,12 +535,35 @@ def system_instructions(request: SummaryRequest) -> str:
         )
     stage = ""
     if request.stage == "synthesis":
-        stage = (
-            " This is the final pass over evidence summaries produced independently "
-            "from paper sections. Reconcile them into one coherent paper summary. Preserve "
-            "numeric values and negations, distinguish results from discussion, and never "
-            "invent details omitted by every section summary."
-        )
+        if request.document_type == "review_paper":
+            review_destination = (
+                "Put integrative conclusions in contributions and explicit gaps, bias, "
+                "heterogeneity, and future needs in limitations."
+                if request.advanced_analysis
+                else "The compact schema omits contributions and limitations, so preserve "
+                "all concrete integrative conclusions and explicit evidence gaps in summary."
+            )
+            stage = (
+                " This is the final pass over evidence summaries from a review paper. "
+                "Reconcile them without replacing concrete evidence with generic prose. "
+                "Put the objective and scope in research_question. In methods, include only "
+                "an explicitly stated search or selection method; otherwise list the concrete "
+                "literature domains surveyed without calling the review systematic, and make "
+                "clear that this is literature synthesis rather than a new controlled experiment. "
+                "In summary, write at least three evidence-dense sentences so separately stated "
+                "major conclusions are not merged away. "
+                "Preserve named systems, organisms or populations, mechanisms, strategies, "
+                "process sequence, synergistic or integrated relationships, target applications, "
+                "and each distinct major conclusion. "
+                f"{review_destination} Never invent details absent from every section summary."
+            )
+        else:
+            stage = (
+                " This is the final pass over evidence summaries produced independently "
+                "from paper sections. Reconcile them into one coherent paper summary. Preserve "
+                "numeric values and negations, distinguish results from discussion, and never "
+                "invent details omitted by every section summary."
+            )
     json_retry = (
         " The previous response was not one complete valid JSON object. Retry "
         "the entire response using exactly the requested schema. Output JSON "

@@ -552,6 +552,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["payload"]["format"]["type"], "object")
         self.assertFalse(client.calls[0]["payload"]["think"])
         self.assertEqual(client.calls[0]["payload"]["options"]["num_ctx"], 24_576)
+        self.assertEqual(client.calls[0]["payload"]["options"]["temperature"], 0)
+        self.assertEqual(client.calls[0]["payload"]["options"]["seed"], 0)
         self.assertNotIn(
             "title",
             client.calls[0]["payload"]["format"]["properties"],

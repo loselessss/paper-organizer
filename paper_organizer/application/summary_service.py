@@ -499,7 +499,7 @@ def run_prepared_summary(
                         prompt_version=(
                             "patent-summary-v1-section"
                             if request_options["is_patent"]
-                            else "review-summary-v1-section"
+                            else "review-summary-v4-section"
                             if prepared.preview.document_type == "review_paper"
                             else "paper-summary-v9-section"
                         ),
@@ -520,7 +520,7 @@ def run_prepared_summary(
                 prompt_version=(
                     "patent-summary-v1-hierarchical"
                     if request_options["is_patent"]
-                    else "review-summary-v1-hierarchical"
+                    else "review-summary-v4-hierarchical"
                     if prepared.preview.document_type == "review_paper"
                     else "paper-summary-v9-hierarchical"
                 ),
@@ -552,7 +552,7 @@ def run_prepared_summary(
                 prompt_version=(
                     "patent-summary-v1-direct"
                     if request_options["is_patent"]
-                    else "review-summary-v1-direct"
+                    else "review-summary-v4-direct"
                     if prepared.preview.document_type == "review_paper"
                     else "paper-summary-v9-direct"
                 ),
@@ -586,6 +586,22 @@ def run_prepared_summary(
             result,
             data=replace(result.data, contributions=(), limitations=()),
         )
+    if prepared.preview.document_type == "review_paper":
+        review_source = "\n\n".join(prepared.section_contexts)
+        sanitized_methods = _review_methods_supported_by_source(
+            result.data.methods,
+            review_source or prepared.document_text,
+        )
+        sanitized_methods = _ensure_review_nature_method(
+            sanitized_methods,
+            review_source or prepared.document_text,
+            prepared.preview.output_language,
+        )
+        if sanitized_methods != result.data.methods:
+            result = replace(
+                result,
+                data=replace(result.data, methods=sanitized_methods),
+            )
     normalized_summary = _paragraphize_summary(result.data.summary)
     if normalized_summary != result.data.summary:
         result = replace(
@@ -882,18 +898,27 @@ def _summary_language_mismatch(
         return False
     source_latin = len(re.findall(r"[A-Za-z]", source_text))
     source_hangul = len(re.findall(r"[가-힣]", source_text))
+    source_han_kana = len(
+        re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]", source_text)
+    )
     output_latin = len(re.findall(r"[A-Za-z]", explanatory_text))
     output_hangul = len(re.findall(r"[가-힣]", explanatory_text))
+    output_han_kana = len(
+        re.findall(
+            r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]",
+            explanatory_text,
+        )
+    )
     english_source = (
         source_latin >= 100
-        and source_latin >= max(1, source_hangul) * 3
+        and source_latin >= max(1, source_hangul + source_han_kana) * 3
     )
     korean_source = (
         source_hangul >= 100
         and source_hangul >= max(1, source_latin)
     )
     if output_language == "source" and english_source:
-        return output_hangul > 0
+        return output_hangul + output_han_kana > 0
     expects_korean = output_language == "ko" or (
         output_language == "source" and korean_source
     )
@@ -903,6 +928,67 @@ def _summary_language_mismatch(
     return output_hangul < 10 or (
         letters >= 40 and output_hangul / letters < 0.08
     )
+
+
+_FORMAL_REVIEW_METHOD_MARKERS = (
+    "systematic review",
+    "meta-analysis",
+    "meta analysis",
+    "prisma",
+    "eligibility criteria",
+    "literature screening",
+    "database search",
+    "pubmed",
+    "scopus",
+    "web of science",
+    "cochrane",
+)
+
+
+def _review_methods_supported_by_source(
+    methods: tuple[str, ...],
+    source_text: str,
+) -> tuple[str, ...]:
+    """Drop formal review methods that have no literal support in the paper."""
+
+    source = source_text.casefold()
+    return tuple(
+        method
+        for method in methods
+        if not any(
+            marker in method.casefold() and marker not in source
+            for marker in _FORMAL_REVIEW_METHOD_MARKERS
+        )
+    )
+
+
+def _ensure_review_nature_method(
+    methods: tuple[str, ...],
+    source_text: str,
+    output_language: str,
+) -> tuple[str, ...]:
+    """Make the already-classified review nature explicit for downstream QA."""
+
+    joined = " ".join(methods).casefold()
+    if any(
+        marker in joined
+        for marker in (
+            "no new controlled experiment",
+            "no original controlled experiment",
+            "새로운 대조 실험",
+            "신규 대조 실험",
+        )
+    ):
+        return methods
+    hangul = len(re.findall(r"[가-힣]", source_text))
+    latin = len(re.findall(r"[A-Za-z]", source_text))
+    if output_language == "ko" or (hangul >= 100 and hangul >= latin):
+        marker = "문헌을 종합한 리뷰논문이며 새로운 대조 실험을 수행하지 않음"
+    elif latin >= 100 and latin >= max(1, hangul) * 3:
+        marker = "Literature review and synthesis; no new controlled experiment was performed."
+    else:
+        return methods
+    return (marker, *methods)
 
 
 def _is_summary_format_error(error: ProviderError) -> bool:

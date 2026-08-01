@@ -54,7 +54,7 @@ class OllamaProvider:
 
     def summarize(self, request: SummaryRequest) -> SummaryResult:
         request.validate()
-        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        options = _deterministic_options(request.max_output_tokens)
         if request.context_window is not None:
             options["num_ctx"] = request.context_window
         payload: dict[str, Any] = {
@@ -99,7 +99,7 @@ class OllamaProvider:
         self, request: BibliographyRequest
     ) -> BibliographyResult:
         request.validate()
-        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        options = _deterministic_options(request.max_output_tokens)
         if request.context_window is not None:
             options["num_ctx"] = request.context_window
         response = self._chat_json(
@@ -126,6 +126,8 @@ class OllamaProvider:
             {
                 "num_predict": request.max_output_tokens,
                 "num_ctx": 8_192,
+                "temperature": 0,
+                "seed": 0,
             },
         )
         return SearchPlanResult(
@@ -136,7 +138,7 @@ class OllamaProvider:
 
     def answer_search(self, request: SearchAnswerRequest) -> SearchAnswerResult:
         request.validate()
-        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        options = _deterministic_options(request.max_output_tokens)
         if request.context_window is not None:
             options["num_ctx"] = request.context_window
         response = self._chat_json(
@@ -184,6 +186,16 @@ class OllamaProvider:
 
 def _optional_int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _deterministic_options(max_output_tokens: int) -> dict[str, Any]:
+    """Favor reproducible factual extraction over creative sampling."""
+
+    return {
+        "num_predict": max_output_tokens,
+        "temperature": 0,
+        "seed": 0,
+    }
 
 
 def _message_content(response: Mapping[str, Any]) -> str:

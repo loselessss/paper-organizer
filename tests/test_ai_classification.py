@@ -144,6 +144,39 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("consensus", instructions)
         self.assertIn("evidence gaps", instructions)
 
+    def test_review_section_preserves_selection_conflicts_and_evidence_strength(self):
+        instructions = system_instructions(
+            SummaryRequest(
+                document_text="review section",
+                document_type="review_paper",
+                stage="section",
+            )
+        )
+
+        self.assertIn("review-paper section", instructions)
+        self.assertIn("named systems, organisms or populations", instructions)
+        self.assertIn("process order and dependencies", instructions)
+        self.assertIn("Never call the review systematic", instructions)
+        self.assertIn("at most 150 words", instructions)
+
+    def test_review_synthesis_maps_review_evidence_to_output_fields(self):
+        instructions = system_instructions(
+            SummaryRequest(
+                document_text="section summaries",
+                document_type="review_paper",
+                stage="synthesis",
+                advanced_analysis=False,
+            )
+        )
+
+        self.assertIn("final pass over evidence summaries from a review paper", instructions)
+        self.assertIn("Put the objective and scope in research_question", instructions)
+        self.assertIn("without calling the review systematic", instructions)
+        self.assertIn("at least three evidence-dense sentences", instructions)
+        self.assertIn("synergistic or integrated relationships", instructions)
+        self.assertIn("rather than a new controlled experiment", instructions)
+        self.assertIn("evidence gaps in summary", instructions)
+
 
 class AiClassificationTests(unittest.TestCase):
     def test_patent_ignores_ai_journal_venue(self):

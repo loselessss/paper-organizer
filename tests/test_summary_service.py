@@ -16,6 +16,8 @@ from paper_organizer.application.summary_service import (
     prepare_text_summary,
     run_prepared_summary,
     _paragraphize_summary,
+    _ensure_review_nature_method,
+    _review_methods_supported_by_source,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError, ProviderError
@@ -119,6 +121,33 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_unsupported_formal_review_methods_are_removed(self) -> None:
+        methods = (
+            "systematic review of literature",
+            "survey of enzyme systems and microbial hosts",
+        )
+
+        self.assertEqual(
+            _review_methods_supported_by_source(
+                methods,
+                "This review surveys enzyme systems and microbial hosts.",
+            ),
+            ("survey of enzyme systems and microbial hosts",),
+        )
+
+    def test_review_nature_is_explicit_for_downstream_qa(self) -> None:
+        methods = _ensure_review_nature_method(
+            ("Survey of enzyme systems",),
+            "This review surveys enzyme systems and microbial hosts. " * 10,
+            "source",
+        )
+
+        self.assertEqual(
+            methods[0],
+            "Literature review and synthesis; no new controlled experiment was performed.",
+        )
+        self.assertEqual(methods[1], "Survey of enzyme systems")
+
     def test_multiple_documents_are_rejected_before_ai_summary(self) -> None:
         pages = [
             "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
@@ -928,6 +957,59 @@ class SummaryServiceTests(unittest.TestCase):
             "previous response violated the OUTPUT LANGUAGE CONTRACT",
             client.calls[1]["messages"][0]["content"],
         )
+        self.assertEqual(execution.result.data.summary, english["summary"])
+
+    def test_english_source_retries_han_character_output(self):
+        english = {
+            **SUMMARY,
+            "summary": "This review reports the main evidence synthesis.",
+            "research_question": "What evidence supports the conclusion?",
+            "methods": ["The review surveys prior literature."],
+            "contributions": ["The review integrates the evidence."],
+            "limitations": ["The evidence remains limited."],
+            "keywords": ["evidence synthesis"],
+            "meta_tags": ["review"],
+        }
+        mixed = {
+            **english,
+            "summary": "This review reports the main evidence, 但结论不完整.",
+        }
+
+        class LanguageSequenceClient:
+            def __init__(self):
+                self.calls = []
+
+            def post_json(self, url, headers, payload, timeout_seconds):
+                self.calls.append(payload)
+                value = mixed if len(self.calls) == 1 else english
+                return {
+                    "message": {"content": json.dumps(value)},
+                    "prompt_eval_count": 10,
+                    "eval_count": 5,
+                }
+
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+            summary_language="source",
+        )
+        prepared = prepare_text_summary(
+            Path("review.paperpack"),
+            ["Introduction\nMain review evidence. " * 40],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = LanguageSequenceClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(execution.language_retry_count, 1)
         self.assertEqual(execution.result.data.summary, english["summary"])
 
     def test_repeated_source_language_violation_is_rejected(self):

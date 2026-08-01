@@ -2,13 +2,13 @@
   "schema_version": 1,
   "suite": "real-papers-v1",
   "privacy": "PDF, title, ground truth, raw prompts and model outputs are intentionally excluded.",
-  "updated_at": "2026-08-01T09:29:07+00:00",
+  "updated_at": "2026-08-01T10:43:58+00:00",
   "conditions": {
     "paper_count": 4,
     "mode": "full",
     "language": "source",
     "resource_profile": "balanced",
-    "hardware": "NVIDIA GeForce RTX 3080 Ti / local GPU-first PC"
+    "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB"
   },
   "models": [
     {
@@ -83,11 +83,11 @@
       "model": "qwen3.5:4b",
       "paper_count": 4,
       "success_count": 4,
-      "mean_score_100": 17.08,
+      "mean_score_100": 22.92,
       "research_mean_score_100": 10.0,
-      "review_mean_score_100": 38.33,
-      "mean_bibliography_score_100": 93.75,
-      "mean_elapsed_seconds": 15.936,
+      "review_mean_score_100": 61.67,
+      "mean_bibliography_score_100": 100.0,
+      "mean_elapsed_seconds": 15.722,
       "papers": [
         {
           "paper_id": "REAL-001",
@@ -121,15 +121,15 @@
           "paper_id": "REAL-003",
           "paper_type": "review",
           "status": "ok",
-          "score_100": 38.33,
-          "bibliography_score_100": 75.0,
+          "score_100": 61.67,
+          "bibliography_score_100": 100.0,
           "forbidden_hits": 0,
-          "elapsed_seconds": 15.246,
+          "elapsed_seconds": 14.391,
           "processor": "",
           "input_tokens": null,
           "output_tokens": null,
           "json_retry_count": 0,
-          "bibliography_retry_count": 1
+          "bibliography_retry_count": 0
         },
         {
           "paper_id": "REAL-004",
@@ -151,11 +151,11 @@
       "model": "qwen3:1.7b",
       "paper_count": 4,
       "success_count": 4,
-      "mean_score_100": 19.16,
+      "mean_score_100": 22.5,
       "research_mean_score_100": 12.78,
-      "review_mean_score_100": 38.33,
+      "review_mean_score_100": 51.67,
       "mean_bibliography_score_100": 75.0,
-      "mean_elapsed_seconds": 16.566,
+      "mean_elapsed_seconds": 17.009,
       "papers": [
         {
           "paper_id": "REAL-001",
@@ -189,10 +189,10 @@
           "paper_id": "REAL-003",
           "paper_type": "review",
           "status": "ok",
-          "score_100": 38.33,
+          "score_100": 51.67,
           "bibliography_score_100": 50.0,
           "forbidden_hits": 0,
-          "elapsed_seconds": 5.2,
+          "elapsed_seconds": 6.975,
           "processor": "",
           "input_tokens": null,
           "output_tokens": null,

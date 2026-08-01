@@ -41,7 +41,10 @@
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
-        "average_seconds": 15.2,
+        "average_seconds": 17.009,
+        "research_score_100": 12.78,
+        "review_score_100": 51.67,
+        "bibliography_score_100": 75.0,
         "json_retries": 0,
         "strengths": [
           "저사양 PC용 속도·안정성 균형",
@@ -211,10 +214,10 @@
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
-        "average_seconds": 15.936,
+        "average_seconds": 15.722,
         "research_score_100": 10.0,
-        "review_score_100": 38.33,
-        "bibliography_score_100": 93.75,
+        "review_score_100": 61.67,
+        "bibliography_score_100": 100.0,
         "strengths": [
           "서지정보 정확도 우수",
           "리뷰논문 수동 분석 추천"
