@@ -402,7 +402,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             dialog = OllamaModelDialog(
                 controller,
-                initial_model="qwen3:8b",
+                initial_model="qwen3.5:4b",
             )
             snapshot = OllamaModelSnapshot(
                 reachable=True,
@@ -421,9 +421,9 @@ class UiSmokeTests(unittest.TestCase):
                         True,
                     ),
                     OllamaModelEntry(
-                        "qwen3:8b",
-                        "Qwen3 8B",
-                        5.2,
+                        "qwen3.5:4b",
+                        "Qwen3.5 4B",
+                        3.4,
                         False,
                         0,
                         "",
@@ -431,8 +431,8 @@ class UiSmokeTests(unittest.TestCase):
                         False,
                         benchmark_summary=(
                             "★ 종합 추천 1순위\n"
-                            "실논문 4/4편 완료 · 품질 82.5/100\n"
-                            "강점: 빠르고 안정적인 서지정보 입력"
+                            "실논문 6/6편 완료 · 품질 33.92/100\n"
+                            "강점: 연구·리뷰·서지 정확도"
                         ),
                         recommendation_rank=1,
                     ),
@@ -454,16 +454,16 @@ class UiSmokeTests(unittest.TestCase):
 
             self.assertEqual(dialog.model_table.columnCount(), 6)
             self.assertEqual(dialog.model_table.rowCount(), 3)
-            self.assertEqual(dialog._selected_entry().model_id, "qwen3:8b")
-            recommended_row = dialog._row_for_model("qwen3:8b")
+            self.assertEqual(dialog._selected_entry().model_id, "qwen3.5:4b")
+            recommended_row = dialog._row_for_model("qwen3.5:4b")
             self.assertEqual(
                 dialog.model_table.item(recommended_row, 0).text(),
                 "★ 1",
             )
-            self.assertIn("고급 분석 8B+", dialog.model_detail.text())
-            self.assertIn("품질 82.5/100", dialog.model_detail.text())
+            self.assertIn("수동 본문 분석 기본", dialog.model_detail.text())
+            self.assertIn("품질 33.92/100", dialog.model_detail.text())
             self.assertIn(
-                "빠르고 안정적인 서지정보 입력",
+                "연구·리뷰·서지 정확도",
                 dialog.model_detail.text(),
             )
             gemma_row = dialog._row_for_model("gemma3:12b")

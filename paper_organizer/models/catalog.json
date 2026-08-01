@@ -1,5 +1,5 @@
 {
-  "catalog_version": "2026.08.01",
+  "catalog_version": "2026.08.01.2",
   "verified_at": "2026-08-01",
   "benchmark_hardware": "NVIDIA GeForce RTX 3080 Ti",
   "models": [
@@ -39,6 +39,7 @@
       "license": "Apache-2.0",
       "recommended_context": 8192,
       "benchmark": {
+        "score": 25.83,
         "paper_count": 6,
         "success_count": 6,
         "average_seconds": 2.517,
@@ -46,6 +47,7 @@
         "review_score_100": 36.11,
         "bibliography_score_100": 75.0,
         "json_retries": 0,
+        "bibliography_retries": 0,
         "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
           "저사양 PC용 속도·안정성 균형",
@@ -113,17 +115,22 @@
       "quality": 5,
       "license": "Apache-2.0",
       "recommended_context": 16384,
-      "recommendation_rank": 1,
+      "recommendation_rank": 2,
       "benchmark": {
-        "score": 82.5,
-        "paper_count": 4,
-        "success_count": 4,
-        "average_seconds": 15.6,
+        "score": 25.83,
+        "paper_count": 6,
+        "success_count": 6,
+        "average_seconds": 11.998,
+        "research_score_100": 15.55,
+        "review_score_100": 36.11,
+        "bibliography_score_100": 66.67,
         "json_retries": 0,
+        "bibliography_retries": 2,
+        "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
-          "3B급 최고 수준의 사실 보존",
-          "빠르고 안정적인 서지정보 입력",
-          "일반 논문 요약 1순위"
+          "Qwen3.5 4B보다 약 25% 빠른 본문 요약",
+          "금지 주장 0건으로 6편 모두 완주",
+          "정확도 우선이면 Qwen3.5 4B 권장"
         ]
       }
     },
@@ -185,7 +192,7 @@
       "quality": 3,
       "license": "Apache-2.0",
       "recommended_context": 24576,
-      "recommendation_rank": 2,
+      "recommendation_rank": 3,
       "benchmark": {
         "score": 80.8,
         "paper_count": 4,
@@ -212,7 +219,9 @@
       "license": "Apache-2.0",
       "recommended_context": 8192,
       "download_priority": 2,
+      "recommendation_rank": 1,
       "benchmark": {
+        "score": 33.92,
         "paper_count": 6,
         "success_count": 6,
         "average_seconds": 16.008,
@@ -220,10 +229,11 @@
         "review_score_100": 49.22,
         "bibliography_score_100": 87.5,
         "json_retries": 0,
+        "bibliography_retries": 0,
         "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
-          "서지정보 정확도 우수",
-          "리뷰논문 수동 분석 추천"
+          "최신 실논문 비교에서 연구·리뷰·서지 정확도 1위",
+          "수동 연구논문·리뷰논문 본문 분석 기본"
         ]
       }
     },

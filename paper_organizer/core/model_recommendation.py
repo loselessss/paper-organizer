@@ -38,6 +38,10 @@ class ModelSpec:
     benchmark_success_count: int
     benchmark_average_seconds: float | None
     benchmark_json_retries: int | None
+    benchmark_bibliography_retries: int | None
+    benchmark_research_score: float | None
+    benchmark_review_score: float | None
+    benchmark_bibliography_score: float | None
     benchmark_strengths: tuple[str, ...]
     benchmark_hardware: str
 
@@ -102,6 +106,7 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
         benchmark_score = benchmark.get("score")
         benchmark_average_seconds = benchmark.get("average_seconds")
         benchmark_json_retries = benchmark.get("json_retries")
+        benchmark_bibliography_retries = benchmark.get("bibliography_retries")
         strengths = benchmark.get("strengths") or []
         if not isinstance(strengths, list):
             raise ValueError("model benchmark strengths must be a list")
@@ -140,10 +145,26 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
                 if benchmark_json_retries is not None
                 else None
             ),
+            benchmark_bibliography_retries=(
+                int(benchmark_bibliography_retries)
+                if benchmark_bibliography_retries is not None
+                else None
+            ),
+            benchmark_research_score=_optional_score(
+                benchmark.get("research_score_100")
+            ),
+            benchmark_review_score=_optional_score(
+                benchmark.get("review_score_100")
+            ),
+            benchmark_bibliography_score=_optional_score(
+                benchmark.get("bibliography_score_100")
+            ),
             benchmark_strengths=tuple(
                 str(value).strip() for value in strengths if str(value).strip()
             ),
-            benchmark_hardware=benchmark_hardware,
+            benchmark_hardware=str(
+                benchmark.get("hardware") or benchmark_hardware
+            ).strip(),
         )
         if not spec.model_id or spec.model_id in seen:
             raise ValueError("model catalog contains an empty or duplicate id")
@@ -178,6 +199,18 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
             and spec.benchmark_json_retries < 0
         ):
             raise ValueError("model benchmark retry count cannot be negative")
+        if (
+            spec.benchmark_bibliography_retries is not None
+            and spec.benchmark_bibliography_retries < 0
+        ):
+            raise ValueError("model bibliography retry count cannot be negative")
+        for score in (
+            spec.benchmark_research_score,
+            spec.benchmark_review_score,
+            spec.benchmark_bibliography_score,
+        ):
+            if score is not None and not 0 <= score <= 100:
+                raise ValueError("model benchmark detail score must be between 0 and 100")
         seen.add(spec.model_id)
         models.append(spec)
     return version, tuple(
@@ -210,7 +243,7 @@ def model_benchmark_summary(spec: ModelSpec) -> str:
     if spec.benchmark_average_seconds is not None:
         facts.append(f"평균 {spec.benchmark_average_seconds:g}초")
     if spec.benchmark_json_retries is not None:
-        facts.append(f"서지정보 입력 재시도 {spec.benchmark_json_retries}회")
+        facts.append(f"구조화 응답 재시도 {spec.benchmark_json_retries}회")
     if facts:
         lines.append(" · ".join(facts))
         if spec.benchmark_hardware:
@@ -219,7 +252,27 @@ def model_benchmark_summary(spec: ModelSpec) -> str:
         lines.append("실논문 벤치마크 미실시")
     if spec.benchmark_strengths:
         lines.append("강점: " + " · ".join(spec.benchmark_strengths))
+    detail_scores: list[str] = []
+    if spec.benchmark_research_score is not None:
+        detail_scores.append(f"연구 {spec.benchmark_research_score:g}")
+    if spec.benchmark_review_score is not None:
+        detail_scores.append(f"리뷰 {spec.benchmark_review_score:g}")
+    if spec.benchmark_bibliography_score is not None:
+        detail_scores.append(f"서지 {spec.benchmark_bibliography_score:g}")
+    if detail_scores:
+        lines.insert(
+            2 if len(lines) >= 2 else len(lines),
+            "역할별 점수: " + " · ".join(detail_scores),
+        )
+    if spec.benchmark_bibliography_retries is not None:
+        lines.append(
+            f"서지정보 추가 요청 {spec.benchmark_bibliography_retries}회"
+        )
     return "\n".join(lines)
+
+
+def _optional_score(value: Any) -> float | None:
+    return float(value) if value is not None else None
 
 
 def model_usage_guidance(
@@ -271,6 +324,28 @@ def model_usage_guidance(
             caution=(
                 "본문 구역별 요약은 실행하지 않습니다. Abstract가 없으면 "
                 "서지정보만 저장합니다."
+            ),
+        )
+    if normalized_model == "qwen3.5:4b":
+        return ModelUsageGuidance(
+            role="수동 본문 분석 기본",
+            hallucination_risk="주의 필요",
+            summary_strategy="연구·리뷰 유형별 구역 요약 후 통합",
+            advanced_analysis=False,
+            caution=(
+                "실논문 6편에서 Granite 4.1 3B보다 연구·리뷰·서지 정확도가 "
+                "높았습니다. 중요한 수치와 결론은 원문 대조가 필요합니다."
+            ),
+        )
+    if normalized_model == "granite4.1:3b":
+        return ModelUsageGuidance(
+            role="빠른 수동 요약 대안",
+            hallucination_risk="주의 필요",
+            summary_strategy="구역별 요약 후 통합",
+            advanced_analysis=False,
+            caution=(
+                "Qwen3.5 4B보다 약 25% 빨랐지만 최신 실논문의 리뷰·서지 "
+                "정확도는 낮았습니다. 속도를 우선할 때 선택하세요."
             ),
         )
     if parameters <= 0.8:
@@ -361,7 +436,19 @@ def recommend_models(
             )
     elif profile == "speed":
         fast = [candidate for candidate in eligible if candidate.spec.parameters_b <= 4]
-        recommended = _highest_stable(fast, hardware.memory_total_gb) or _smallest(eligible)
+        recommended = next(
+            (
+                candidate
+                for candidate in fast
+                if candidate.spec.model_id == "granite4.1:3b"
+            ),
+            None,
+        )
+        recommended = (
+            recommended
+            or _highest_stable(fast, hardware.memory_total_gb)
+            or _smallest(eligible)
+        )
     elif profile == "balanced":
         balanced = [
             candidate for candidate in eligible if candidate.spec.parameters_b <= 8
@@ -449,10 +536,10 @@ def recommendation_tier_overview() -> str:
     """Return the concise role split shown above per-model recommendations."""
 
     return (
-        "용도별 권장: Qwen3.5 2B·4B는 우선 다운로드·비교 후보 · "
-        "검증된 백그라운드 1~2B급 기본은 Qwen3 1.7B, "
-        "Granite 3.3 2B는 비교 후보 · "
-        "수동 정밀 3~4B급은 Granite 4.1 3B 또는 Qwen3 4B · "
+        "용도별 권장: 백그라운드 서지·Abstract는 Qwen3 1.7B · "
+        "수동 본문 분석 기본은 Qwen3.5 4B · "
+        "Granite 4.1 3B는 속도 우선 대안 · "
+        "Qwen3.5 2B와 Granite 3.3 2B는 비교 후보 · "
         "8B+는 기여·한계가 필요한 고급 분석용이며 모델명보다 "
         "메모리 적합도와 구조화 성공 여부를 우선합니다."
     )
