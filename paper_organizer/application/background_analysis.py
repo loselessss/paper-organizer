@@ -515,7 +515,9 @@ def _estimated_runtime_memory_gb(
 
 
 def _safe_error(exc: BaseException) -> str:
-    return " ".join(str(exc).split())[:500] or exc.__class__.__name__
+    from paper_organizer.infra.redaction import redact_text
+
+    return " ".join(redact_text(exc).split())[:500] or exc.__class__.__name__
 
 
 def _failure_diagnostics(exc: BaseException) -> dict[str, object]:

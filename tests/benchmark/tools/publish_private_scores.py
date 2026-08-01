@@ -26,14 +26,18 @@ def sanitized_runs(results_root: Path) -> list[dict[str, Any]]:
     """Return model runs containing scores and timings only."""
 
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for path in sorted(results_root.glob("*/REAL-*.json")):
+    for path in sorted(results_root.rglob("REAL-*.json")):
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if str(raw.get("language") or "source") != "source":
+            continue
         model = str(raw.get("model") or "").strip()
         document_id = str(raw.get("document_id") or "").strip()
         if not model or not document_id.startswith("REAL-"):
             continue
         score = raw.get("score")
         score = score if isinstance(score, dict) else {}
+        if not isinstance(score.get("score_100"), (int, float)):
+            continue
         bibliography = score.get("bibliography")
         bibliography = (
             bibliography if isinstance(bibliography, dict) else {}
@@ -41,7 +45,13 @@ def sanitized_runs(results_root: Path) -> list[dict[str, Any]]:
         grouped.setdefault(model, []).append(
             {
                 "paper_id": document_id,
-                "paper_type": str(raw.get("difficulty") or "unknown"),
+                "paper_type": (
+                    "review"
+                    if raw.get("paper_type") == "review_paper"
+                    else "research"
+                    if raw.get("paper_type") == "research_paper"
+                    else str(raw.get("difficulty") or "unknown")
+                ),
                 "status": (
                     "ok" if raw.get("status") == "ok" else "error"
                 ),
@@ -52,6 +62,8 @@ def sanitized_runs(results_root: Path) -> list[dict[str, Any]]:
                 "processor": str(raw.get("processor") or ""),
                 "input_tokens": raw.get("input_tokens"),
                 "output_tokens": raw.get("output_tokens"),
+                "json_retry_count": raw.get("provenance", {}).get("json_retry_count"),
+                "bibliography_retry_count": raw.get("provenance", {}).get("bibliography_retry_count"),
             }
         )
     published: list[dict[str, Any]] = []

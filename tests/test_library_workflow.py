@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import patch
 
@@ -321,6 +322,25 @@ class LibraryWorkflowTests(unittest.TestCase):
             saved = load_paperpack_metadata(updated.sidecar_path)
             self.assertEqual(saved["curation"]["revision"], 2)
             self.assertEqual(saved["curation"]["last_edited_by"], "user")
+
+    def test_only_changed_fields_become_user_owned_and_type_is_locked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            controller.organize(item, item.metadata, field_source="auto:regex")
+            entry = controller.list_library()[0]
+            changed = EditablePaperMetadata(**{
+                **asdict(entry.metadata),
+                "document_type": "review_paper",
+            })
+            updated = controller.update_library_metadata(entry, changed)
+            sources = updated.record["curation"]["field_sources"]
+            self.assertEqual(sources["document.type"], "user")
+            self.assertNotEqual(sources.get("bibliography.authors"), "user")
+            self.assertIn("document.type", updated.record["curation"]["locked_fields"])
+            self.assertIsNone(controller.suggested_document_type(updated))
 
     def test_legacy_generic_user_title_is_repaired_from_embedded_pdf(self):
         with tempfile.TemporaryDirectory() as temp:

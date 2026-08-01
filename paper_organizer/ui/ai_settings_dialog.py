@@ -159,6 +159,9 @@ class AiSettingsDialog(QDialog):
         self.budget_spin.setDecimals(2)
         self.budget_spin.setPrefix("US$ ")
         self.budget_spin.setSpecialValueText("앱 자체 제한 없음")
+        self.budget_spin.setToolTip(
+            "참고용 예산입니다. 앱은 아직 사용량을 누적하거나 요청을 자동 차단하지 않습니다. 제공자 콘솔의 지출 한도를 함께 설정하세요."
+        )
 
         form.addRow("제공자", self.provider_combo)
         form.addRow("키 상태", self.key_status)
@@ -168,7 +171,7 @@ class AiSettingsDialog(QDialog):
         form.addRow("요약 제한 시간", self.timeout_spin)
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
-        form.addRow("월간 앱 비용 한도", self.budget_spin)
+        form.addRow("월간 참고 예산(강제 차단 아님)", self.budget_spin)
         self.engine_columns.addWidget(self.provider_group, 1)
 
         self.local_model_group = QGroupBox("모델 선택·Ollama 설치 및 삭제")

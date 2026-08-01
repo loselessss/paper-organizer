@@ -22,6 +22,16 @@ class SecretStore(Protocol):
     def delete(self, provider: str) -> None: ...
 
 
+def delete_all_credentials(store: SecretStore) -> tuple[str, ...]:
+    """Delete only Paper Organizer cloud credentials from the supplied store."""
+
+    deleted: list[str] = []
+    for provider in sorted(ENVIRONMENT_KEYS):
+        store.delete(provider)
+        deleted.append(provider)
+    return tuple(deleted)
+
+
 @dataclass(frozen=True, slots=True)
 class SecretStatus:
     provider: str

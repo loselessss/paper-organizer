@@ -135,6 +135,15 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("claims", instructions)
         self.assertIn("legal conclusion", instructions)
 
+    def test_review_uses_scope_synthesis_conflict_and_gap_instructions(self):
+        instructions = system_instructions(
+            SummaryRequest(document_text="review", document_type="review_paper")
+        )
+        self.assertIn("review paper, not a primary research report", instructions)
+        self.assertIn("eligibility", instructions)
+        self.assertIn("consensus", instructions)
+        self.assertIn("evidence gaps", instructions)
+
 
 class AiClassificationTests(unittest.TestCase):
     def test_patent_ignores_ai_journal_venue(self):

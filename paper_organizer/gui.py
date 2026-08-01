@@ -6,6 +6,14 @@ import sys
 
 
 def main() -> int:
+    if "--delete-credentials" in sys.argv[1:]:
+        from paper_organizer.infra.secrets import (
+            default_secret_store,
+            delete_all_credentials,
+        )
+
+        delete_all_credentials(default_secret_store())
+        return 0
     from PyQt5.QtCore import Qt, QTimer
     from PyQt5.QtWidgets import QApplication, QDialog
 
@@ -76,6 +84,8 @@ def main() -> int:
         workflow,
         secret_store,
     )
+    from paper_organizer.application.selection_ai import SelectionAiService
+    selection_ai = SelectionAiService(secret_store)
     background_analysis = BackgroundAnalysisService(
         workflow,
         summary,
@@ -106,6 +116,7 @@ def main() -> int:
             background_analysis=background_analysis,
             conversational_search=conversational_search,
             library_translation=library_translation,
+            selection_ai=selection_ai,
         )
         if snapshot is not None:
             window.statusBar().showMessage(

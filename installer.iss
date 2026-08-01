@@ -42,3 +42,27 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Paper Organizer 실행"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  DeleteCredentialsCheck: TNewCheckBox;
+
+procedure InitializeUninstallProgressForm;
+begin
+  DeleteCredentialsCheck := TNewCheckBox.Create(UninstallProgressForm);
+  DeleteCredentialsCheck.Parent := UninstallProgressForm.InnerPage;
+  DeleteCredentialsCheck.Left := 0;
+  DeleteCredentialsCheck.Top := UninstallProgressForm.StatusLabel.Top + 40;
+  DeleteCredentialsCheck.Width := UninstallProgressForm.InnerPage.ClientWidth;
+  DeleteCredentialsCheck.Caption := 'Paper Organizer의 Windows 자격 증명(API 키)도 삭제';
+  DeleteCredentialsCheck.Checked := False;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if (CurUninstallStep = usUninstall) and DeleteCredentialsCheck.Checked then
+    Exec(ExpandConstant('{app}\{#MyAppExeName}'), '--delete-credentials', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;

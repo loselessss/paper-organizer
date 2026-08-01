@@ -13,8 +13,10 @@ from PyQt5.QtCore import QMimeData, QProcess, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QDrag
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QDialogButtonBox,
+    QComboBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -54,7 +56,8 @@ from paper_organizer.application.library_translation import (
     LibraryTranslationService,
     analysis_translation_source_hash,
 )
-from paper_organizer.integrations.spdf_bridge import open_pdf
+from paper_organizer.application.selection_ai import SelectionAiService
+from paper_organizer.integrations.spdf_bridge import SpdfSelection, open_pdf
 
 
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
@@ -489,6 +492,16 @@ class MetadataForm(QGroupBox):
         self.tags_edit.setPlaceholderText("쉼표로 구분")
         self._summary = ""
         self._document_type = "paper"
+        self.document_type_combo = QComboBox()
+        self.document_type_combo.addItem("연구논문", "research_paper")
+        self.document_type_combo.addItem("리뷰논문", "review_paper")
+        self.document_type_combo.addItem("특허", "patent")
+        self.document_type_combo.currentIndexChanged.connect(
+            lambda _index: self._set_document_type(
+                str(self.document_type_combo.currentData() or "research_paper"),
+                sync_combo=False,
+            )
+        )
         self._publication_number = ""
         self._application_number = ""
         self.authors_label = QLabel("저자")
@@ -498,6 +511,7 @@ class MetadataForm(QGroupBox):
         self.application_number_label = QLabel("출원번호")
         self.assignee_label = QLabel("출원인/권리자")
         form.addRow("제목", self.title_edit)
+        form.addRow("문서 유형", self.document_type_combo)
         form.addRow(self.authors_label, self.authors_edit)
         form.addRow("연도", self.year_edit)
         form.addRow(self.venue_label, self.venue_edit)
@@ -533,13 +547,19 @@ class MetadataForm(QGroupBox):
         self._set_document_type(value.document_type)
         self.setEnabled(metadata is not None)
 
-    def _set_document_type(self, document_type: str) -> None:
+    def _set_document_type(self, document_type: str, *, sync_combo: bool = True) -> None:
         self._document_type = (
             document_type
             if document_type in {"patent", "research_paper", "review_paper"}
             else "research_paper"
         )
         patent = self._document_type == "patent"
+        if sync_combo:
+            index = self.document_type_combo.findData(self._document_type)
+            if index >= 0:
+                self.document_type_combo.blockSignals(True)
+                self.document_type_combo.setCurrentIndex(index)
+                self.document_type_combo.blockSignals(False)
         self.authors_label.setText("발명자" if patent else "저자")
         self.venue_label.setVisible(not patent)
         self.venue_edit.setVisible(not patent)
@@ -1491,6 +1511,35 @@ class AnalysisQueueWidget(QWidget):
         worker.wait(2000)
 
 
+class SelectionAiWorker(QThread):
+    completed = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, service, selection, action, allow_cloud_once=False, parent=None):
+        super().__init__(parent)
+        self._service = service
+        self._selection = selection
+        self._action = action
+        self._allow_cloud_once = allow_cloud_once
+        self._cancel = Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        try:
+            result = self._service.run(
+                self._selection,
+                self._action,
+                allow_cloud_once=self._allow_cloud_once,
+                cancel_event=self._cancel,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.completed.emit(result)
+
+
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
@@ -1503,10 +1552,14 @@ class LibraryWidget(QWidget):
         parent=None,
         *,
         translation_service: LibraryTranslationService | None = None,
+        selection_ai: SelectionAiService | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._translation_service = translation_service
+        self._selection_ai = selection_ai
+        self._spdf_selection: SpdfSelection | None = None
+        self._selection_worker: SelectionAiWorker | None = None
         self._translation_path = ""
         self._translation_cache: dict[str, LibraryTranslation] = {}
         self._entries: list[LibraryEntry] = []
@@ -1561,6 +1614,43 @@ class LibraryWidget(QWidget):
         self.form = MetadataForm("선택한 논문의 PaperPack 색인 편집")
         self.form.set_metadata(None)
         detail_layout.addWidget(self.form)
+        self.type_suggestion_label = QLabel()
+        self.type_suggestion_label.setWordWrap(True)
+        detail_layout.addWidget(self.type_suggestion_label)
+        self.selection_label = QLabel("sPDF에서 텍스트를 선택하면 이곳에서 번역·요약할 수 있습니다.")
+        self.selection_label.setWordWrap(True)
+        detail_layout.addWidget(self.selection_label)
+        selection_actions = QHBoxLayout()
+        self.selection_translate_button = QPushButton("선택 영역 번역")
+        self.selection_summary_button = QPushButton("선택 영역 요약")
+        self.selection_copy_button = QPushButton("결과 복사")
+        self.selection_cancel_button = QPushButton("요청 취소")
+        for button in (
+            self.selection_translate_button,
+            self.selection_summary_button,
+            self.selection_copy_button,
+            self.selection_cancel_button,
+        ):
+            button.setEnabled(False)
+            selection_actions.addWidget(button)
+        self.selection_translate_button.clicked.connect(
+            lambda: self._run_selection_ai("translate")
+        )
+        self.selection_summary_button.clicked.connect(
+            lambda: self._run_selection_ai("summarize")
+        )
+        self.selection_copy_button.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.selection_result.toPlainText())
+        )
+        self.selection_cancel_button.clicked.connect(
+            lambda: self._selection_worker.cancel() if self._selection_worker else None
+        )
+        detail_layout.addLayout(selection_actions)
+        self.selection_result = QTextEdit()
+        self.selection_result.setReadOnly(True)
+        self.selection_result.setMaximumHeight(140)
+        self.selection_result.hide()
+        detail_layout.addWidget(self.selection_result)
         edit_actions = QHBoxLayout()
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
         self.translation_button = QPushButton("AI 번역")
@@ -1832,6 +1922,21 @@ class LibraryWidget(QWidget):
                 self.translation_button.setChecked(False)
                 self.translation_button.blockSignals(False)
         self.form.set_metadata(entry.metadata if entry else None)
+        candidate = (
+            self._controller.suggested_document_type(entry)
+            if entry and hasattr(self._controller, "suggested_document_type")
+            else None
+        )
+        type_labels = {
+            "research_paper": "연구논문",
+            "review_paper": "리뷰논문",
+            "patent": "특허",
+        }
+        self.type_suggestion_label.setText(
+            f"자동 재분류 후보: {type_labels.get(candidate, candidate)} — 위 문서 유형을 선택하고 저장하면 확정됩니다."
+            if candidate
+            else ""
+        )
         self.form.setEnabled(entry is not None)
         self.save_button.setEnabled(entry is not None)
         self.open_button.setEnabled(
@@ -2155,6 +2260,8 @@ class LibraryWidget(QWidget):
             question_label = (
                 "기술적 과제"
                 if entry.metadata.document_type == "patent"
+                else "검토 목적·범위"
+                if entry.metadata.document_type == "review_paper"
                 else "연구 질문"
             )
             sections.append(f"<h3>{question_label}</h3><p>{esc(question)}</p>")
@@ -2166,6 +2273,13 @@ class LibraryWidget(QWidget):
                 ("키워드", "keywords"),
             )
             if entry.metadata.document_type == "patent"
+            else (
+                ("문헌 선정·종합 방법", "methods"),
+                ("통합 결론", "contributions"),
+                ("근거 한계·연구 공백", "limitations"),
+                ("키워드", "keywords"),
+            )
+            if entry.metadata.document_type == "review_paper"
             else (
                 ("방법", "methods"),
                 ("핵심 기여", "contributions"),
@@ -2429,7 +2543,12 @@ class LibraryWidget(QWidget):
         for entry in self._selected_entries():
             try:
                 editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
-                open_pdf(editable_pdf, self)
+                open_pdf(
+                    editable_pdf,
+                    self,
+                    document_id=str(entry.record.get("id") or entry.work_id),
+                    selection_callback=self._spdf_selection_changed,
+                )
             except Exception as exc:
                 failures.append(f"{entry.metadata.title}: {exc}")
         self._refresh_pdf_edit_actions(self._selected_entries())
@@ -2453,10 +2572,85 @@ class LibraryWidget(QWidget):
             return
         try:
             editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
-            open_pdf(editable_pdf, self)
+            open_pdf(
+                editable_pdf,
+                self,
+                document_id=str(entry.record.get("id") or entry.work_id),
+                selection_callback=self._spdf_selection_changed,
+            )
             self._refresh_pdf_edit_actions(self._selected_entries())
         except Exception as exc:
             QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+
+    def _spdf_selection_changed(self, selection: SpdfSelection | None) -> None:
+        self._spdf_selection = selection
+        available = bool(
+            selection is not None
+            and selection.text.strip()
+            and not selection.requires_ocr
+            and self._selection_ai is not None
+        )
+        self.selection_translate_button.setEnabled(available)
+        self.selection_summary_button.setEnabled(available)
+        if selection is None:
+            self.selection_label.setText(
+                "sPDF에서 텍스트를 선택하면 이곳에서 번역·요약할 수 있습니다."
+            )
+        elif selection.requires_ocr:
+            self.selection_label.setText(
+                f"PDF {selection.pdf_page}쪽 선택 영역에는 텍스트 레이어가 없습니다. sPDF에서 OCR을 먼저 실행하세요."
+            )
+        else:
+            preview = " ".join(selection.text.split())[:180]
+            self.selection_label.setText(
+                f"PDF {selection.pdf_page}쪽 · {len(selection.text)}자: {preview}"
+            )
+
+    def _run_selection_ai(self, action: str) -> None:
+        if self._selection_ai is None or self._spdf_selection is None:
+            return
+        settings = self._controller.settings()
+        allow_cloud_once = False
+        if (
+            settings.summary_provider in {"openai", "anthropic"}
+            and not settings.cloud_processing_consent
+        ):
+            answer = QMessageBox.question(
+                self,
+                "선택 영역 클라우드 전송",
+                f"선택한 {len(self._spdf_selection.text)}자만 {settings.summary_provider}로 전송합니다. 이번 한 번 허용할까요?",
+            )
+            if answer != QMessageBox.Yes:
+                return
+            allow_cloud_once = True
+        for button in (self.selection_translate_button, self.selection_summary_button):
+            button.setEnabled(False)
+        worker = SelectionAiWorker(
+            self._selection_ai,
+            self._spdf_selection,
+            action,
+            allow_cloud_once,
+            self,
+        )
+        worker.completed.connect(self._selection_ai_completed)
+        worker.failed.connect(self._selection_ai_failed)
+        worker.finished.connect(lambda: setattr(self, "_selection_worker", None))
+        self._selection_worker = worker
+        self.selection_cancel_button.setEnabled(True)
+        worker.start()
+
+    def _selection_ai_completed(self, result) -> None:
+        self.selection_result.setPlainText(result.text)
+        self.selection_result.show()
+        self.selection_copy_button.setEnabled(True)
+        self.selection_cancel_button.setEnabled(False)
+        self._spdf_selection_changed(self._spdf_selection)
+        self.selection_cancel_button.setEnabled(False)
+
+    def _selection_ai_failed(self, message: str) -> None:
+        self._spdf_selection_changed(self._spdf_selection)
+        self.selection_cancel_button.setEnabled(False)
+        QMessageBox.warning(self, "선택 영역 AI 실패", message)
 
     def _apply_pdf_edit(self) -> None:
         entries = [

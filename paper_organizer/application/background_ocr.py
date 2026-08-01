@@ -15,6 +15,8 @@ from threading import Lock, Thread
 import fitz
 
 from paper_organizer.integrations.spdf_bridge import spdf_root
+from paper_organizer.infra.redaction import redact_text
+from paper_organizer.infra.secrets import sanitized_child_environment
 
 
 class BackgroundOcrError(RuntimeError):
@@ -93,10 +95,10 @@ def _run_ocr_page_texts(
         return [""] * page_count
     if getattr(sys, "frozen", False):
         command = [str(Path(sys.executable).parent / "ocr" / "spdf-ocr.exe")]
-        environment = dict(os.environ)
+        environment = sanitized_child_environment()
     else:
         command = [sys.executable, "-m", "paper_organizer.ocr_worker_main"]
-        environment = dict(os.environ)
+        environment = sanitized_child_environment()
         existing = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = os.pathsep.join(
             value for value in (str(spdf_root()), existing) if value
@@ -195,10 +197,10 @@ def _run_ocr_page_texts(
         return_code = process.wait(timeout=max(1, int(deadline - time.monotonic())))
         stderr = process.stderr.read().strip() if process.stderr is not None else ""
         if return_code or error:
-            raise BackgroundOcrError(error or stderr or "OCR worker failed")
+            raise BackgroundOcrError(redact_text(error or stderr or "OCR worker failed"))
         return ["\n".join(recognized.get(page, [])) for page in range(page_count)]
     except (OSError, subprocess.SubprocessError) as exc:
-        raise BackgroundOcrError(str(exc)) from None
+        raise BackgroundOcrError(redact_text(exc)) from None
     finally:
         if process is not None:
             _terminate_process(process)

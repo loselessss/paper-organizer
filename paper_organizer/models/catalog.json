@@ -63,9 +63,15 @@
       "recommended_context": 8192,
       "download_priority": 1,
       "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 13.315,
+        "research_score_100": 10.0,
+        "review_score_100": 51.67,
+        "bibliography_score_100": 75.0,
         "strengths": [
-          "백그라운드 분석 우선 검증 후보",
-          "공식 Ollama Qwen3.5 2B 태그"
+          "리뷰논문 종합이 강함",
+          "백그라운드 교체는 16GB 안정성 추가 검증 후 결정"
         ]
       }
     },
@@ -203,9 +209,15 @@
       "recommended_context": 8192,
       "download_priority": 2,
       "benchmark": {
+        "paper_count": 4,
+        "success_count": 4,
+        "average_seconds": 15.936,
+        "research_score_100": 10.0,
+        "review_score_100": 38.33,
+        "bibliography_score_100": 93.75,
         "strengths": [
-          "수동 분석 우선 검증 후보",
-          "공식 Ollama Qwen3.5 4B 태그"
+          "서지정보 정확도 우수",
+          "리뷰논문 수동 분석 추천"
         ]
       }
     },

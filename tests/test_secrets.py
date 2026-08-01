@@ -7,10 +7,23 @@ from paper_organizer.infra.secrets import (
     get_secret_status,
     mask_secret,
     sanitized_child_environment,
+    delete_all_credentials,
 )
 
 
 class SecretStoreTests(unittest.TestCase):
+    def test_delete_all_credentials_is_explicit_and_provider_scoped(self):
+        class Store:
+            def __init__(self):
+                self.deleted = []
+
+            def delete(self, provider):
+                self.deleted.append(provider)
+
+        store = Store()
+        self.assertEqual(delete_all_credentials(store), ("anthropic", "openai"))
+        self.assertEqual(store.deleted, ["anthropic", "openai"])
+
     def test_environment_store_reads_known_provider(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": " test-key "}):
             self.assertEqual(EnvironmentSecretStore().get("openai"), "test-key")

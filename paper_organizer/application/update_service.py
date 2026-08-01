@@ -17,12 +17,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from paper_organizer.infra.redaction import redact_text
+from paper_organizer.infra.secrets import sanitized_child_environment
+
 
 GITHUB_REPOSITORY = "loselessss/paper-organizer"
 GITHUB_API_URL = (
     f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
 )
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")
+_EXPECTED_PUBLISHER = "SANGKYU SHIN"
 _SHA256_RE = re.compile(r"^sha256:([0-9a-fA-F]{64})$")
 _INSTALLER_RE = re.compile(
     r"^PaperOrganizer_Setup_(\d+\.\d+\.\d+)\.exe$", re.IGNORECASE
@@ -88,10 +92,12 @@ class GitHubUpdateService:
         *,
         opener: Callable[..., Any] = urlopen,
         download_root: Path | None = None,
+        signature_verifier: Callable[[Path], bool] | None = None,
     ) -> None:
         self.current_version = current_version
         self._open = opener
         self._download_root = download_root
+        self._signature_verifier = signature_verifier or _verify_authenticode_publisher
 
     def _downloads_directory(self) -> Path:
         return self._download_root or (
@@ -322,11 +328,50 @@ class GitHubUpdateService:
             or not _INSTALLER_RE.fullmatch(installer.name)
         ):
             raise UpdateError("실행할 업데이트 설치파일이 올바르지 않습니다.")
+        if not self._signature_verifier(installer):
+            raise UpdateError(
+                "업데이트 설치파일의 Authenticode 서명 또는 게시자를 확인할 수 없습니다."
+            )
         try:
             subprocess.Popen(
                 [str(installer), "/SP-", "/CLOSEAPPLICATIONS"],
                 close_fds=True,
+                env=sanitized_child_environment(),
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise UpdateError(f"업데이트 설치파일을 실행하지 못했습니다: {exc}") from None
+            raise UpdateError(
+                f"업데이트 설치파일을 실행하지 못했습니다: {redact_text(exc)}"
+            ) from None
+
+
+def _verify_authenticode_publisher(path: Path) -> bool:
+    """Require a valid Windows signature from the configured publisher."""
+
+    if os.name != "nt":
+        return False
+    script = (
+        "$s=Get-AuthenticodeSignature -LiteralPath $args[0];"
+        "[pscustomobject]@{Status=[string]$s.Status;Subject=[string]$s.SignerCertificate.Subject}"
+        "|ConvertTo-Json -Compress"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+            env=sanitized_child_environment(),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        value = json.loads(completed.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError):
+        return False
+    return (
+        completed.returncode == 0
+        and str(value.get("Status")) == "Valid"
+        and _EXPECTED_PUBLISHER.casefold() in str(value.get("Subject") or "").casefold()
+    )

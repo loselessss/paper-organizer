@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "suite": "real-papers-v1",
+  "privacy": "PDF, title, ground truth, raw prompts and model outputs are intentionally excluded.",
+  "updated_at": "2026-08-01T09:29:07+00:00",
+  "conditions": {
+    "paper_count": 4,
+    "mode": "full",
+    "language": "source",
+    "resource_profile": "balanced",
+    "hardware": "NVIDIA GeForce RTX 3080 Ti / local GPU-first PC"
+  },
+  "models": [
+    {
+      "model": "qwen3.5:2b",
+      "paper_count": 4,
+      "success_count": 4,
+      "mean_score_100": 20.42,
+      "research_mean_score_100": 10.0,
+      "review_mean_score_100": 51.67,
+      "mean_bibliography_score_100": 75.0,
+      "mean_elapsed_seconds": 13.315,
+      "papers": [
+        {
+          "paper_id": "REAL-001",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 50.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 16.087,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 1
+        },
+        {
+          "paper_id": "REAL-002",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 10.53,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 1
+        },
+        {
+          "paper_id": "REAL-003",
+          "paper_type": "review",
+          "status": "ok",
+          "score_100": 51.67,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 15.05,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 1
+        },
+        {
+          "paper_id": "REAL-004",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 50.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 11.594,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 1
+        }
+      ]
+    },
+    {
+      "model": "qwen3.5:4b",
+      "paper_count": 4,
+      "success_count": 4,
+      "mean_score_100": 17.08,
+      "research_mean_score_100": 10.0,
+      "review_mean_score_100": 38.33,
+      "mean_bibliography_score_100": 93.75,
+      "mean_elapsed_seconds": 15.936,
+      "papers": [
+        {
+          "paper_id": "REAL-001",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 18.75,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-002",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 14.691,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-003",
+          "paper_type": "review",
+          "status": "ok",
+          "score_100": 38.33,
+          "bibliography_score_100": 75.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 15.246,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 1
+        },
+        {
+          "paper_id": "REAL-004",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 15.057,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        }
+      ]
+    },
+    {
+      "model": "qwen3:1.7b",
+      "paper_count": 4,
+      "success_count": 4,
+      "mean_score_100": 19.16,
+      "research_mean_score_100": 12.78,
+      "review_mean_score_100": 38.33,
+      "mean_bibliography_score_100": 75.0,
+      "mean_elapsed_seconds": 16.566,
+      "papers": [
+        {
+          "paper_id": "REAL-001",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 23.811,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 2,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-002",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 75.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 13.792,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 1,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-003",
+          "paper_type": "review",
+          "status": "ok",
+          "score_100": 38.33,
+          "bibliography_score_100": 50.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 5.2,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-004",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 18.33,
+          "bibliography_score_100": 75.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 23.46,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 2,
+          "bibliography_retry_count": 0
+        }
+      ]
+    },
+    {
+      "model": "qwen3:4b",
+      "paper_count": 3,
+      "success_count": 3,
+      "mean_score_100": 14.44,
+      "research_mean_score_100": 14.16,
+      "review_mean_score_100": 15.0,
+      "mean_bibliography_score_100": 91.67,
+      "mean_elapsed_seconds": 14.2,
+      "papers": [
+        {
+          "paper_id": "REAL-001",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 10.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 17.761,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-002",
+          "paper_type": "research",
+          "status": "ok",
+          "score_100": 18.33,
+          "bibliography_score_100": 75.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 14.221,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        },
+        {
+          "paper_id": "REAL-003",
+          "paper_type": "review",
+          "status": "ok",
+          "score_100": 15.0,
+          "bibliography_score_100": 100.0,
+          "forbidden_hits": 0,
+          "elapsed_seconds": 10.618,
+          "processor": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "json_retry_count": 0,
+          "bibliography_retry_count": 0
+        }
+      ]
+    }
+  ]
+}

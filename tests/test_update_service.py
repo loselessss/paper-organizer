@@ -251,7 +251,9 @@ class UpdateServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             installer = Path(temp) / "PaperOrganizer_Setup_1.2.0.exe"
             installer.write_bytes(b"MZ")
-            service = GitHubUpdateService("1.1.0")
+            service = GitHubUpdateService(
+                "1.1.0", signature_verifier=lambda _path: True
+            )
 
             with patch(
                 "paper_organizer.application.update_service.subprocess.Popen"
@@ -262,6 +264,19 @@ class UpdateServiceTests(unittest.TestCase):
             self.assertEqual(command[0], str(installer.resolve()))
             self.assertIn("/CLOSEAPPLICATIONS", command)
             self.assertNotIn("shell", popen.call_args.kwargs)
+
+    def test_installer_with_untrusted_publisher_is_not_launched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            installer = Path(temp) / "PaperOrganizer_Setup_1.2.0.exe"
+            installer.write_bytes(b"MZ")
+            service = GitHubUpdateService(
+                "1.1.0", signature_verifier=lambda _path: False
+            )
+            with patch(
+                "paper_organizer.application.update_service.subprocess.Popen"
+            ) as popen, self.assertRaisesRegex(UpdateError, "Authenticode"):
+                service.launch_installer(installer)
+            popen.assert_not_called()
 
 
 if __name__ == "__main__":

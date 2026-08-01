@@ -2276,6 +2276,15 @@ class LibraryWorkflowController:
         curation = record.setdefault("curation", {})
         locked = set(curation.get("locked_fields", []))
         sources = curation.setdefault("field_sources", {})
+        detected_type = execution.preview.document_type
+        if (
+            detected_type in {"patent", "research_paper", "review_paper"}
+            and "document.type" not in locked
+            and sources.get("document.type") != "user"
+        ):
+            record.setdefault("document", {})["type"] = detected_type
+            record.setdefault("detection", {})["document_type"] = detected_type
+            sources["document.type"] = "auto:regex"
         values = {
             "summary": data.summary,
             "research_question": data.research_question,
@@ -3025,6 +3034,29 @@ class LibraryWorkflowController:
             matches.append(entry)
         return matches
 
+    def suggested_document_type(self, entry: LibraryEntry) -> str | None:
+        """Return a deterministic reclassification candidate without changing data."""
+
+        sidecar = entry.sidecar_path.resolve()
+        if sidecar.suffix.casefold() != PAPERPACK_SUFFIX or not sidecar.is_file():
+            return None
+        curation = entry.record.get("curation", {})
+        locked = set(curation.get("locked_fields", [])) if isinstance(curation, dict) else set()
+        sources = curation.get("field_sources", {}) if isinstance(curation, dict) else {}
+        if "document.type" in locked or (
+            isinstance(sources, dict) and sources.get("document.type") == "user"
+        ):
+            return None
+        try:
+            pages = [text for _number, text in content_pages(load_paperpack_content(sidecar))]
+        except (OSError, PaperPackError, TypeError, ValueError):
+            return None
+        candidate = classify_document_type(pages).document_type
+        current = entry.metadata.document_type
+        if current == "paper":
+            current = RESEARCH_PAPER
+        return candidate if candidate != current else None
+
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
 
@@ -3380,6 +3412,7 @@ class LibraryWorkflowController:
             raise LibraryWorkflowError("라이브러리 밖의 색인은 수정할 수 없습니다.")
         current = load_record(sidecar)
         original = json.loads(json.dumps(current))
+        original_metadata = _metadata_from_record(original)
         curation = current.setdefault("curation", {})
         revision = int(curation.get("revision", 0)) + 1
         file_hash = str(current.get("file", {}).get("sha256") or "unknown").replace(":", "-")
@@ -3388,25 +3421,33 @@ class LibraryWorkflowController:
         if is_legacy_sidecar and not backup.exists():
             _atomic_json_write(backup, original)
         _apply_metadata(current, metadata)
+        sources = dict(curation.get("field_sources", {}))
+        changed_fields = {
+            "bibliography.title": metadata.title.strip() != original_metadata.title.strip(),
+            "bibliography.authors": metadata.authors != original_metadata.authors,
+            "bibliography.year": metadata.year != original_metadata.year,
+            "bibliography.venue": metadata.venue.strip() != original_metadata.venue.strip(),
+            "document.type": metadata.document_type != original_metadata.document_type,
+            "patent.office": metadata.patent_office.strip() != original_metadata.patent_office.strip(),
+            "patent.publication_number": metadata.publication_number.strip() != original_metadata.publication_number.strip(),
+            "patent.application_number": metadata.application_number.strip() != original_metadata.application_number.strip(),
+            "patent.assignee": metadata.assignee.strip() != original_metadata.assignee.strip(),
+            "classification.category": metadata.category.strip() != original_metadata.category.strip(),
+            "classification.subcategory": metadata.subcategory.strip() != original_metadata.subcategory.strip(),
+            "classification.tags": metadata.tags != original_metadata.tags,
+            "description.summary": metadata.summary.strip() != original_metadata.summary.strip(),
+        }
+        for field_name, changed in changed_fields.items():
+            if changed:
+                sources[field_name] = "user"
+        locked = set(curation.get("locked_fields", []))
+        if changed_fields["document.type"]:
+            locked.add("document.type")
         curation.update(
             {
                 "revision": revision,
-                "field_sources": {
-                    **curation.get("field_sources", {}),
-                    "bibliography.title": "user",
-                    "bibliography.authors": "user",
-                    "bibliography.year": "user",
-                    "bibliography.venue": "user",
-                    "document.type": "user",
-                    "patent.office": "user",
-                    "patent.publication_number": "user",
-                    "patent.application_number": "user",
-                    "patent.assignee": "user",
-                    "classification.category": "user",
-                    "classification.subcategory": "user",
-                    "classification.tags": "user",
-                    "description.summary": "user",
-                },
+                "field_sources": sources,
+                "locked_fields": sorted(locked),
                 "last_edited_at": _now_iso(),
                 "last_edited_by": "user",
             }

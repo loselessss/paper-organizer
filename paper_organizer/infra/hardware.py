@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from paper_organizer.infra.secrets import sanitized_child_environment
+
 
 @dataclass(frozen=True, slots=True)
 class GpuInfo:
@@ -54,6 +56,7 @@ def _run_command(command: Sequence[str], timeout: float) -> subprocess.Completed
         errors="replace",
         timeout=timeout,
         check=False,
+        env=sanitized_child_environment(),
         creationflags=flags,
     )
 

@@ -32,6 +32,7 @@ from paper_organizer.application.library_workflow import LibraryWorkflowControll
 from paper_organizer.application.library_translation import (
     LibraryTranslationService,
 )
+from paper_organizer.application.selection_ai import SelectionAiService
 from paper_organizer.application.update_service import (
     AvailableUpdate,
     GitHubUpdateService,
@@ -63,6 +64,7 @@ class PaperOrganizerWindow(QMainWindow):
         background_analysis: BackgroundAnalysisService | None = None,
         conversational_search: ConversationalSearchController | None = None,
         library_translation: LibraryTranslationService | None = None,
+        selection_ai: SelectionAiService | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -97,6 +99,7 @@ class PaperOrganizerWindow(QMainWindow):
                 library_workflow,
                 self,
                 translation_service=library_translation,
+                selection_ai=selection_ai,
             )
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
