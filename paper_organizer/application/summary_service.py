@@ -14,7 +14,11 @@ import fitz
 
 from paper_organizer import __version__
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
-from paper_organizer.core.document_type import PATENT, classify_document_type
+from paper_organizer.core.document_type import (
+    PATENT,
+    classify_document_type,
+    detect_document_bundle,
+)
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
     is_generic_document_heading,
@@ -342,6 +346,11 @@ def _prepared_from_chunks(
         re.sub(r"^\[PDF PAGE \d+\]\s*\n?", "", chunk, count=1)
         for chunk in chunks
     ]
+    bundle = detect_document_bundle(page_texts)
+    if bundle.is_multiple:
+        raise SummaryPreparationError(
+            "복수 문서 묶음은 AI 요약하지 않습니다. 문서를 각각 분리한 뒤 다시 분석하세요."
+        )
     document_type = classify_document_type(page_texts).document_type
     is_patent = document_type == PATENT
     if is_patent:

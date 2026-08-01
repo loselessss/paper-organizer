@@ -149,6 +149,7 @@ class FakeWorkflow:
         self.ocr_completed = []
         self.retried = []
         self.waiting_reasons = []
+        self.multiple_document_reason = ""
 
     def analysis_queue(self):
         return [] if self.claimed else [self.item]
@@ -165,6 +166,9 @@ class FakeWorkflow:
 
     def paperpack_needs_ocr(self, path):
         return self.needs_ocr
+
+    def mark_multiple_document_if_needed(self, path):
+        return self.multiple_document_reason
 
     def complete_paperpack_ocr(self, path, *, progress=None):
         if progress is not None:
@@ -202,6 +206,36 @@ class FakeWorkflow:
 
 
 class BackgroundAnalysisTests(unittest.TestCase):
+    def test_multiple_document_bundle_is_removed_without_calling_ai(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
+                settings_path,
+            )
+            workflow = FakeWorkflow(root / "bundle.paperpack")
+            workflow.multiple_document_reason = "서로 다른 문서 표지 2개"
+            summary = FakeSummary(execution(root / "bundle.pdf"))
+            service = BackgroundAnalysisService(
+                workflow,
+                summary,
+                MemorySecrets(),
+                settings_path,
+                ollama=FakeOllama(),
+                memory_available_gb=lambda: 32.0,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "skipped")
+        self.assertEqual(summary.modes, [])
+        self.assertEqual(workflow.removed, [workflow.item.queue_id])
+        self.assertIn("복수 문서", event.message)
+
     def test_immediate_stop_discards_result_and_returns_item_to_waiting_queue(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

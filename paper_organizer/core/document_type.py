@@ -19,6 +19,16 @@ class DocumentTypeDecision:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentBundleDecision:
+    """Describe a conservatively detected collection of complete documents."""
+
+    is_multiple: bool = False
+    document_count: int = 1
+    identifiers: tuple[str, ...] = ()
+    reason: str = ""
+
+
 _US_NUMBER = re.compile(
     r"\bUS\s*(?:\d{4}\s*/\s*\d{4,7}|\d[\d,]{6,11})(?:\s*[A-Z]\d?)?\b",
     re.I,
@@ -26,6 +36,77 @@ _US_NUMBER = re.compile(
 _WO_NUMBER = re.compile(r"\bWO\s*\d{4}\s*/?\s*\d{4,6}\s*[A-Z]\d?\b", re.I)
 _PCT_NUMBER = re.compile(r"\bPCT\s*/\s*[A-Z]{2}\s*\d{4}\s*/\s*\d{4,6}\b", re.I)
 _KR_NUMBER = re.compile(r"(?:\b10\s*[-–]\s*\d{4}\s*[-–]\s*\d{4,7}\b|\b10\s*[-–]\s*\d{6,10}\b)")
+_DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.I)
+
+
+def detect_document_bundle(page_texts: Iterable[str]) -> DocumentBundleDecision:
+    """Detect multiple complete title pages without counting cited identifiers."""
+
+    patent_fronts: list[str] = []
+    academic_fronts: list[str] = []
+    for page in page_texts:
+        front = page[:8_000]
+        folded = front.casefold()
+        inid_title = bool(
+            re.search(r"(?m)^\s*[\[(](?:11|12|19|21|43|45|54)[\])]", front)
+        )
+        patent_heading = any(
+            marker in folded
+            for marker in (
+                "united states patent",
+                "patent application publication",
+                "world intellectual property organization",
+                "patent cooperation treaty",
+                "대한민국특허청",
+                "공개특허공보",
+                "등록특허공보",
+            )
+        )
+        if patent_heading and inid_title:
+            primary = _primary_patent_identifier(front)
+            if primary and primary not in patent_fronts:
+                patent_fronts.append(primary)
+            continue
+
+        # A DOI alone is common in references and running headers. Requiring an
+        # abstract heading on the same page makes this a conservative title-page test.
+        if re.search(r"(?im)^\s*(?:abstract|초록|요약)\s*[:.]?\s*$", front):
+            doi = _DOI.search(front)
+            if doi:
+                normalized = doi.group(0).rstrip(".,;)]}").casefold()
+                if normalized not in academic_fronts:
+                    academic_fronts.append(normalized)
+
+    identifiers = tuple(patent_fronts + academic_fronts)
+    count = len(identifiers)
+    if count < 2:
+        return DocumentBundleDecision()
+    return DocumentBundleDecision(
+        is_multiple=True,
+        document_count=count,
+        identifiers=identifiers,
+        reason=f"서로 다른 문서 표지 {count}개를 확인했습니다: {', '.join(identifiers)}",
+    )
+
+
+def _primary_patent_identifier(text: str) -> str:
+    """Return one publication/registration identity from a patent title page."""
+
+    inid = re.search(
+        r"(?im)^\s*[\[(]11[\])]\s*(?:등록번호|publication number)?\s*([^\n]+)",
+        text,
+    )
+    candidates = (inid.group(1),) if inid else (text,)
+    for candidate in candidates:
+        for regex in (_US_NUMBER, _WO_NUMBER, _PCT_NUMBER, _KR_NUMBER):
+            match = regex.search(candidate)
+            if match:
+                return (
+                    " ".join(match.group(0).split())
+                    .upper()
+                    .replace("–", "-")
+                )
+    return ""
 
 
 def classify_document_type(page_texts: Iterable[str]) -> DocumentTypeDecision:

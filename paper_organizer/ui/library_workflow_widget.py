@@ -235,6 +235,7 @@ class _AnalysisQueueDropTable(QTableWidget):
 _DETECTION_LABELS = {
     "academic_likely": "학술 논문",
     "patent_likely": "특허",
+    "multiple_documents": "복수 문서",
     "needs_ocr": "OCR 필요",
     "needs_review": "검토 필요",
 }
@@ -432,6 +433,7 @@ class _BackgroundAnalysisWorker(QThread):
             if result.state in {
                 "completed",
                 "translation_completed",
+                "skipped",
                 "cancelled",
                 "failed",
                 "ocr_completed",
@@ -441,14 +443,14 @@ class _BackgroundAnalysisWorker(QThread):
                 break
             if (
                 result.state
-                in {"completed", "translation_completed", "cancelled", "failed"}
+                in {"completed", "translation_completed", "skipped", "cancelled", "failed"}
                 and immediate_this_run
                 and self._immediate_remaining
             ):
                 self._immediate_remaining -= 1
             if (
                 result.state
-                in {"completed", "translation_completed", "cancelled", "failed"}
+                in {"completed", "translation_completed", "skipped", "cancelled", "failed"}
                 and self._immediate_remaining
             ):
                 continue
@@ -1791,6 +1793,7 @@ class LibraryWidget(QWidget):
                     "organized_pending_analysis": "대기",
                     "analyzing": "중",
                     "failed": "실패",
+                    "skipped_multi_document": "복수 문서 · 요약 제외",
                 }.get(
                     queue_item.status if queue_item else stored_status,
                     version_label or "—",
@@ -2103,6 +2106,20 @@ class LibraryWidget(QWidget):
             if analysis.get("status") == "failed"
             else {}
         )
+        if workflow_status == "skipped_multi_document":
+            reason = str(
+                entry.record.get("workflow", {}).get("review_reason") or ""
+            ).strip()
+            sections.append(
+                "<h3 style='color:#875f00'>복수 문서 묶음 · AI 요약 제외</h3>"
+                "<p>서로 다른 문서가 한 PDF에 들어 있어 AI 요약을 실행하지 않습니다. "
+                "필요하면 문서를 각각 분리한 뒤 다시 가져오세요.</p>"
+            )
+            if reason:
+                sections.append(
+                    f"<p style='color:#777'>감지 근거: {esc(reason)}</p>"
+                )
+            failed_attempt = {}
         if workflow_status == "failed" or failed_attempt:
             error = str(failed_attempt.get("error") or "").strip()
             fallback = failed_attempt.get("fallback") or analysis.get("fallback") or {}

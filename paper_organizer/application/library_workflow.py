@@ -43,7 +43,12 @@ from paper_organizer.core.classifier import (
     taxonomy_category_names,
 )
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
-from paper_organizer.core.document_type import PATENT, RESEARCH_PAPER, classify_document_type
+from paper_organizer.core.document_type import (
+    PATENT,
+    RESEARCH_PAPER,
+    classify_document_type,
+    detect_document_bundle,
+)
 from paper_organizer.core.document_identity import (
     PdfIdentityError,
     build_identity_from_pages,
@@ -888,6 +893,9 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
     text = " ".join(page_texts).casefold()
     if len(text.strip()) < 500:
         return "needs_ocr", "추출된 본문이 너무 적어 OCR 또는 수동 확인이 필요합니다."
+    bundle = detect_document_bundle(page_texts)
+    if bundle.is_multiple:
+        return "multiple_documents", bundle.reason
     decision = classify_document_type(page_texts)
     if decision.document_type == PATENT:
         return "patent_likely", decision.reason
@@ -1668,12 +1676,16 @@ class LibraryWorkflowController:
             except OSError as exc:
                 warnings.append(f"입력 PDF 처리 기록: {exc}")
         try:
-            self._queue().relocate(
-                item.identity.file_sha256,
-                destination,
-                status="organized_pending_analysis",
-                title=metadata.title,
-            )
+            if item.detection_status == "multiple_documents":
+                self._queue().remove(f"sha256:{item.identity.file_sha256}")
+                warnings.append("복수 문서 묶음으로 감지되어 AI 요약을 건너뜁니다.")
+            else:
+                self._queue().relocate(
+                    item.identity.file_sha256,
+                    destination,
+                    status="organized_pending_analysis",
+                    title=metadata.title,
+                )
         except (OSError, AnalysisQueueError) as exc:
             warnings.append(f"분석 큐: {exc}")
         index_warning = self._index_search_entry(destination)
@@ -2073,6 +2085,12 @@ class LibraryWorkflowController:
             file_sha256 = str(entry.record.get("file", {}).get("sha256") or "").strip()
             if not file_sha256 or not entry.sidecar_path.is_file():
                 problems.append(f"{title}: PaperPack 또는 파일 식별자가 없습니다.")
+                continue
+            bundle_reason = self.mark_multiple_document_if_needed(
+                entry.sidecar_path
+            )
+            if bundle_reason:
+                problems.append(f"{title}: 복수 문서 묶음이라 요약하지 않습니다.")
                 continue
             queue_id = f"sha256:{file_sha256}"
             existing = current.get(queue_id)
@@ -2511,6 +2529,61 @@ class LibraryWorkflowController:
             return int(content.get("character_count", 0)) < 500
         except (OSError, TypeError, ValueError, PaperPackError):
             return False
+
+    def mark_multiple_document_if_needed(self, path: Path) -> str:
+        """Persist a bundle marker and return its summary-block reason."""
+
+        source = path.expanduser().resolve()
+        if source.suffix.casefold() != PAPERPACK_SUFFIX or not source.is_file():
+            return ""
+        try:
+            pages = [
+                text
+                for _number, text in content_pages(load_paperpack_content(source))
+            ]
+            bundle = detect_document_bundle(pages)
+            if not bundle.is_multiple:
+                return ""
+            record = load_paperpack_metadata(source)
+            detection = record.setdefault("detection", {})
+            workflow = record.setdefault("workflow", {})
+            changed = (
+                detection.get("is_multi_document") is not True
+                or detection.get("document_count") != bundle.document_count
+                or detection.get("document_identifiers") != list(bundle.identifiers)
+                or workflow.get("analysis_status") != "skipped_multi_document"
+                or workflow.get("review_reason") != bundle.reason
+            )
+            detection.update(
+                {
+                    "is_multi_document": True,
+                    "document_count": bundle.document_count,
+                    "document_identifiers": list(bundle.identifiers),
+                    "reason": bundle.reason,
+                }
+            )
+            workflow.update(
+                {
+                    "analysis_status": "skipped_multi_document",
+                    "needs_review": True,
+                    "needs_reanalysis": False,
+                    "review_reason": bundle.reason,
+                    "updated_at": _now_iso(),
+                }
+            )
+            if changed:
+                update_paperpack(
+                    source,
+                    record,
+                    changed_by="auto:document-bundle",
+                )
+                _input_dir, root = self.configured_paths()
+                rebuild_library_index(root)
+                self._index_search_entry(source)
+                self._library_cache = None
+            return bundle.reason
+        except (OSError, TypeError, ValueError, PaperPackError):
+            return ""
 
     def complete_paperpack_ocr(
         self,
@@ -3611,6 +3684,8 @@ def _new_sidecar(
     now = _now_iso()
     identity = item.identity.to_dict()
     identity["doi"] = item.identity.doi
+    bundle = detect_document_bundle(item.page_texts)
+    multiple_documents = bundle.is_multiple
     record: dict[str, Any] = {
         "schema_version": 2,
         "id": item.identity.file_id,
@@ -3644,6 +3719,9 @@ def _new_sidecar(
         "detection": {
             "is_academic_paper": item.detection_status == "academic_likely",
             "is_patent": item.detection_status == "patent_likely",
+            "is_multi_document": multiple_documents,
+            "document_count": bundle.document_count,
+            "document_identifiers": list(bundle.identifiers),
             "document_type": metadata.document_type,
             "confidence": 0.85 if _is_supported_document(item.detection_status) else 0.0,
             "reason": item.detection_reason,
@@ -3652,6 +3730,10 @@ def _new_sidecar(
             "status": "organized",
             "needs_review": not _is_supported_document(item.detection_status),
             "review_reason": "" if _is_supported_document(item.detection_status) else item.detection_reason,
+            "analysis_status": (
+                "skipped_multi_document" if multiple_documents else ""
+            ),
+            "needs_reanalysis": False if multiple_documents else True,
             "processed_at": now,
             "updated_at": now,
         },

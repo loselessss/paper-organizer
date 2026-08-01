@@ -2,7 +2,10 @@
 
 import unittest
 
-from paper_organizer.core.document_type import classify_document_type
+from paper_organizer.core.document_type import (
+    classify_document_type,
+    detect_document_bundle,
+)
 
 
 class DocumentTypeTests(unittest.TestCase):
@@ -23,6 +26,40 @@ class DocumentTypeTests(unittest.TestCase):
     def test_review_is_marked_before_summarization(self) -> None:
         text = "A systematic review and meta-analysis\nAbstract\nThis review synthesizes evidence."
         self.assertEqual(classify_document_type([text]).document_type, "review_paper")
+
+    def test_two_korean_patent_title_pages_are_a_bundle(self) -> None:
+        first = (
+            "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
+            "(11) 등록번호 10-2052132\n(54) 발명의 명칭 첫 번째 발명"
+        )
+        second = (
+            "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
+            "(11) 등록번호 10-1717214\n(54) 발명의 명칭 두 번째 발명"
+        )
+
+        decision = detect_document_bundle([first, "본문", second])
+
+        self.assertTrue(decision.is_multiple)
+        self.assertEqual(decision.document_count, 2)
+        self.assertEqual(decision.identifiers, ("10-2052132", "10-1717214"))
+
+    def test_one_patent_with_application_and_publication_numbers_is_not_bundle(self) -> None:
+        page = (
+            "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
+            "(11) 등록번호 10-2052132\n(21) 출원번호 10-2017-0092335\n"
+            "(65) 공개번호 10-2019-0010087"
+        )
+
+        self.assertFalse(detect_document_bundle([page, "청구항 본문"]).is_multiple)
+
+    def test_two_doi_abstract_title_pages_are_a_bundle(self) -> None:
+        first = "First article\ndoi: 10.1000/first\nAbstract\nFirst abstract text."
+        second = "Second article\ndoi: 10.1000/second\nAbstract\nSecond abstract text."
+
+        decision = detect_document_bundle([first, "body", second])
+
+        self.assertTrue(decision.is_multiple)
+        self.assertEqual(decision.document_count, 2)
 
 
 if __name__ == "__main__":

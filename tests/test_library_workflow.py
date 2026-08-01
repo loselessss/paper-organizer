@@ -116,6 +116,39 @@ class LibraryWorkflowTests(unittest.TestCase):
                 ["A. Researcher", "B. Scientist"],
             )
 
+    def test_multiple_document_bundle_is_marked_and_not_queued_for_summary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            pages = [
+                "(19) United States Patent\n(12) Patent Grant\n"
+                "(11) US 12,345,678 B2\n(54) FIRST INVENTION\n"
+                + "Detailed description and abstract for the first patent. " * 20,
+                "Claims and examples for the first invention. " * 30,
+                "(19) United States Patent\n(12) Patent Grant\n"
+                "(11) US 12,345,679 B2\n(54) SECOND INVENTION\n"
+                + "Detailed description and abstract for the second patent. " * 20,
+            ]
+            write_pdf(input_dir / "employment-patents.pdf", pages)
+
+            result = self._scan_twice(controller)
+
+            self.assertEqual(result.items[0].detection_status, "multiple_documents")
+            metadata = controller.suggest_metadata(result.items[0])
+            organized = controller.organize(
+                result.items[0], metadata, field_source="user"
+            )
+            record = load_paperpack_metadata(organized.sidecar_path)
+            self.assertTrue(record["detection"]["is_multi_document"])
+            self.assertEqual(record["detection"]["document_count"], 2)
+            self.assertEqual(
+                record["workflow"]["analysis_status"],
+                "skipped_multi_document",
+            )
+            self.assertTrue(record["workflow"]["needs_review"])
+            self.assertEqual(controller.analysis_queue(), [])
+            self.assertIn("AI 요약을 건너뜁니다", organized.warning)
+
     def test_discovery_ocr_uses_first_five_pages_and_disk_cache(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

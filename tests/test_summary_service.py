@@ -119,6 +119,22 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_multiple_documents_are_rejected_before_ai_summary(self) -> None:
+        pages = [
+            "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
+            "(11) 등록번호 10-2052132\n(54) 첫 번째 발명",
+            "첫 번째 발명의 본문",
+            "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"
+            "(11) 등록번호 10-1717214\n(54) 두 번째 발명",
+        ]
+
+        with self.assertRaisesRegex(SummaryPreparationError, "복수 문서"):
+            prepare_text_summary(
+                Path("bundle.pdf"),
+                pages,
+                AppSettings(selected_model="qwen3.5:4b"),
+            )
+
     def test_invalid_json_is_retried_once_with_stricter_instructions(self):
         class InvalidThenValidClient:
             def __init__(self):

@@ -180,6 +180,24 @@ class BackgroundAnalysisService:
             return AnalysisRunEvent("idle", "분석할 정리된 논문이 없습니다.")
         next_item = pending[0]
         queued_path = Path(next_item.path)
+        marker = getattr(
+            self._workflow,
+            "mark_multiple_document_if_needed",
+            None,
+        )
+        bundle_reason = (
+            marker(queued_path)
+            if next_item.task_type == "analysis" and marker is not None
+            else ""
+        )
+        if bundle_reason:
+            self._workflow.remove_from_queue(next_item.queue_id)
+            return AnalysisRunEvent(
+                "skipped",
+                f"{next_item.title}: 복수 문서 묶음으로 표시하고 AI 요약을 건너뛰었습니다.",
+                next_item.queue_id,
+                next_item.title,
+            )
         if (
             next_item.task_type == "analysis"
             and self._workflow.paperpack_needs_ocr(queued_path)
