@@ -177,6 +177,37 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("rather than a new controlled experiment", instructions)
         self.assertIn("evidence gaps in summary", instructions)
 
+    def test_research_section_preserves_complete_numeric_comparisons(self):
+        instructions = system_instructions(
+            SummaryRequest(
+                document_text="results section",
+                document_type="research_paper",
+                stage="section",
+            )
+        )
+
+        self.assertIn("complete result comparisons", instructions)
+        self.assertIn("exact numeric values and units", instructions)
+        self.assertIn("at most 160 words", instructions)
+        self.assertIn("copyright or license text", instructions)
+        self.assertIn("primary research paper", instructions)
+
+    def test_research_synthesis_prioritizes_endpoints_over_background(self):
+        instructions = system_instructions(
+            SummaryRequest(
+                document_text="section summaries",
+                document_type="research_paper",
+                stage="synthesis",
+                advanced_analysis=False,
+            )
+        )
+
+        self.assertIn("tested question in research_question", instructions)
+        self.assertIn("Limit background to at most one sentence", instructions)
+        self.assertIn("at least three evidence-dense result sentences", instructions)
+        self.assertIn("every distinct primary endpoint", instructions)
+        self.assertIn("experimental limitations in summary", instructions)
+
 
 class AiClassificationTests(unittest.TestCase):
     def test_patent_ignores_ai_journal_venue(self):

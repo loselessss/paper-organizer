@@ -164,6 +164,18 @@ REVIEW_SUMMARY_INSTRUCTIONS = (
     "as this paper's authors or isolated cited findings as the review's own experiment."
 )
 
+RESEARCH_SUMMARY_INSTRUCTIONS = (
+    " This document is a primary research paper. Put the tested question or hypothesis "
+    "in research_question. Use methods for the essential experimental design: named "
+    "subjects or materials, engineered constructs or treatments, controls or comparators, "
+    "conditions, measurements, and analysis. In summary, prioritize the paper's own "
+    "results over background and procedural detail. Preserve each distinct primary "
+    "endpoint, exact value and unit, direction of change, fold or percentage comparison, "
+    "time point, control or baseline, and supported application. Keep negative or null "
+    "results and explicit caveats. Never promote an introduction claim, cited study, or "
+    "authors' expectation into this paper's finding."
+)
+
 SEARCH_PLAN_INSTRUCTIONS = (
     "You prepare literal full-text searches for an academic paper library. "
     "Do not answer the question. Return 3 to 8 short search_queries, each one "
@@ -213,7 +225,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v9-direct"
+    prompt_version: str = "paper-summary-v10-direct"
     allowed_categories: tuple[str, ...] = ()
     context_window: int | None = None
     output_language: str = "ko"
@@ -500,15 +512,22 @@ def system_instructions(request: SummaryRequest) -> str:
             "the review's concrete subjects, mechanisms, strategies, relationships, "
             "applications, conclusions, explicit methods, conflicts, and gaps"
             if request.document_type == "review_paper"
-            else "the research purpose, methods, findings, numeric values, and negations"
+            else "the tested question, essential design, named materials or subjects, "
+            "controls, endpoints, complete result comparisons, exact numeric values and "
+            "units, time points, and negations"
         )
-        word_limit = 150 if request.document_type == "review_paper" else 120
+        word_limit = 150 if request.document_type == "review_paper" else 160
         return (
             f"{language} Use only the supplied labeled paper section. Return plain "
             f"text only, not JSON or markdown. In at most {word_limit} words, preserve "
             f"{evidence_focus} that "
-            "are actually present. Do not infer from other sections. Ignore reference, "
-            f"bibliography, and works-cited entries.{patent}{review}{retry}"
+            "are actually present. Copy precise technical noun phrases and complete "
+            "result comparisons rather than replacing them with generic prose. Do not "
+            "infer from other sections. Ignore reference, bibliography, and works-cited "
+            "entries. Ignore publisher headers, copyright or license text, DOI and web "
+            "addresses, and received or accepted dates; these are not methods or evidence."
+            f"{RESEARCH_SUMMARY_INSTRUCTIONS if request.document_type == 'research_paper' else ''}"
+            f"{patent}{review}{retry}"
         )
 
     if request.output_language == "ko":
@@ -558,11 +577,27 @@ def system_instructions(request: SummaryRequest) -> str:
                 f"{review_destination} Never invent details absent from every section summary."
             )
         else:
+            research_destination = (
+                "Put supported contributions in contributions and explicit experimental "
+                "limitations in limitations."
+                if request.advanced_analysis
+                else "The compact schema omits contributions and limitations, so preserve "
+                "supported applications and explicit experimental limitations in summary."
+            )
             stage = (
-                " This is the final pass over evidence summaries produced independently "
-                "from paper sections. Reconcile them into one coherent paper summary. Preserve "
-                "numeric values and negations, distinguish results from discussion, and never "
-                "invent details omitted by every section summary."
+                " This is the final pass over evidence summaries from a primary research "
+                "paper. Reconcile them into one coherent account without replacing precise "
+                "evidence with generic prose. Put the tested question in research_question "
+                "and the essential experimental design, subjects or materials, treatments, "
+                "controls, conditions, and measurements in methods. Limit background to at "
+                "most one sentence. In summary, state the central approach briefly and then "
+                "write at least three evidence-dense result sentences before interpretation. "
+                "Preserve every distinct primary endpoint and comparison separately, including "
+                "exact values, units, fold or percentage changes, time points, controls, "
+                "baselines, negative results, and whether evidence is in vitro, ex vivo, animal, "
+                "or clinical. Distinguish measured results from discussion and proposed "
+                f"applications. {research_destination} Never invent details omitted by every "
+                "section summary or use cited studies as this paper's results."
             )
     json_retry = (
         " The previous response was not one complete valid JSON object. Retry "
@@ -625,6 +660,7 @@ def system_instructions(request: SummaryRequest) -> str:
         f"{json_repair}{language_retry}{analysis_scope}"
         f"{PATENT_SUMMARY_INSTRUCTIONS if request.is_patent else ''}"
         f"{REVIEW_SUMMARY_INSTRUCTIONS if request.document_type == 'review_paper' else ''}"
+        f"{RESEARCH_SUMMARY_INSTRUCTIONS if request.document_type == 'research_paper' else ''}"
         f"{classification}"
         f"{language_reminder}"
     )

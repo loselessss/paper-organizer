@@ -45,6 +45,7 @@ class PublishPrivateScoresTests(unittest.TestCase):
                 hardware_label="Test GPU / RAM 16GB",
             )
             text = output.read_text(encoding="utf-8")
+            published = json.loads(text)
 
         self.assertEqual(runs[0]["mean_score_100"], 80)
         self.assertEqual(runs[0]["research_mean_score_100"], 80)
@@ -53,6 +54,7 @@ class PublishPrivateScoresTests(unittest.TestCase):
         self.assertNotIn("Private title", text)
         self.assertNotIn("Private model output", text)
         self.assertNotIn(str(root), text)
+        self.assertEqual(published["conditions"]["paper_count"], 1)
 
 
 if __name__ == "__main__":

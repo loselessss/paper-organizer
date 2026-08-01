@@ -27,6 +27,14 @@ class DocumentTypeTests(unittest.TestCase):
         text = "A systematic review and meta-analysis\nAbstract\nThis review synthesizes evidence."
         self.assertEqual(classify_document_type([text]).document_type, "review_paper")
 
+    def test_review_of_phrase_in_title_is_marked_as_review(self) -> None:
+        text = (
+            "Food exposure assessment: a review of hazard characterisation\n"
+            "Abstract\nThis paper reviews evidence for a public-health assessment."
+        )
+
+        self.assertEqual(classify_document_type([text]).document_type, "review_paper")
+
     def test_two_korean_patent_title_pages_are_a_bundle(self) -> None:
         first = (
             "(19) 대한민국특허청(KR)\n(12) 등록특허공보(B1)\n"

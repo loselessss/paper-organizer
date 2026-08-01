@@ -28,7 +28,7 @@ _SECTION_PATTERNS = {
         r"experimental(?:\s+procedures?)?|methodology|patients?\s+and\s+methods?|"
         r"재료\s*(?:및|와)\s*방법|연구\s*방법|실험\s*방법"
     ),
-    "results": r"results?|findings|결과",
+    "results": r"results?(?:\s+(?:and|&)\s+discussion)?|findings|결과(?:\s*및\s*고찰)?",
     "discussion": r"discussion|고찰|논의",
     "conclusion": r"conclusions?|concluding\s+remarks|결론",
     "references": (
@@ -56,10 +56,58 @@ _PAGE_NUMBER_RE = re.compile(
 )
 _DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_QUANTITATIVE_VALUE_RE = re.compile(
+    r"(?<![\w.])(?:about|approximately|roughly|nearly|up\s+to|~|≈|[<>≤≥])?\s*"
+    r"\d+(?:[.,]\d+)?\s*(?:[-‐‑–]\s*)?"
+    r"(?:%|percent|percentage\s+points?|fold|times?|"
+    r"(?:[fpnumkµμ]?g|mol|M|mM|µM|μM|nM|L|mL|µL|μL)(?:\s*/\s*[A-Za-z0-9µμ]+)?|"
+    r"cfu(?:\s*/\s*[A-Za-z]+)?|cells?(?:\s*/\s*[A-Za-z]+)?|"
+    r"h(?:ours?)?|min(?:utes?)?|s(?:econds?)?|days?|weeks?|months?|years?|°\s*C|℃)"
+    r"(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_RESULT_CUE_RE = re.compile(
+    r"\b(?:increase[ds]?|decrease[ds]?|reduce[ds]?|improve[ds]?|enhance[ds]?|"
+    r"higher|lower|greater|less|more|versus|vs\.?|compared\s+(?:with|to)|"
+    r"retain(?:ed|s)?|produce[ds]?|reach(?:ed|es)?|"
+    r"achieve[ds]?|yield(?:ed|s)?|degrad(?:e[ds]?|ation)|decolori[sz](?:e[ds]?|ation)|"
+    r"activity|efficiency|rate|concentration|level|amount|output|"
+    r"증가|감소|향상|개선|저하|높|낮|대비|비교|생산|도달|유지|분해|활성|효율|농도)"
+    r"(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_PROCEDURAL_SENTENCE_RE = re.compile(
+    r"\b(?:to\s+(?:assess|measure|determine|evaluate|test)|"
+    r"(?:was|were)\s+(?:performed|assessed|measured|stored|incubated|applied|used|"
+    r"renewed|adjusted|filled)|"
+    r"previous\s+(?:research|stud(?:y|ies)|work)|"
+    r"측정하기\s+위해|평가하기\s+위해|실험을\s+위해)\b",
+    re.IGNORECASE,
+)
+_PRIMARY_OUTCOME_RE = re.compile(
+    r"\b(?:produc(?:e[ds]?|tion)|yield(?:ed|s)?|accumulat(?:e[ds]?|ion)|"
+    r"degrad(?:e[ds]?|ation)|decolori[sz](?:e[ds]?|ation)|granules?|"
+    r"survival|mortality|viability|efficacy|response|"
+    r"생산(?:량)?|수율|축적|분해(?:율)?|탈색|생존|사망|효능|반응)\b",
+    re.IGNORECASE,
+)
+_COMPARISON_CUE_RE = re.compile(
+    r"\b(?:than|compared\s+(?:with|to)|versus|vs\.?|control|fold|while|"
+    r"대비|비교|대조군|배)\b",
+    re.IGNORECASE,
+)
 _FIGURE_CAPTION_RE = re.compile(
     r"^\s*(?:(?:supplementary|supporting)\s+)?"
     r"(?:fig(?:ure)?\.?|table)\s*[A-Z]?\d+(?:[.\-:]\d+)*\b"
     r"|^\s*(?:그림|도표|표)\s*\d+(?:[.\-:]\d+)*\b",
+    re.IGNORECASE,
+)
+_PUBLISHER_PROOF_RE = re.compile(
+    r"^\s*(?:journal\s+pre[- ]?proof|article\s+in\s+press|"
+    r"uncorrected\s+(?:author'?s?\s+)?proof|proof\s+copy|"
+    r"(?:author\s+)?accepted\s+manuscript|in\s+press|"
+    r"this\s+is\s+(?:an?\s+)?(?:un)?edited\s+manuscript\s+accepted\s+for\s+publication.*|"
+    r"please\s+cite\s+this\s+article\s+as\s*:?.*)\s*$",
     re.IGNORECASE,
 )
 _GENERIC_DOCUMENT_HEADING_RE = re.compile(
@@ -109,6 +157,21 @@ def remove_figure_and_table_captions(page_texts: Sequence[str]) -> tuple[str, ..
     )
 
 
+def remove_publisher_proof_boilerplate(
+    page_texts: Sequence[str],
+) -> tuple[str, ...]:
+    """Drop publisher proof watermarks without removing scientific uses of proof."""
+
+    return tuple(
+        "\n".join(
+            line
+            for line in str(text or "").splitlines()
+            if not _PUBLISHER_PROOF_RE.fullmatch(line.strip())
+        )
+        for text in page_texts
+    )
+
+
 def preprocess_paper_text(
     page_texts: Sequence[str],
     *,
@@ -125,7 +188,7 @@ def preprocess_paper_text(
     )
     cleaned_pages = _trim_reference_tail(cleaned_pages)
     sections = _detect_sections(cleaned_pages, numbers)
-    facts = _regex_facts(cleaned_pages)
+    facts = _regex_facts(cleaned_pages, sections)
     if sections:
         included_pages = tuple(
             dict.fromkeys(page for section in sections for page in section.pdf_pages)
@@ -188,6 +251,8 @@ def _clean_page(text: str, repeated: frozenset[str]) -> str:
         line = raw.strip()
         if not line or _PAGE_NUMBER_RE.fullmatch(line):
             kept.append("")
+            continue
+        if _PUBLISHER_PROOF_RE.fullmatch(line):
             continue
         if _line_key(line) in repeated:
             continue
@@ -310,7 +375,9 @@ def _paragraphs(text: str, *, maximum_chars: int = 1_600) -> tuple[str, ...]:
     return tuple(paragraphs)
 
 
-def _regex_facts(pages: Sequence[str]) -> tuple[str, ...]:
+def _regex_facts(
+    pages: Sequence[str], sections: Sequence[SectionContext]
+) -> tuple[str, ...]:
     front = "\n".join(pages[:2])
     facts: list[str] = []
     dois = tuple(dict.fromkeys(match.group(0).rstrip(".,;") for match in _DOI_RE.finditer(front)))
@@ -319,7 +386,91 @@ def _regex_facts(pages: Sequence[str]) -> tuple[str, ...]:
         facts.append("DOI candidates: " + ", ".join(dois[:3]))
     if years:
         facts.append("Year candidates: " + ", ".join(years[:5]))
+    quantitative_results = _quantitative_result_candidates(sections)
+    if quantitative_results:
+        facts.append(
+            "Quantitative result candidates (verbatim; verify context): "
+            + " | ".join(quantitative_results)
+        )
     return tuple(facts)
+
+
+def _quantitative_result_candidates(
+    sections: Sequence[SectionContext], *, maximum: int = 8
+) -> tuple[str, ...]:
+    """Return evidence-like numeric sentences, excluding methods and references."""
+
+    candidates: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    # Some two-column PDFs extract the abstract after an early Introduction
+    # heading, so introduction remains eligible; explicit procedural and cited-
+    # study cues below keep ordinary background measurements out.
+    eligible = {
+        "front", "abstract", "introduction", "results", "discussion", "conclusion"
+    }
+    for section in sections:
+        if section.name not in eligible:
+            continue
+        for paragraph in section.paragraphs:
+            sentences = re.split(
+                r"(?<!Fig\.)(?<!fig\.)(?<!\bal\.)(?<=[.!?])\s+(?=[A-Z0-9가-힣(])",
+                paragraph,
+            )
+            for sentence in sentences:
+                value = " ".join(sentence.split()).strip()
+                if not (25 <= len(value) <= 500):
+                    continue
+                if not _QUANTITATIVE_VALUE_RE.search(value):
+                    continue
+                if not _RESULT_CUE_RE.search(value):
+                    continue
+                if _PROCEDURAL_SENTENCE_RE.search(value):
+                    continue
+                if re.search(
+                    r"\([A-Z][A-Za-z'’-]+(?:\s+et\s+al\.)?,?\s+(?:19|20)\d{2}\)",
+                    value,
+                ):
+                    continue
+                value = re.sub(r"\s*\[(?:\d+(?:\s*[-,]\s*\d+)*)\]\s*$", "", value)
+                value = re.sub(
+                    r"\s*\((?:supplementary\s+)?(?:Fig|Table)\.?\s*[A-Z]?\d+"
+                    r"(?:[.\-:]\d+)*\)\.?\s*$",
+                    "",
+                    value,
+                    flags=re.I,
+                )
+                value = re.sub(r"\s*\((?:Fig|Table)\.?\s*$", "", value, flags=re.I)
+                if value in seen:
+                    continue
+                seen.add(value)
+                priority = _quantitative_candidate_priority(section.name, value)
+                candidates.append((priority, len(candidates), value))
+    selected = sorted(candidates, key=lambda item: (-item[0], item[1]))[:maximum]
+    selected.sort(key=lambda item: item[1])
+    return tuple(value for _priority, _index, value in selected)
+
+
+def _quantitative_candidate_priority(section_name: str, value: str) -> int:
+    """Rank likely endpoints above setup, intermediate, and background values."""
+
+    priority = 0
+    if section_name in {"front", "abstract", "conclusion"}:
+        priority += 4
+    elif section_name == "results":
+        priority += 1
+    if _PRIMARY_OUTCOME_RE.search(value):
+        priority += 4
+    if _COMPARISON_CUE_RE.search(value):
+        priority += 3
+    if len(_QUANTITATIVE_VALUE_RE.findall(value)) >= 2:
+        priority += 2
+    if re.search(r"\b(?:no|not|without|did\s+not|없|않)\b", value, re.I):
+        priority += 1
+    if re.search(r"\bas\s+a\s+result\b", value, re.I):
+        priority += 1
+    if len(value) > 350:
+        priority -= 1
+    return priority
 
 
 def _render_context(

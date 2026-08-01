@@ -3,6 +3,7 @@ import unittest
 from paper_organizer.application.summary_preprocessing import (
     preprocess_paper_text,
     remove_figure_and_table_captions,
+    remove_publisher_proof_boilerplate,
 )
 
 
@@ -61,6 +62,48 @@ class SummaryPreprocessingTests(unittest.TestCase):
         )
         self.assertTrue(prepared.text.startswith("[REGEX-VALIDATED CANDIDATES]"))
 
+    def test_regex_candidates_preserve_complete_quantitative_results(self):
+        pages = [
+            "Abstract\nThe complex was evaluated against the free enzyme.",
+            "Materials and Methods\nCells were incubated at 37 °C for 24 h.",
+            "Results\nThe scaffolded complex degraded 45.12% melanin after 4 hours, "
+            "compared with 6.70% for laccase alone, a 6.73-fold increase.\n"
+            "PHB production reached 14.2 g/L after 72 hours [19].",
+            "References\nA cited culture produced 99.0 g/L after 10 hours.",
+        ]
+
+        prepared = preprocess_paper_text(pages)
+        result_fact = next(
+            fact
+            for fact in prepared.regex_facts
+            if fact.startswith("Quantitative result candidates")
+        )
+
+        self.assertIn("45.12%", result_fact)
+        self.assertIn("compared with 6.70%", result_fact)
+        self.assertIn("6.73-fold", result_fact)
+        self.assertIn("14.2 g/L after 72 hours", result_fact)
+        self.assertNotIn("37 °C", result_fact)
+        self.assertNotIn("99.0 g/L", result_fact)
+
+    def test_results_and_discussion_heading_is_detected_as_results(self):
+        prepared = preprocess_paper_text(
+            [
+                "1. Introduction\nThe study question is stated.",
+                "2. Materials and methods\nCells were prepared.",
+                "3. Results and discussion\nThe treated group produced 4.5-fold "
+                "more PHB than the control after 72 h.",
+                "4. Conclusion\nThe treatment improved PHB production.",
+            ]
+        )
+
+        self.assertEqual(
+            [section.name for section in prepared.sections],
+            ["introduction", "methods", "results", "conclusion"],
+        )
+        self.assertIn("4.5-fold more PHB", prepared.text)
+        self.assertIn("4.5-fold more PHB", prepared.regex_facts[-1])
+
     def test_front_matter_preserves_title_authors_and_venue(self):
         pages = [
             "A Precise Paper Title\nMina Vale and Theo Karst\nSynthetic Journal\n"
@@ -86,6 +129,23 @@ class SummaryPreprocessingTests(unittest.TestCase):
         self.assertNotIn("Table 1", filtered[0])
         self.assertIn("Signal increased", filtered[0])
         self.assertIn("supports the hypothesis", filtered[0])
+
+    def test_publisher_proof_filter_keeps_scientific_proof_terms(self):
+        filtered = remove_publisher_proof_boilerplate(
+            [
+                "Journal Pre-proof\n"
+                "Accepted manuscript\n"
+                "Please cite this article as: A precise paper\n"
+                "Abstract\nThis is a proof-of-concept experiment.\n"
+                "The mathematical proof is provided in Appendix A."
+            ]
+        )[0]
+
+        self.assertNotIn("Journal Pre-proof", filtered)
+        self.assertNotIn("Accepted manuscript", filtered)
+        self.assertNotIn("Please cite", filtered)
+        self.assertIn("proof-of-concept", filtered)
+        self.assertIn("mathematical proof", filtered)
 
     def test_page_labels_are_removed_without_touching_section_numbers(self):
         prepared = preprocess_paper_text(

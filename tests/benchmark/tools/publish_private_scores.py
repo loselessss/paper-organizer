@@ -145,6 +145,13 @@ def publish(
     models = sanitized_runs(results_root)
     if not models:
         raise ValueError("공개할 실제 논문 벤치마크 점수가 없습니다.")
+    paper_count = len(
+        {
+            paper["paper_id"]
+            for model in models
+            for paper in model["papers"]
+        }
+    )
     value = {
         "schema_version": 1,
         "suite": "real-papers-v1",
@@ -154,7 +161,7 @@ def publish(
         ),
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "conditions": {
-            "paper_count": 4,
+            "paper_count": paper_count,
             "mode": "full",
             "language": "source",
             "resource_profile": "balanced",

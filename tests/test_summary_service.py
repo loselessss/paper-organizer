@@ -17,7 +17,9 @@ from paper_organizer.application.summary_service import (
     run_prepared_summary,
     _paragraphize_summary,
     _ensure_review_nature_method,
+    _publication_year_present,
     _review_methods_supported_by_source,
+    _strip_document_type_title_prefix,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError, ProviderError
@@ -121,6 +123,25 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_bibliography_title_drops_joined_document_type_label(self):
+        self.assertEqual(
+            _strip_document_type_title_prefix(
+                "Review Article: A precise scaffold study"
+            ),
+            "A precise scaffold study",
+        )
+
+    def test_publication_year_rejects_received_and_cited_years(self):
+        first_page = (
+            "A Paper Title\nMina Vale\nReceived 3 February 2023; accepted 2024\n"
+            "Abstract\nPrior work by Smith et al. (1993) was limited.\n"
+            "International Journal of Testing 92 (2025) 15-33"
+        )
+
+        self.assertFalse(_publication_year_present("2024", first_page))
+        self.assertFalse(_publication_year_present("1993", first_page))
+        self.assertTrue(_publication_year_present("2025", first_page))
+
     def test_unsupported_formal_review_methods_are_removed(self) -> None:
         methods = (
             "systematic review of literature",
@@ -359,7 +380,8 @@ class SummaryServiceTests(unittest.TestCase):
                 "Abstract\n" + "Abstract evidence. " * 40,
                 "Introduction\n" + "Question evidence. " * 40,
                 "Materials and Methods\n" + "Method evidence. " * 40,
-                "Results\n" + "Result evidence. " * 40,
+                "Results\nYield increased to 4.5 g/L compared with 1.0 g/L.\n"
+                + "Result evidence. " * 40,
                 "Discussion\n" + "Discussion evidence. " * 40,
             ],
             settings,
@@ -374,6 +396,13 @@ class SummaryServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(prepared.preview.summary_strategy, "hierarchical")
+        self.assertTrue(prepared.regex_fallback.facts)
+        self.assertTrue(
+            all(
+                "[REGEX-VALIDATED CANDIDATES]" not in context
+                for context in prepared.section_contexts
+            )
+        )
         self.assertEqual(
             len(client.calls), len(prepared.section_contexts) + 2
         )
@@ -384,6 +413,10 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertIn(
             "final pass",
             client.calls[-1]["payload"]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "[REGEX-VALIDATED CANDIDATES]",
+            json.dumps(client.calls[-1]["payload"], ensure_ascii=False),
         )
         for call in client.calls[1:-1]:
             self.assertNotIn("format", call["payload"])

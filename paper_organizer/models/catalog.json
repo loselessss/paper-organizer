@@ -39,16 +39,17 @@
       "license": "Apache-2.0",
       "recommended_context": 8192,
       "benchmark": {
-        "paper_count": 4,
-        "success_count": 4,
-        "average_seconds": 17.009,
-        "research_score_100": 12.78,
-        "review_score_100": 51.67,
+        "paper_count": 6,
+        "success_count": 6,
+        "average_seconds": 14.491,
+        "research_score_100": 12.5,
+        "review_score_100": 36.11,
         "bibliography_score_100": 75.0,
-        "json_retries": 0,
+        "json_retries": 5,
+        "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
           "저사양 PC용 속도·안정성 균형",
-          "서지정보 입력 첫 시도 성공"
+          "백그라운드 서지·분류용; 본문 정밀 요약 비권장"
         ]
       }
     },
@@ -212,12 +213,14 @@
       "recommended_context": 8192,
       "download_priority": 2,
       "benchmark": {
-        "paper_count": 4,
-        "success_count": 4,
-        "average_seconds": 15.722,
-        "research_score_100": 10.0,
-        "review_score_100": 61.67,
-        "bibliography_score_100": 100.0,
+        "paper_count": 6,
+        "success_count": 6,
+        "average_seconds": 16.008,
+        "research_score_100": 18.61,
+        "review_score_100": 49.22,
+        "bibliography_score_100": 87.5,
+        "json_retries": 0,
+        "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
           "서지정보 정확도 우수",
           "리뷰논문 수동 분석 추천"

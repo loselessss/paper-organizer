@@ -125,14 +125,23 @@ def main() -> int:
             for item in private_reference.get("documents", [])
         }
 
-    pdfs = sorted(ROOT.glob("*.pdf"))
-    indexed_pdfs = list(enumerate(pdfs, 1))
+    manifest_path = ROOT / "work" / "manifest.private.json"
+    if not manifest_path.is_file():
+        raise SystemExit(
+            "tests/Real/inspect_private_pdfs.py를 먼저 실행해 비공개 manifest를 만드세요."
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    indexed_pdfs = [
+        (str(row["document_id"]), ROOT / str(row["private_source"]))
+        for row in manifest.get("documents", [])
+        if (ROOT / str(row.get("private_source", ""))).is_file()
+    ]
     if args.document_ids:
         wanted = {value.upper() for value in args.document_ids}
         indexed_pdfs = [
             item
             for item in indexed_pdfs
-            if f"REAL-{item[0]:03d}" in wanted
+            if item[0].upper() in wanted
         ]
     if args.limit > 0:
         indexed_pdfs = indexed_pdfs[: args.limit]
@@ -141,8 +150,7 @@ def main() -> int:
     completed = 0
     for model in args.models:
         try:
-            for document_index, pdf_path in indexed_pdfs:
-                document_id = f"REAL-{document_index:03d}"
+            for document_id, pdf_path in indexed_pdfs:
                 for language in args.languages:
                     completed += 1
                     result_path = (

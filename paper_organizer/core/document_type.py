@@ -136,6 +136,7 @@ def classify_document_type(page_texts: Iterable[str]) -> DocumentTypeDecision:
         "systematic review", "scoping review", "narrative review", "literature review",
         "review article", "umbrella review", "meta-analysis", "meta analysis",
         "this review synthesizes", "this review examines", "this review summarizes",
+        "this paper reviews", "a review of",
         "체계적 문헌고찰", "범위 문헌고찰", "메타분석", "종설", "리뷰 논문",
     )
     if any(marker in folded for marker in markers):

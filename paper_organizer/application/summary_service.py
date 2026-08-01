@@ -24,6 +24,7 @@ from paper_organizer.application.summary_preprocessing import (
     is_generic_document_heading,
     preprocess_paper_text,
     remove_figure_and_table_captions,
+    remove_publisher_proof_boilerplate,
 )
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
@@ -359,6 +360,7 @@ def _prepared_from_chunks(
         _extract_patent_claims(page_texts) if is_patent else ""
     )
     page_texts = list(remove_figure_and_table_captions(page_texts))
+    page_texts = list(remove_publisher_proof_boilerplate(page_texts))
     if is_patent:
         page_texts = list(_remove_patent_drawing_sections(page_texts))
     processed = preprocess_paper_text(
@@ -501,7 +503,7 @@ def run_prepared_summary(
                             if request_options["is_patent"]
                             else "review-summary-v4-section"
                             if prepared.preview.document_type == "review_paper"
-                            else "paper-summary-v9-section"
+                            else "paper-summary-v10-section"
                         ),
                         stage="section",
                         **partial_options,
@@ -512,7 +514,10 @@ def run_prepared_summary(
             partials.append(partial)
             json_retry_count += json_retried
             language_retry_count += language_retried
-        synthesis_text = _render_section_summaries(partials)
+        synthesis_text = _render_section_summaries(
+            partials,
+            facts=prepared.regex_fallback.facts,
+        )
         result, json_retried, language_retried = _summarize_with_language_retry(
             provider,
             SummaryRequest(
@@ -522,7 +527,7 @@ def run_prepared_summary(
                     if request_options["is_patent"]
                     else "review-summary-v4-hierarchical"
                     if prepared.preview.document_type == "review_paper"
-                    else "paper-summary-v9-hierarchical"
+                    else "paper-summary-v10-hierarchical"
                 ),
                 stage="synthesis",
                 **request_options,
@@ -554,7 +559,7 @@ def run_prepared_summary(
                     if request_options["is_patent"]
                     else "review-summary-v4-direct"
                     if prepared.preview.document_type == "review_paper"
-                    else "paper-summary-v9-direct"
+                    else "paper-summary-v10-direct"
                 ),
                 stage="direct",
                 **request_options,
@@ -748,7 +753,7 @@ def _validate_bibliography(
     """Reject hallucinated or distributor-derived first-page metadata."""
 
     source = _normalize_bibliography_text(source_text)
-    title = data.title.strip()
+    title = _strip_document_type_title_prefix(data.title.strip())
     title_valid = bool(
         title
         and not is_generic_document_heading(title)
@@ -767,7 +772,7 @@ def _validate_bibliography(
     year = data.year.strip()
     year_valid = bool(
         re.fullmatch(r"(?:18|19|20|21)\d{2}", year)
-        and re.search(rf"(?<!\d){re.escape(year)}(?!\d)", source_text)
+        and _publication_year_present(year, source_text)
     )
 
     venue = "" if is_patent else data.venue.strip()
@@ -808,6 +813,50 @@ def _validate_bibliography(
 def _normalized_value_present(value: str, normalized_source: str) -> bool:
     normalized = _normalize_bibliography_text(value)
     return bool(normalized) and normalized in normalized_source
+
+
+def _strip_document_type_title_prefix(value: str) -> str:
+    """Remove a neighboring page label accidentally joined to the real title."""
+
+    return re.sub(
+        r"^(?:(?:open\s+access\s+)?(?:research|original|review|case|short|brief)\s+"
+        r"(?:article|paper)|article)\s*[:.\-–—]?\s+",
+        "",
+        value,
+        flags=re.I,
+    ).strip()
+
+
+def _publication_year_present(year: str, source_text: str) -> bool:
+    """Accept publication-zone years while rejecting received and cited years."""
+
+    boundary_match = re.search(
+        r"(?im)^\s*(?:abstract|summary|introduction|background|초록|요약|서론|배경)\b",
+        source_text,
+    )
+    front_boundary = boundary_match.start() if boundary_match else len(source_text)
+    for match in re.finditer(rf"(?<!\d){re.escape(year)}(?!\d)", source_text):
+        before = source_text[max(0, match.start() - 100) : match.start()]
+        after = source_text[match.end() : match.end() + 40]
+        if re.search(r"\b(?:received|revised|accepted|submitted)\b[^\n]{0,40}$", before, re.I):
+            continue
+        if re.search(r"(?:et\s+al\.|[A-Z][A-Za-z'’-]+)\s*,?\s*\(?$", before, re.I) and re.match(
+            r"\)?(?:[,.;]|\s)", after
+        ):
+            continue
+        context = before + year + after
+        if re.search(
+            r"\b(?:journal|proceedings|transactions|letters|vol(?:ume)?\.?|"
+            r"published|publication|copyright)\b|©|\b\d+\s*\("
+            + re.escape(year)
+            + r"\)\s*\d+",
+            context,
+            re.I,
+        ):
+            return True
+        if match.start() < front_boundary and not re.match(r"\s*\)", after):
+            return True
+    return False
 
 
 def _normalize_bibliography_text(value: str) -> str:
@@ -1424,13 +1473,6 @@ def _paragraphize_summary(value: str) -> str:
 
 
 def _section_contexts(processed: PreprocessedDocument) -> tuple[str, ...]:
-    facts = ""
-    if processed.regex_facts:
-        facts = (
-            "[REGEX-VALIDATED CANDIDATES]\n"
-            + "\n".join(processed.regex_facts)
-            + "\n\n"
-        )
     contexts: list[str] = []
     for section in processed.sections:
         pages = ",".join(str(page) for page in section.pdf_pages)
@@ -1438,18 +1480,20 @@ def _section_contexts(processed: PreprocessedDocument) -> tuple[str, ...]:
             f"[PARAGRAPH {index}]\n{paragraph}"
             for index, paragraph in enumerate(section.paragraphs, 1)
         )
-        prefix = facts if section.name == "front" else ""
         context = (
-            prefix
-            + f"[SECTION: {section.label} | PDF PAGES: {pages}]\n\n"
+            f"[SECTION: {section.label} | PDF PAGES: {pages}]\n\n"
             + body
         )
         contexts.append(_truncate_text(context, 24_000)[0])
     return tuple(contexts)
 
 
-def _render_section_summaries(results: list[SummaryResult]) -> str:
+def _render_section_summaries(
+    results: list[SummaryResult], *, facts: tuple[str, ...] = ()
+) -> str:
     blocks: list[str] = []
+    if facts:
+        blocks.append("[REGEX-VALIDATED CANDIDATES]\n" + "\n".join(facts))
     for index, result in enumerate(results, 1):
         blocks.append(
             f"[SECTION EVIDENCE {index}]\n"
