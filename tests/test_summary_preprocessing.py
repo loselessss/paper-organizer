@@ -104,6 +104,20 @@ class SummaryPreprocessingTests(unittest.TestCase):
         self.assertIn("4.5-fold more PHB", prepared.text)
         self.assertIn("4.5-fold more PHB", prepared.regex_facts[-1])
 
+    def test_spaced_abstract_heading_is_detected(self):
+        prepared = preprocess_paper_text(
+            [
+                "Paper title\nA B S T R A C T\n"
+                + "The abstract reports a controlled result. " * 8
+                + "\n1. Introduction\nBody text."
+            ]
+        )
+
+        abstract = next(
+            section for section in prepared.sections if section.name == "abstract"
+        )
+        self.assertIn("controlled result", abstract.paragraphs[0])
+
     def test_front_matter_preserves_title_authors_and_venue(self):
         pages = [
             "A Precise Paper Title\nMina Vale and Theo Karst\nSynthetic Journal\n"

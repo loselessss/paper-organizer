@@ -34,6 +34,8 @@
   발행연도로 저장하지 않도록 첫 페이지 필드별 문자열 위치 검증 강화
 - `Journal Pre-proof`, `Accepted manuscript`, `Article in press` 등 출판사 교정본
   표지만 AI 입력에서 제거하되 본문의 `proof-of-concept`와 수학적 proof는 보존
+- Qwen3 1.7B는 본문 구역별 종합을 중단하고 검증된 서지정보와 논문 자체
+  Abstract만 정리하며, Abstract가 없으면 서지정보만 저장하도록 역할 제한
 
 ## [1.8.1] - 2026-07-30
 

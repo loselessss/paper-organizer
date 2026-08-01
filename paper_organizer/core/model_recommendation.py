@@ -261,6 +261,18 @@ def model_usage_guidance(
             advanced_analysis=False,
             caution="카탈로그 밖 모델은 사양과 요약 안전성을 자동 보증하지 않습니다.",
         )
+    normalized_model = model_id.strip().casefold().removesuffix(":latest")
+    if normalized_model == "qwen3:1.7b":
+        return ModelUsageGuidance(
+            role="백그라운드 서지·Abstract",
+            hallucination_risk="본문 종합 비권장",
+            summary_strategy="서지정보 검증 후 Abstract만 정리",
+            advanced_analysis=False,
+            caution=(
+                "본문 구역별 요약은 실행하지 않습니다. Abstract가 없으면 "
+                "서지정보만 저장합니다."
+            ),
+        )
     if parameters <= 0.8:
         return ModelUsageGuidance(
             role="벤치마크·분류 보조",

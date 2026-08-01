@@ -435,6 +435,74 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(execution.result.data.contributions, ())
         self.assertEqual(execution.result.data.limitations, ())
 
+    def test_qwen_1_7b_sends_only_abstract_after_bibliography(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:1.7b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "Test Paper Title\n시험 저자\n시험 저널\n2026\nAbstract\n"
+                + "The abstract reports a measured 25% increase over control. " * 12,
+                "Introduction\n" + "BODY INTRODUCTION MUST NOT BE SENT. " * 30,
+                "Materials and Methods\n" + "BODY METHOD MUST NOT BE SENT. " * 30,
+                "Results\n" + "BODY RESULT MUST NOT BE SENT. " * 30,
+            ],
+            settings,
+            SummaryMode.FULL,
+        )
+        client = FakeHttpClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(prepared.preview.summary_strategy, "abstract_only")
+        self.assertEqual(prepared.preview.included_sections, ("Abstract",))
+        self.assertIn("25% increase", prepared.document_text)
+        self.assertNotIn("BODY INTRODUCTION", prepared.document_text)
+        self.assertEqual(len(client.calls), 2)
+        summary_payload = json.dumps(client.calls[-1]["payload"], ensure_ascii=False)
+        self.assertIn("only the paper's own Abstract", summary_payload)
+        self.assertNotIn("BODY METHOD", summary_payload)
+        self.assertEqual(execution.result.data.research_question, "")
+        self.assertEqual(execution.result.data.methods, ())
+        self.assertEqual(execution.result.data.keywords, ())
+
+    def test_qwen_1_7b_without_abstract_runs_bibliography_only(self):
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:1.7b",
+        )
+        prepared = prepare_text_summary(
+            Path("paper.paperpack"),
+            [
+                "Test Paper Title\n시험 저자\n시험 저널\n2026\n"
+                + "Introduction text without an abstract. " * 30,
+                "Materials and Methods\n" + "Method body. " * 50,
+                "Results\n" + "Result body. " * 50,
+            ],
+            settings,
+        )
+        client = FakeHttpClient()
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=client,
+        )
+
+        self.assertEqual(prepared.preview.summary_strategy, "bibliography_only")
+        self.assertEqual(prepared.document_text, "")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(execution.result.data.summary, "")
+        self.assertEqual(execution.result.data.title, "Test Paper Title")
+
     def test_ollama_models_below_8b_keep_hierarchical_basic_analysis(self):
         settings = AppSettings(
             summary_provider="ollama",

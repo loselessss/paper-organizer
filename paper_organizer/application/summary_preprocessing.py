@@ -21,7 +21,7 @@ SECTION_LABELS = {
 }
 SECTION_ORDER = tuple(SECTION_LABELS)
 _SECTION_PATTERNS = {
-    "abstract": r"abstract|summary|초록|요약",
+    "abstract": r"abstract|a\s+b\s+s\s+t\s+r\s+a\s+c\s+t|summary|초록|요약",
     "introduction": r"introduction|background|서론|배경",
     "methods": (
         r"materials?\s*(?:and|&)\s*methods?|methods?(?:\s+and\s+materials?)?|"

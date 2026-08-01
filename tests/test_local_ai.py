@@ -76,7 +76,11 @@ class LocalAiTests(unittest.TestCase):
 
         self.assertEqual(benchmark.role, "벤치마크·분류 보조")
         self.assertEqual(benchmark.hallucination_risk, "매우 높음")
-        self.assertEqual(low_spec.role, "백그라운드 1~2B급")
+        self.assertEqual(low_spec.role, "백그라운드 서지·Abstract")
+        self.assertEqual(
+            low_spec.summary_strategy,
+            "서지정보 검증 후 Abstract만 정리",
+        )
         self.assertFalse(low_spec.advanced_analysis)
         self.assertEqual(standard.role, "수동 정밀 3~4B급")
         self.assertEqual(standard.summary_strategy, "구역별 요약 후 통합")

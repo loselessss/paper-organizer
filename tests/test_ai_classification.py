@@ -208,6 +208,21 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("every distinct primary endpoint", instructions)
         self.assertIn("experimental limitations in summary", instructions)
 
+    def test_abstract_only_prompt_forbids_body_inference(self):
+        instructions = system_instructions(
+            SummaryRequest(
+                document_text="abstract text",
+                document_type="research_paper",
+                stage="abstract",
+                advanced_analysis=False,
+            )
+        )
+
+        self.assertIn("only the paper's own Abstract", instructions)
+        self.assertIn("one or two concise paragraphs", instructions)
+        self.assertIn("Put the rewritten Abstract only in summary", instructions)
+        self.assertNotIn("essential experimental design", instructions)
+
 
 class AiClassificationTests(unittest.TestCase):
     def test_patent_ignores_ai_journal_venue(self):

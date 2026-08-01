@@ -41,11 +41,11 @@
       "benchmark": {
         "paper_count": 6,
         "success_count": 6,
-        "average_seconds": 14.491,
-        "research_score_100": 12.5,
+        "average_seconds": 2.517,
+        "research_score_100": 15.55,
         "review_score_100": 36.11,
         "bibliography_score_100": 75.0,
-        "json_retries": 5,
+        "json_retries": 0,
         "hardware": "Intel Core i5-1334U / Intel Iris Xe / RAM 15.73GB",
         "strengths": [
           "저사양 PC용 속도·안정성 균형",

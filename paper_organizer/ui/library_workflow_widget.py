@@ -2148,6 +2148,8 @@ class LibraryWidget(QWidget):
                 strategy_labels = {
                     "direct": "전체 구역 직접 분석",
                     "hierarchical": "구역별 요약 후 최종 합성",
+                    "abstract_only": "서지정보 + Abstract 정리",
+                    "bibliography_only": "서지정보만(Abstract 없음)",
                 }
                 language_labels = {
                     "ko": "한국어",

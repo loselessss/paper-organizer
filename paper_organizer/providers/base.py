@@ -249,9 +249,9 @@ class SummaryRequest:
             raise ValueError("context_window must be between 4096 and 262144")
         if self.output_language not in {"ko", "source"}:
             raise ValueError("output_language must be ko or source")
-        if self.stage not in {"direct", "section", "synthesis", "translation"}:
+        if self.stage not in {"direct", "section", "synthesis", "translation", "abstract"}:
             raise ValueError(
-                "stage must be direct, section, synthesis or translation"
+                "stage must be direct, section, synthesis, abstract or translation"
             )
         if not isinstance(self.json_retry, bool):
             raise ValueError("json_retry must be a boolean")
@@ -553,7 +553,17 @@ def system_instructions(request: SummaryRequest) -> str:
             "be English; do not output Korean outside the three classification fields."
         )
     stage = ""
-    if request.stage == "synthesis":
+    if request.stage == "abstract":
+        stage = (
+            " This input contains only the paper's own Abstract. Rewrite that Abstract "
+            "conservatively as one or two concise paragraphs without adding evidence, "
+            "background, methods, results, limitations, or implications absent from it. "
+            "Preserve every stated number, unit, comparison, negation, organism, material, "
+            "and named method exactly. Put the rewritten Abstract only in summary. Return "
+            "empty research_question, methods, keywords, and meta_tags; classification "
+            "fields may still describe the Abstract's topic."
+        )
+    elif request.stage == "synthesis":
         if request.document_type == "review_paper":
             review_destination = (
                 "Put integrative conclusions in contributions and explicit gaps, bias, "
@@ -658,9 +668,9 @@ def system_instructions(request: SummaryRequest) -> str:
     return (
         f"{language} {SYSTEM_INSTRUCTIONS}{stage}{json_retry}"
         f"{json_repair}{language_retry}{analysis_scope}"
-        f"{PATENT_SUMMARY_INSTRUCTIONS if request.is_patent else ''}"
-        f"{REVIEW_SUMMARY_INSTRUCTIONS if request.document_type == 'review_paper' else ''}"
-        f"{RESEARCH_SUMMARY_INSTRUCTIONS if request.document_type == 'research_paper' else ''}"
+        f"{PATENT_SUMMARY_INSTRUCTIONS if request.is_patent and request.stage != 'abstract' else ''}"
+        f"{REVIEW_SUMMARY_INSTRUCTIONS if request.document_type == 'review_paper' and request.stage != 'abstract' else ''}"
+        f"{RESEARCH_SUMMARY_INSTRUCTIONS if request.document_type == 'research_paper' and request.stage != 'abstract' else ''}"
         f"{classification}"
         f"{language_reminder}"
     )

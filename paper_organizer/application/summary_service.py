@@ -39,6 +39,7 @@ from paper_organizer.providers.base import (
     BibliographyResult,
     JsonHttpClient,
     ProviderError,
+    SummaryData,
     SummaryProvider,
     SummaryRequest,
     SummaryResult,
@@ -372,11 +373,33 @@ def _prepared_from_chunks(
         raise SummaryPreparationError(
             "내장 OCR을 실행했지만 인식된 본문이 너무 적습니다."
         )
-    context_window = _adaptive_context_window(settings, model, len(full_text))
+    abstract_only_model = _uses_abstract_only_summary(settings, model)
+    abstract_text, abstract_pages = _abstract_source(
+        processed,
+        page_texts,
+        tuple(index + 1 for index in page_indexes),
+    )
+    summary_strategy = (
+        "abstract_only" if abstract_text else "bibliography_only"
+    ) if abstract_only_model else (
+        "hierarchical" if _uses_hierarchical_summary(settings, model) else "direct"
+    )
+    analysis_text = (
+        f"[SECTION: Abstract | PDF PAGES: {','.join(map(str, abstract_pages))}]\n\n"
+        f"[PARAGRAPH 1]\n{abstract_text}"
+        if summary_strategy == "abstract_only"
+        else ""
+        if summary_strategy == "bibliography_only"
+        else full_text
+    )
+    context_window = _adaptive_context_window(settings, model, len(analysis_text))
     max_chars = QUICK_MAX_CHARS if selected_mode is SummaryMode.QUICK else FULL_MAX_CHARS
     if context_window is not None:
         max_chars = min(max_chars, max(4_000, (context_window - CONTEXT_TOKEN_RESERVE) * 4))
-    text, truncated = _truncate_section_context(processed, max_chars)
+    if abstract_only_model:
+        text, truncated = _truncate_text(analysis_text, max_chars)
+    else:
+        text, truncated = _truncate_section_context(processed, max_chars)
     sends_to_cloud = provider in {"openai", "anthropic"}
     preview = SummaryPreview(
         pdf_path=path,
@@ -384,28 +407,39 @@ def _prepared_from_chunks(
         provider=provider,
         model=model,
         page_count=page_count,
-        included_pdf_pages=processed.included_pdf_pages,
+        included_pdf_pages=(
+            abstract_pages if abstract_only_model else processed.included_pdf_pages
+        ),
         character_count=len(text),
         estimated_input_tokens=math.ceil(len(text) / 4),
         truncated=truncated,
         sends_to_cloud=sends_to_cloud,
         requires_cloud_consent=sends_to_cloud and not settings.cloud_processing_consent,
         context_window=context_window,
-        included_sections=tuple(section.label for section in processed.sections),
-        output_language=settings.summary_language,
-        summary_strategy=(
-            "hierarchical"
-            if _uses_hierarchical_summary(settings, model)
-            else "direct"
+        included_sections=(
+            ("Abstract",) if summary_strategy == "abstract_only" else ()
+        ) if abstract_only_model else tuple(
+            section.label for section in processed.sections
         ),
+        output_language=settings.summary_language,
+        summary_strategy=summary_strategy,
         document_type=document_type,
     )
     return PreparedSummary(
         preview=preview,
         document_text=text,
-        section_contexts=_section_contexts(processed),
+        section_contexts=(
+            () if abstract_only_model else _section_contexts(processed)
+        ),
         bibliography_text=_bibliography_context(page_texts[0]),
-        regex_fallback=_regex_summary_fallback(processed),
+        regex_fallback=(
+            RegexSummaryFallback(
+                abstract=abstract_text,
+                abstract_pdf_pages=abstract_pages,
+            )
+            if abstract_only_model
+            else _regex_summary_fallback(processed)
+        ),
         patent_claims_text=patent_claims_text,
     )
 
@@ -484,10 +518,21 @@ def run_prepared_summary(
         prepared.preview.summary_strategy == "hierarchical"
         and len(prepared.section_contexts) > 1
     )
-    request_options["advanced_analysis"] = not hierarchical
+    abstract_only = prepared.preview.summary_strategy == "abstract_only"
+    bibliography_only = prepared.preview.summary_strategy == "bibliography_only"
+    request_options["advanced_analysis"] = not (
+        hierarchical or abstract_only or bibliography_only
+    )
     json_retry_count = 0
     language_retry_count = 0
-    if hierarchical:
+    if bibliography_only:
+        result = SummaryResult(
+            provider=prepared.preview.provider,
+            model=prepared.preview.model,
+            prompt_version="paper-bibliography-only-v1",
+            data=SummaryData.from_section_text(""),
+        )
+    elif hierarchical:
         partial_options = dict(request_options)
         partial_options["allowed_categories"] = ()
         partials: list[SummaryResult] = []
@@ -555,13 +600,15 @@ def run_prepared_summary(
             SummaryRequest(
                 document_text=prepared.document_text,
                 prompt_version=(
-                    "patent-summary-v1-direct"
+                    "paper-abstract-v1"
+                    if abstract_only
+                    else "patent-summary-v1-direct"
                     if request_options["is_patent"]
                     else "review-summary-v4-direct"
                     if prepared.preview.document_type == "review_paper"
                     else "paper-summary-v10-direct"
                 ),
-                stage="direct",
+                stage="abstract" if abstract_only else "direct",
                 **request_options,
             ),
             source_text=prepared.document_text,
@@ -591,7 +638,22 @@ def run_prepared_summary(
             result,
             data=replace(result.data, contributions=(), limitations=()),
         )
-    if prepared.preview.document_type == "review_paper":
+    if abstract_only:
+        result = replace(
+            result,
+            data=replace(
+                result.data,
+                research_question="",
+                methods=(),
+                contributions=(),
+                limitations=(),
+                keywords=(),
+                meta_tags=(),
+            ),
+        )
+    if prepared.preview.document_type == "review_paper" and not (
+        abstract_only or bibliography_only
+    ):
         review_source = "\n\n".join(prepared.section_contexts)
         sanitized_methods = _review_methods_supported_by_source(
             result.data.methods,
@@ -859,6 +921,73 @@ def _publication_year_present(year: str, source_text: str) -> bool:
     return False
 
 
+def _abstract_source(
+    processed: PreprocessedDocument,
+    page_texts: list[str],
+    page_numbers: tuple[int, ...],
+) -> tuple[str, tuple[int, ...]]:
+    """Return only an explicit or title-page abstract, never body substitution."""
+
+    abstract = next(
+        (section for section in processed.sections if section.name == "abstract"),
+        None,
+    )
+    if abstract is not None:
+        value = "\n\n".join(abstract.paragraphs).strip()
+        if _looks_like_abstract(value):
+            return value, abstract.pdf_pages
+    for page_index, page in enumerate(page_texts[:2]):
+        explicit = re.search(
+            r"(?ims)(?:^|\n)\s*(?:abstract|a\s+b\s+s\s+t\s+r\s+a\s+c\s+t|초록)"
+            r"\s*[:.]?\s*(.*?)"
+            r"(?=\n\s*(?:keywords?|key\s*words|index\s+terms|"
+            r"\d+(?:\.\d+)*[.)]?\s*(?:introduction|서론)|introduction|서론)\b)",
+            page,
+        )
+        if explicit:
+            value = " ".join(explicit.group(1).split()).strip()
+            if _looks_like_abstract(value):
+                return value[:6_000], (page_numbers[page_index],)
+        keyword = re.search(r"(?im)^\s*(?:keywords?|key\s*words)\s*[:.]", page)
+        if not keyword:
+            continue
+        prefix = page[: keyword.start()]
+        lines = prefix.splitlines()
+        affiliation_indexes = [
+            index
+            for index, line in enumerate(lines)
+            if re.search(
+                r"\b(?:department|university|institute|school|faculty|college|"
+                r"hospital|laboratory|centre|center)\b",
+                line,
+                re.I,
+            )
+        ]
+        if not affiliation_indexes:
+            continue
+        value = " ".join(lines[affiliation_indexes[-1] + 1 :]).strip()
+        value = re.sub(r"\s+", " ", value)
+        if 120 <= len(value) <= 6_000:
+            return value, (page_numbers[page_index],)
+    return "", ()
+
+
+def _looks_like_abstract(value: str) -> bool:
+    normalized = " ".join(value.split()).strip()
+    if len(normalized) < 80:
+        return False
+    boilerplate_hits = sum(
+        marker in normalized.casefold()
+        for marker in (
+            "article history",
+            "received in revised form",
+            "available online",
+            "handling editor",
+        )
+    )
+    return boilerplate_hits < 2
+
+
 def _normalize_bibliography_text(value: str) -> str:
     return re.sub(r"[\W_]+", " ", value.casefold(), flags=re.UNICODE).strip()
 
@@ -1116,6 +1245,13 @@ def ollama_model_supports_ocr(model: str) -> bool:
 def _uses_hierarchical_summary(settings: AppSettings, model: str) -> bool:
     parameters = _model_parameters(model)
     return settings.summary_provider == "ollama" and 0 < parameters < 8.0
+
+
+def _uses_abstract_only_summary(settings: AppSettings, model: str) -> bool:
+    return (
+        settings.summary_provider == "ollama"
+        and model.strip().casefold().removesuffix(":latest") == "qwen3:1.7b"
+    )
 
 
 def _adaptive_context_window(

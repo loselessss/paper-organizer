@@ -2309,7 +2309,11 @@ class LibraryWorkflowController:
             "methods": list(data.methods),
             "keywords": list(data.keywords),
         }
-        if execution.preview.summary_strategy != "hierarchical":
+        if execution.preview.summary_strategy not in {
+            "hierarchical",
+            "abstract_only",
+            "bibliography_only",
+        }:
             values["contributions"] = list(data.contributions)
             values["limitations"] = list(data.limitations)
         for name, value in values.items():
