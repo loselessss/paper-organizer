@@ -617,6 +617,7 @@ class LibraryWorkflowTests(unittest.TestCase):
 
             working = controller.materialize_editable_pdf(organized.pdf_path)
             self.assertNotEqual(working, controller.materialize_pdf(organized.pdf_path))
+            self.assertEqual(working.name, "paper.pdf")
             with working.open("ab") as stream:
                 stream.write(b"\n% sPDF saved annotation\n")
             pending = controller.paperpack_working_copy(organized.pdf_path)
@@ -673,6 +674,46 @@ class LibraryWorkflowTests(unittest.TestCase):
 
             self.assertEqual(repaired.read_bytes(), source.read_bytes())
             self.assertTrue(state.is_file())
+
+    def test_spdf_working_copy_migrates_legacy_name_to_original_pdf_name(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "Original Download Name.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item, EditablePaperMetadata(title="Library Display Title")
+            )
+            _pack, preferred, state = controller._paperpack_edit_paths(
+                organized.pdf_path
+            )
+            legacy = preferred.parent / "working.pdf"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(source.read_bytes() + b"\n% unsaved legacy edit\n")
+            state.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "paperpack_path": str(organized.pdf_path.resolve()),
+                        "base_pdf_sha256": inspect_paperpack(
+                            organized.pdf_path
+                        ).pdf_sha256,
+                        "base_revision": inspect_paperpack(
+                            organized.pdf_path
+                        ).revision,
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            migrated = controller.materialize_editable_pdf(organized.pdf_path)
+
+            self.assertEqual(migrated.name, "Original Download Name.pdf")
+            self.assertTrue(migrated.read_bytes().endswith(b"unsaved legacy edit\n"))
+            self.assertFalse(legacy.exists())
+            self.assertTrue(controller.paperpack_working_copy(organized.pdf_path).changed)
 
     def test_spdf_working_copy_detects_conflict_and_can_be_discarded(self):
         with tempfile.TemporaryDirectory() as temp:

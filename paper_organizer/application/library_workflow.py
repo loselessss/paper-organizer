@@ -2710,6 +2710,7 @@ class LibraryWorkflowController:
                 {
                     "schema_version": 1,
                     "paperpack_path": str(source),
+                    "working_pdf_name": workspace_pdf.name,
                     "base_pdf_sha256": info.pdf_sha256,
                     "base_revision": info.revision,
                     "created_at": _now_iso(),
@@ -2835,6 +2836,7 @@ class LibraryWorkflowController:
             {
                 "schema_version": 1,
                 "paperpack_path": str(status.paperpack_path),
+                "working_pdf_name": status.pdf_path.name,
                 "base_pdf_sha256": info.pdf_sha256,
                 "base_revision": info.revision,
                 "created_at": _now_iso(),
@@ -2886,10 +2888,13 @@ class LibraryWorkflowController:
         """Remove only the isolated editable copy; never touch the paperpack."""
 
         _source, workspace_pdf, state_path = self._paperpack_edit_paths(path)
+        legacy_pdf = workspace_pdf.parent / "working.pdf"
         existed = workspace_pdf.exists() or state_path.exists()
         for candidate in (
             workspace_pdf,
             workspace_pdf.with_suffix(workspace_pdf.suffix + ".bak"),
+            legacy_pdf,
+            legacy_pdf.with_suffix(legacy_pdf.suffix + ".bak"),
             state_path,
         ):
             try:
@@ -2914,7 +2919,33 @@ class LibraryWorkflowController:
             )
         key = hashlib.sha256(str(source).encode("utf-8")).hexdigest()
         edit_root = root / "cache" / "editing" / key
-        return source, edit_root / "working.pdf", edit_root / "state.json"
+        try:
+            original_name = inspect_paperpack(source).original_name
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(
+                f"paperpack 원본 파일명을 읽을 수 없습니다: {exc}"
+            ) from None
+        original_leaf = original_name.replace("\\", "/").rsplit("/", 1)[-1]
+        original_stem = (
+            Path(original_leaf).stem
+            if original_leaf.casefold().endswith(".pdf")
+            else original_leaf
+        )
+        display_name = f"{_safe_component(original_stem, source.stem)}.pdf"
+        workspace_pdf = edit_root / display_name
+        legacy_pdf = edit_root / "working.pdf"
+        if (
+            legacy_pdf != workspace_pdf
+            and legacy_pdf.is_file()
+            and not workspace_pdf.exists()
+        ):
+            try:
+                legacy_pdf.replace(workspace_pdf)
+            except OSError:
+                # An older sPDF window may still hold the file. Preserve that
+                # working copy and retry the display-name migration next time.
+                workspace_pdf = legacy_pdf
+        return source, workspace_pdf, edit_root / "state.json"
 
     def set_queue_priority(self, queue_id: str, high: bool) -> AnalysisQueueItem:
         return self._queue().set_priority(queue_id, high)
