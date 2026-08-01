@@ -10,7 +10,7 @@ from paper_organizer.integrations.spdf_bridge import (
 class SpdfBridgeTests(unittest.TestCase):
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
-        self.assertRegex(spdf_version() or "", r"^\d+\.\d+\.\d+$")
+        self.assertEqual(spdf_version(), "1.7.1")
 
     def test_public_selection_payload_is_normalized_without_qt_objects(self):
         class Payload:
