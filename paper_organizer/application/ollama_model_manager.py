@@ -46,6 +46,7 @@ class OllamaModelEntry:
     usage_guidance: str = ""
     benchmark_summary: str = ""
     recommendation_rank: int | None = None
+    download_priority: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +320,7 @@ def _entry_from_spec(
         ).display_text(),
         benchmark_summary=combined_benchmark,
         recommendation_rank=spec.recommendation_rank,
+        download_priority=spec.download_priority,
     )
 
 

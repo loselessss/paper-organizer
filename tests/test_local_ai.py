@@ -89,7 +89,15 @@ class LocalAiTests(unittest.TestCase):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.07.30")
+        self.assertEqual(version, "2026.08.01")
+        self.assertEqual(
+            tuple(spec.model_id for spec in specs[:2]),
+            ("qwen3.5:2b", "qwen3.5:4b"),
+        )
+        self.assertEqual(models["qwen3.5:2b"].download_gb, 2.7)
+        self.assertEqual(models["qwen3.5:2b"].download_priority, 1)
+        self.assertEqual(models["qwen3.5:4b"].download_gb, 3.4)
+        self.assertEqual(models["qwen3.5:4b"].download_priority, 2)
         self.assertEqual(models["granite3.3:2b"].parameters_b, 2.5)
         self.assertEqual(models["granite3.3:2b"].download_gb, 1.55)
         self.assertEqual(models["granite4.1:3b"].parameters_b, 3.0)
@@ -225,7 +233,7 @@ class LocalAiTests(unittest.TestCase):
             all(item.rating == "비권장" for item in recommendation.candidates)
         )
 
-    def test_sixteen_gb_auto_profile_recommends_1_7b_for_background_work(self):
+    def test_sixteen_gb_auto_profile_keeps_benchmarked_background_default(self):
         recommendation = recommend_models(
             hardware(total_ram=16, available_ram=8),
             ollama("granite4.1:3b"),
@@ -250,6 +258,7 @@ class LocalAiTests(unittest.TestCase):
         self.assertIn("수동 정밀 3~4B급", overview)
         self.assertIn("8B+", overview)
         self.assertIn("Granite 3.3 2B", overview)
+        self.assertIn("Qwen3.5 2B·4B", overview)
 
     def test_manual_profile_does_not_offer_removed_large_model(self):
         recommendation = recommend_models(
@@ -279,7 +288,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "granite4.1:3b")
-            self.assertEqual(saved.model_catalog_version, "2026.07.30")
+            self.assertEqual(saved.model_catalog_version, "2026.08.01")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

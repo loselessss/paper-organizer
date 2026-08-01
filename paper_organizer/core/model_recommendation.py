@@ -32,6 +32,7 @@ class ModelSpec:
     license: str
     recommended_context: int
     recommendation_rank: int | None
+    download_priority: int | None
     benchmark_score: float | None
     benchmark_paper_count: int
     benchmark_success_count: int
@@ -97,6 +98,7 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
         if not isinstance(benchmark, dict):
             raise ValueError("model benchmark entry must be an object")
         recommendation_rank = raw.get("recommendation_rank")
+        download_priority = raw.get("download_priority")
         benchmark_score = benchmark.get("score")
         benchmark_average_seconds = benchmark.get("average_seconds")
         benchmark_json_retries = benchmark.get("json_retries")
@@ -119,6 +121,9 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
                 int(recommendation_rank)
                 if recommendation_rank is not None
                 else None
+            ),
+            download_priority=(
+                int(download_priority) if download_priority is not None else None
             ),
             benchmark_score=(
                 float(benchmark_score) if benchmark_score is not None else None
@@ -154,6 +159,8 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
             raise ValueError(f"model catalog values must be positive: {spec.model_id}")
         if spec.recommendation_rank is not None and spec.recommendation_rank <= 0:
             raise ValueError("model recommendation rank must be positive")
+        if spec.download_priority is not None and spec.download_priority <= 0:
+            raise ValueError("model download priority must be positive")
         if spec.benchmark_score is not None and not 0 <= spec.benchmark_score <= 100:
             raise ValueError("model benchmark score must be between 0 and 100")
         if not 0 <= spec.benchmark_success_count <= spec.benchmark_paper_count:
@@ -177,6 +184,8 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
         sorted(
             models,
             key=lambda item: (
+                item.download_priority is None,
+                item.download_priority or 0,
                 item.recommendation_rank is None,
                 item.recommendation_rank or 0,
                 item.parameters_b,
@@ -414,11 +423,13 @@ def memory_tier_guidance(total_ram_gb: float) -> str:
     if total_ram_gb < 24:
         return (
             "16GB급 RAM: 모델 실행 예상량 외에 시스템 여유 1GB를 남깁니다. "
-            "백그라운드 분석은 Qwen3 1.7B를 권장합니다."
+            "백그라운드 분석은 검증된 Qwen3 1.7B를 권장합니다. "
+            "Qwen3.5 2B는 우선 다운로드해 비교할 수 있습니다."
         )
     return (
         "24GB 이상 RAM: 모델 크기를 제한하지 않고 작업 목적과 품질에 맞게 "
-        "직접 선택할 수 있습니다. 백그라운드 효율은 Qwen3 1.7B가 좋습니다."
+        "직접 선택할 수 있습니다. Qwen3.5 2B·4B는 우선 다운로드 후보지만 "
+        "벤치마크를 확인한 뒤 선택하세요."
     )
 
 
@@ -426,8 +437,9 @@ def recommendation_tier_overview() -> str:
     """Return the concise role split shown above per-model recommendations."""
 
     return (
-        "용도별 권장: 백그라운드 1~2B급은 Qwen3 1.7B 우선, "
-        "Granite 3.3 2B는 Q4 메모리 효율 비교 후보 · "
+        "용도별 권장: Qwen3.5 2B·4B는 우선 다운로드·비교 후보 · "
+        "검증된 백그라운드 1~2B급 기본은 Qwen3 1.7B, "
+        "Granite 3.3 2B는 비교 후보 · "
         "수동 정밀 3~4B급은 Granite 4.1 3B 또는 Qwen3 4B · "
         "8B+는 기여·한계가 필요한 고급 분석용이며 모델명보다 "
         "메모리 적합도와 구조화 성공 여부를 우선합니다."

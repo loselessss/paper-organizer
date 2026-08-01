@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.07.30",
-  "verified_at": "2026-07-30",
+  "catalog_version": "2026.08.01",
+  "verified_at": "2026-08-01",
   "benchmark_hardware": "NVIDIA GeForce RTX 3080 Ti",
   "models": [
     {
@@ -46,6 +46,26 @@
         "strengths": [
           "저사양 PC용 속도·안정성 균형",
           "서지정보 입력 첫 시도 성공"
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5:2b",
+      "label": "Qwen3.5 2B (우선 다운로드)",
+      "parameters_b": 2.0,
+      "download_gb": 2.7,
+      "runtime_memory_gb": 4.5,
+      "minimum_ram_gb": 8.0,
+      "recommended_ram_gb": 12.0,
+      "tier": "ultralight",
+      "quality": 3,
+      "license": "Apache-2.0",
+      "recommended_context": 8192,
+      "download_priority": 1,
+      "benchmark": {
+        "strengths": [
+          "백그라운드 분석 우선 검증 후보",
+          "공식 Ollama Qwen3.5 2B 태그"
         ]
       }
     },
@@ -166,6 +186,26 @@
           "수치 결과의 정확한 보존",
           "간결한 연구질문·방법 추출",
           "Granite 3B와 비슷한 처리속도"
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5:4b",
+      "label": "Qwen3.5 4B (우선 다운로드)",
+      "parameters_b": 4.0,
+      "download_gb": 3.4,
+      "runtime_memory_gb": 6.5,
+      "minimum_ram_gb": 8.0,
+      "recommended_ram_gb": 12.0,
+      "tier": "light",
+      "quality": 4,
+      "license": "Apache-2.0",
+      "recommended_context": 8192,
+      "download_priority": 2,
+      "benchmark": {
+        "strengths": [
+          "수동 분석 우선 검증 후보",
+          "공식 Ollama Qwen3.5 4B 태그"
         ]
       }
     },

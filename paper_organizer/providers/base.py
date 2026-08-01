@@ -149,6 +149,18 @@ PATENT_SUMMARY_INSTRUCTIONS = (
     "inventors. Do not invent experimental validation that is not present."
 )
 
+REVIEW_SUMMARY_INSTRUCTIONS = (
+    " This document is a review paper, not a primary research report. Summarize each "
+    "section as synthesis of the literature, preserving the review's scope and cited "
+    "evidence without inventing individual experiments. Use research_question for the "
+    "review objective and scope; methods for search sources, date range, eligibility, "
+    "screening, and synthesis method; summary for major themes, taxonomy, consensus, "
+    "conflicts, and evidence strength; contributions for the review's integrative "
+    "framework or conclusions; and limitations for explicit evidence gaps, bias, "
+    "heterogeneity, and future research needs. Do not present cited studies' authors "
+    "as this paper's authors or isolated cited findings as the review's own experiment."
+)
+
 SEARCH_PLAN_INSTRUCTIONS = (
     "You prepare literal full-text searches for an academic paper library. "
     "Do not answer the question. Return 3 to 8 short search_queries, each one "
@@ -208,6 +220,7 @@ class SummaryRequest:
     language_retry: bool = False
     advanced_analysis: bool = True
     is_patent: bool = False
+    document_type: str = "research_paper"
 
     def validate(self) -> None:
         if not self.document_text.strip():
@@ -237,6 +250,8 @@ class SummaryRequest:
             raise ValueError("advanced_analysis must be a boolean")
         if not isinstance(self.is_patent, bool):
             raise ValueError("is_patent must be a boolean")
+        if self.document_type not in {"patent", "research_paper", "review_paper", "paper"}:
+            raise ValueError("document_type is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,6 +579,7 @@ def system_instructions(request: SummaryRequest) -> str:
         f"{language} {SYSTEM_INSTRUCTIONS}{stage}{json_retry}"
         f"{json_repair}{language_retry}{analysis_scope}"
         f"{PATENT_SUMMARY_INSTRUCTIONS if request.is_patent else ''}"
+        f"{REVIEW_SUMMARY_INSTRUCTIONS if request.document_type == 'review_paper' else ''}"
         f"{classification}"
         f"{language_reminder}"
     )

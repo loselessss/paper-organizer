@@ -534,7 +534,11 @@ class MetadataForm(QGroupBox):
         self.setEnabled(metadata is not None)
 
     def _set_document_type(self, document_type: str) -> None:
-        self._document_type = "patent" if document_type == "patent" else "paper"
+        self._document_type = (
+            document_type
+            if document_type in {"patent", "research_paper", "review_paper"}
+            else "research_paper"
+        )
         patent = self._document_type == "patent"
         self.authors_label.setText("발명자" if patent else "저자")
         self.venue_label.setVisible(not patent)

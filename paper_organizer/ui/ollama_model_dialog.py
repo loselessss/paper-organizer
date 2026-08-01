@@ -493,7 +493,11 @@ class OllamaModelDialog(QDialog):
             recommendation = (
                 f"★ {entry.recommendation_rank}"
                 if entry.recommendation_rank is not None
-                else ""
+                else (
+                    f"다운로드 {entry.download_priority}"
+                    if entry.download_priority is not None
+                    else ""
+                )
             )
             if entry.installed:
                 owner = "앱 관리" if entry.managed_by_app else "공유/기존"

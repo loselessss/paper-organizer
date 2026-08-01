@@ -43,6 +43,7 @@ from paper_organizer.core.classifier import (
     taxonomy_category_names,
 )
 from paper_organizer.core.discovery import DiscoveryTracker, iter_pdf_candidates
+from paper_organizer.core.document_type import PATENT, RESEARCH_PAPER, classify_document_type
 from paper_organizer.core.document_identity import (
     PdfIdentityError,
     build_identity_from_pages,
@@ -625,6 +626,7 @@ def _history_has_explicit_user_title_change(
     """Protect a generic title when a later user revision actually selected it."""
 
     previous: str | None = None
+    seen = False
     for revision in history:
         metadata = revision.get("metadata")
         if not isinstance(metadata, dict):
@@ -634,9 +636,31 @@ def _history_has_explicit_user_title_change(
             continue
         title = " ".join(str(bibliography.get("title") or "").split())
         changed_by = str(revision.get("changed_by") or "")
-        if changed_by.startswith("user") and (previous is None or title != previous):
+        if seen and changed_by.startswith("user") and title != previous:
             return True
         previous = title
+        seen = True
+    return False
+
+
+def _history_has_explicit_user_bibliography_change(
+    history: Iterable[dict[str, Any]], field_name: str
+) -> bool:
+    """Return whether a later user revision actually changed a bibliography field."""
+
+    previous: Any = None
+    seen = False
+    for revision in history:
+        metadata = revision.get("metadata")
+        bibliography = metadata.get("bibliography") if isinstance(metadata, dict) else None
+        if not isinstance(bibliography, dict):
+            continue
+        value = bibliography.get(field_name)
+        changed_by = str(revision.get("changed_by") or "")
+        if seen and changed_by.startswith("user") and value != previous:
+            return True
+        previous = value
+        seen = True
     return False
 
 
@@ -672,6 +696,7 @@ def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadat
         title=title,
         authors=authors,
         year=int(match.group(0)) if match else None,
+        document_type=classify_document_type(page_texts).document_type,
     )
 
 
@@ -863,6 +888,9 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
     text = " ".join(page_texts).casefold()
     if len(text.strip()) < 500:
         return "needs_ocr", "추출된 본문이 너무 적어 OCR 또는 수동 확인이 필요합니다."
+    decision = classify_document_type(page_texts)
+    if decision.document_type == PATENT:
+        return "patent_likely", decision.reason
     patent_markers = [
         marker
         for marker in (
@@ -879,7 +907,7 @@ def _detection(page_texts: list[str]) -> tuple[str, str]:
         )
         if marker in text
     ]
-    if len(patent_markers) >= 2:
+    if False and len(patent_markers) >= 2:
         return "patent_likely", f"특허 문서 표식 확인: {', '.join(patent_markers)}"
     markers = [marker for marker in ("abstract", "introduction", "references", "doi") if marker in text]
     if len(markers) >= 2:
@@ -2887,6 +2915,48 @@ class LibraryWorkflowController:
             self._library_cache = None
         return repaired, tuple(problems)
 
+    def repair_legacy_user_bibliography_sources(self) -> tuple[int, tuple[str, ...]]:
+        """Unlock bibliography fields mislabeled as user edits by old imports."""
+
+        _input_dir, root = self.configured_paths()
+        repaired = 0
+        problems: list[str] = []
+        for paperpack in iter_paperpacks(root):
+            try:
+                record = load_paperpack_metadata(paperpack)
+                curation = record.get("curation")
+                if not isinstance(curation, dict):
+                    continue
+                sources = curation.get("field_sources")
+                locked = set(curation.get("locked_fields", []))
+                if not isinstance(sources, dict):
+                    continue
+                history = load_paperpack_history(paperpack)
+                changed = False
+                for field_name in ("title", "authors", "year", "venue"):
+                    path = f"bibliography.{field_name}"
+                    if sources.get(path) != "user" or path in locked:
+                        continue
+                    if _history_has_explicit_user_bibliography_change(history, field_name):
+                        continue
+                    sources[path] = "auto:regex"
+                    changed = True
+                if not changed:
+                    continue
+                curation["revision"] = int(curation.get("revision", 0)) + 1
+                curation["last_edited_at"] = _now_iso()
+                curation["last_edited_by"] = "auto:bibliography-history-repair"
+                record.setdefault("workflow", {})["updated_at"] = _now_iso()
+                update_paperpack(paperpack, record, changed_by="auto:bibliography-history-repair")
+                repaired += 1
+            except (OSError, TypeError, ValueError, PaperPackError) as exc:
+                problems.append(f"{paperpack.name}: 서지 출처 복구 실패: {exc}")
+        if repaired:
+            rebuild_library_index(root)
+            rebuild_search_index(root)
+            self._library_cache = None
+        return repaired, tuple(problems)
+
     def list_library(self, query: str = "") -> list[LibraryEntry]:
         _input_dir, root = self.configured_paths()
         normalized_query = " ".join(query.casefold().split())
@@ -3460,7 +3530,9 @@ def _validate_metadata(metadata: EditablePaperMetadata) -> None:
 
 
 def _apply_metadata(record: dict[str, Any], metadata: EditablePaperMetadata) -> None:
-    document_type = "patent" if metadata.document_type == "patent" else "paper"
+    document_type = metadata.document_type
+    if document_type not in {"patent", "research_paper", "review_paper"}:
+        document_type = RESEARCH_PAPER
     record.setdefault("document", {})["type"] = document_type
     record.setdefault("bibliography", {}).update(
         {
@@ -3531,9 +3603,7 @@ def _new_sidecar(
         "detection": {
             "is_academic_paper": item.detection_status == "academic_likely",
             "is_patent": item.detection_status == "patent_likely",
-            "document_type": (
-                "patent" if item.detection_status == "patent_likely" else "paper"
-            ),
+            "document_type": metadata.document_type,
             "confidence": 0.85 if _is_supported_document(item.detection_status) else 0.0,
             "reason": item.detection_reason,
         },
@@ -3575,4 +3645,15 @@ def _new_sidecar(
         # Keep it replaceable so AI can correct it while preserving a genuinely
         # edited title as a user-owned field.
         record["curation"]["field_sources"]["bibliography.title"] = "auto:regex"
+    if field_source == "user":
+        # Storing an unchanged scan preview is not a manual bibliography edit.
+        unchanged = {
+            "bibliography.title": metadata.title.strip() == item.metadata.title.strip(),
+            "bibliography.authors": metadata.authors == item.metadata.authors,
+            "bibliography.year": metadata.year == item.metadata.year,
+            "bibliography.venue": metadata.venue.strip() == item.metadata.venue.strip(),
+        }
+        for path, is_unchanged in unchanged.items():
+            if is_unchanged:
+                record["curation"]["field_sources"][path] = "auto:regex"
     return record

@@ -14,6 +14,7 @@ import fitz
 
 from paper_organizer import __version__
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
+from paper_organizer.core.document_type import PATENT, classify_document_type
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
     is_generic_document_heading,
@@ -106,6 +107,7 @@ class SummaryPreview:
     included_sections: tuple[str, ...] = ()
     output_language: str = "ko"
     summary_strategy: str = "direct"
+    document_type: str = "research_paper"
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,10 +342,8 @@ def _prepared_from_chunks(
         re.sub(r"^\[PDF PAGE \d+\]\s*\n?", "", chunk, count=1)
         for chunk in chunks
     ]
-    extracted_claims = _extract_patent_claims(page_texts)
-    is_patent = bool(extracted_claims) or _looks_like_patent(
-        "\n".join(page_texts[:2])
-    )
+    document_type = classify_document_type(page_texts).document_type
+    is_patent = document_type == PATENT
     if is_patent:
         page_texts = [_remove_patent_page_markers(text) for text in page_texts]
     patent_claims_text = (
@@ -387,6 +387,7 @@ def _prepared_from_chunks(
             if _uses_hierarchical_summary(settings, model)
             else "direct"
         ),
+        document_type=document_type,
     )
     return PreparedSummary(
         preview=preview,
@@ -451,7 +452,7 @@ def run_prepared_summary(
                     document_text=prepared.bibliography_text,
                     cloud_consent=consent,
                     context_window=prepared.preview.context_window,
-                    is_patent=_looks_like_patent(prepared.bibliography_text),
+                    is_patent=prepared.preview.document_type == PATENT,
                 ),
             )
             if len(bibliography_verified_fields) < 4:
@@ -465,9 +466,8 @@ def run_prepared_summary(
         "allowed_categories": _allowed_categories(settings),
         "context_window": prepared.preview.context_window,
         "output_language": settings.summary_language,
-        "is_patent": _looks_like_patent(
-            f"{prepared.bibliography_text}\n{prepared.document_text[:8_000]}"
-        ),
+        "is_patent": prepared.preview.document_type == PATENT,
+        "document_type": prepared.preview.document_type,
     }
     hierarchical = (
         prepared.preview.summary_strategy == "hierarchical"
@@ -490,6 +490,8 @@ def run_prepared_summary(
                         prompt_version=(
                             "patent-summary-v1-section"
                             if request_options["is_patent"]
+                            else "review-summary-v1-section"
+                            if prepared.preview.document_type == "review_paper"
                             else "paper-summary-v9-section"
                         ),
                         stage="section",
@@ -509,6 +511,8 @@ def run_prepared_summary(
                 prompt_version=(
                     "patent-summary-v1-hierarchical"
                     if request_options["is_patent"]
+                    else "review-summary-v1-hierarchical"
+                    if prepared.preview.document_type == "review_paper"
                     else "paper-summary-v9-hierarchical"
                 ),
                 stage="synthesis",
@@ -539,6 +543,8 @@ def run_prepared_summary(
                 prompt_version=(
                     "patent-summary-v1-direct"
                     if request_options["is_patent"]
+                    else "review-summary-v1-direct"
+                    if prepared.preview.document_type == "review_paper"
                     else "paper-summary-v9-direct"
                 ),
                 stage="direct",
