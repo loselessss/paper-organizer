@@ -32,6 +32,7 @@ from paper_organizer.infra.ollama_installer import (
     inspect_runtime,
 )
 from paper_organizer.infra.ollama_models import OllamaOperationCancelled
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class _RuntimeSetupWorker(QThread):
@@ -41,7 +42,6 @@ class _RuntimeSetupWorker(QThread):
 
     def __init__(self, allow_install: bool, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self._allow_install = allow_install
 
     def run(self) -> None:
@@ -124,6 +124,7 @@ class OllamaModelDialog(QDialog):
         initial_model: str = "",
     ) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self._preferred_model = initial_model.strip()
         self._worker: _ModelOperationWorker | None = None
@@ -277,10 +278,6 @@ class OllamaModelDialog(QDialog):
         self.cancel_button.clicked.connect(self._cancel_download)
         self.delete_button.clicked.connect(self._delete)
         self._update_actions()
-        self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowContextHelpButtonHint
-        )
-
     def refresh(self) -> None:
         if self._busy():
             return

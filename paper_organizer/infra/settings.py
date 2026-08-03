@@ -26,6 +26,7 @@ class AppSettings:
     close_behavior: str = "quit"
     input_dir: str = ""
     watch_folders: list[str] = field(default_factory=list)
+    watch_subdirectories: bool = False
     library_root: str = ""
     remove_source_after_import: bool = False
     auto_enabled: bool = False
@@ -79,6 +80,8 @@ class AppSettings:
             raise ValueError("background_analysis_enabled must be a boolean")
         if not isinstance(self.auto_organize_academic, bool):
             raise ValueError("auto_organize_academic must be a boolean")
+        if not isinstance(self.watch_subdirectories, bool):
+            raise ValueError("watch_subdirectories must be a boolean")
         if (
             not isinstance(self.watch_folders, list)
             or any(not isinstance(path, str) or not path.strip() for path in self.watch_folders)
@@ -198,11 +201,22 @@ class AppSettings:
                 raise ValueError("input_dir and library_root must be different")
         if self.library_root:
             library_path = Path(self.library_root).expanduser().resolve()
-            for folder in self.watch_folders:
-                if os.path.normcase(str(Path(folder).expanduser().resolve())) == os.path.normcase(
-                    str(library_path)
-                ):
+            effective_watch_folders = self.watch_folders or (
+                [self.input_dir] if self.input_dir else []
+            )
+            for folder in effective_watch_folders:
+                watch_path = Path(folder).expanduser().resolve()
+                if os.path.normcase(str(watch_path)) == os.path.normcase(str(library_path)):
                     raise ValueError("watch folders and library_root must be different")
+                if self.watch_subdirectories:
+                    try:
+                        library_path.relative_to(watch_path)
+                    except ValueError:
+                        pass
+                    else:
+                        raise ValueError(
+                            "library_root cannot be inside a recursive watch folder"
+                        )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

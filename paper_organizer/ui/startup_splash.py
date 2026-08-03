@@ -39,11 +39,18 @@ def app_icon_path() -> Path:
 
 
 def create_splash() -> QSplashScreen:
+    canvas = QPixmap(760, 430)
+    canvas.fill(QColor("#0b1e3a"))
     source = QPixmap(str(splash_asset_path()))
-    if source.isNull():
-        source = QPixmap(760, 430)
-        source.fill(QColor("#0b1e3a"))
-    canvas = source.scaled(760, 430, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    if not source.isNull():
+        scaled = source.scaled(
+            760,
+            430,
+            Qt.KeepAspectRatioByExpanding,
+            Qt.SmoothTransformation,
+        )
+        if not scaled.isNull():
+            canvas = scaled
     splash = QSplashScreen(canvas, Qt.WindowStaysOnTopHint)
     panel = QWidget(splash)
     panel.setGeometry(0, 0, 760, 148)
@@ -59,10 +66,15 @@ def create_splash() -> QSplashScreen:
     version.setStyleSheet(
         "color: #bcefff; background: transparent; font-family: 'Segoe UI'; font-size: 11pt;"
     )
-    creator = QLabel(f"Created by {CREATOR}", panel)
-    creator.setGeometry(36, 101, 420, 25)
+    creator = QLabel(f"Created by {CREATOR}", splash)
+    creator.setObjectName("splashCreatorLabel")
+    creator.setGeometry(430, 398, 300, 22)
+    creator.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     creator.setStyleSheet(
-        "color: #d8e4f3; background: transparent; font-family: 'Segoe UI'; font-size: 11pt;"
+        "color: rgba(216, 228, 243, 190); "
+        "background-color: rgba(4, 16, 37, 105); "
+        "border-radius: 4px; padding: 1px 6px; "
+        "font-family: 'Segoe UI'; font-size: 8pt;"
     )
     splash.showMessage(
         "PaperPack과 기존 색인을 읽는 중…",

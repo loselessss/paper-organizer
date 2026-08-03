@@ -9,7 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 
-from PyQt5.QtCore import QMimeData, QProcess, Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import (
+    QItemSelectionModel,
+    QMimeData,
+    QProcess,
+    Qt,
+    QThread,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt5.QtGui import QColor, QDrag
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -58,6 +66,7 @@ from paper_organizer.application.library_translation import (
 )
 from paper_organizer.application.selection_ai import SelectionAiService
 from paper_organizer.integrations.spdf_bridge import SpdfSelection, open_pdf
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
@@ -276,11 +285,23 @@ def _trash_duplicate(entry: TrashEntry) -> str:
     return " · ".join(details)
 
 
+def _trash_reason(entry: TrashEntry) -> str:
+    actions = {
+        "unorganized_duplicate": "확인된 중복 후보로 제외 목록에 보관했습니다.",
+        "discarded_new_pdf": "사용자가 새 PDF 검토에서 분석 대상에서 제외했습니다.",
+        "library_entry": "사용자가 라이브러리에서 제거해 앱 휴지통에 보관했습니다.",
+    }
+    action = actions.get(entry.kind, "제외 목록에 보관된 파일입니다.")
+    evidence = " ".join(entry.detection_reason.split())
+    return f"{action} 판정 근거: {evidence}" if evidence else action
+
+
 class TrashRestoreDialog(QDialog):
     """Show recoverable excluded PDFs in a spacious, multi-select table."""
 
     def __init__(self, entries: list[TrashEntry], parent=None) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._entries = entries
         self.setWindowTitle("제외 파일 복원")
         self.setMinimumSize(900, 460)
@@ -294,9 +315,9 @@ class TrashRestoreDialog(QDialog):
         description.setWordWrap(True)
         layout.addWidget(description)
 
-        self.table = QTableWidget(len(entries), 4)
+        self.table = QTableWidget(len(entries), 5)
         self.table.setHorizontalHeaderLabels(
-            ["파일", "판정", "중복", "추정 제목"]
+            ["파일", "판정", "제외 사유", "중복", "추정 제목"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -308,11 +329,13 @@ class TrashRestoreDialog(QDialog):
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
 
         for row, entry in enumerate(entries):
             values = [
                 entry.original_path.name,
                 _trash_judgment(entry),
+                _trash_reason(entry),
                 _trash_duplicate(entry),
                 entry.estimated_title or entry.original_path.stem,
             ]
@@ -320,9 +343,9 @@ class TrashRestoreDialog(QDialog):
                 cell = QTableWidgetItem(value)
                 if column == 0:
                     cell.setToolTip(str(entry.original_path))
-                elif column == 1 and entry.detection_reason:
-                    cell.setToolTip(entry.detection_reason)
-                elif column == 2 and str(entry.duplicate_of) not in {"", "."}:
+                elif column == 2:
+                    cell.setToolTip(value)
+                elif column == 3 and str(entry.duplicate_of) not in {"", "."}:
                     cell.setToolTip(str(entry.duplicate_of))
                 self.table.setItem(row, column, cell)
         if entries:
@@ -332,6 +355,16 @@ class TrashRestoreDialog(QDialog):
             lambda _row, _column: self._accept_selection()
         )
         layout.addWidget(self.table, 1)
+
+        self.reason_label = QLabel()
+        self.reason_label.setWordWrap(True)
+        self.reason_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.reason_label.setStyleSheet(
+            "QLabel { padding: 8px; border: 1px solid #b8bec7; "
+            "border-radius: 4px; background: palette(base); }"
+        )
+        layout.addWidget(QLabel("선택 항목 제외 사유"))
+        layout.addWidget(self.reason_label)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -350,6 +383,9 @@ class TrashRestoreDialog(QDialog):
 
     def _update_restore_button(self) -> None:
         self.restore_button.setEnabled(bool(self.selected_entries()))
+        row = self.table.currentRow()
+        reason = _trash_reason(self._entries[row]) if row >= 0 else ""
+        self.reason_label.setText(reason or "선택한 항목의 사유 기록이 없습니다.")
 
     def _accept_selection(self) -> None:
         if self.selected_entries():
@@ -1749,6 +1785,17 @@ class LibraryWidget(QWidget):
             self.refresh(True)
 
     def refresh(self, force: bool = False) -> None:
+        selected_paths = {
+            str(cell.data(Qt.UserRole))
+            for cell in self.table.selectedItems()
+            if cell.column() == 0
+        }
+        current_cell = self.table.item(self.table.currentRow(), 0)
+        current_path = (
+            str(current_cell.data(Qt.UserRole)) if current_cell is not None else ""
+        )
+        vertical_position = self.table.verticalScrollBar().value()
+        horizontal_position = self.table.horizontalScrollBar().value()
         if force:
             self._controller.invalidate_library_cache()
         query = self.search_edit.text().strip()
@@ -1763,6 +1810,7 @@ class LibraryWidget(QWidget):
             return
         sort_column = self.table.horizontalHeader().sortIndicatorSection()
         sort_order = self.table.horizontalHeader().sortIndicatorOrder()
+        signals_were_blocked = self.table.blockSignals(True)
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self._entries))
         queue_items = self._controller.analysis_queue()
@@ -1843,12 +1891,43 @@ class LibraryWidget(QWidget):
         self.table.setSortingEnabled(True)
         if sort_column >= 0:
             self.table.sortItems(sort_column, sort_order)
+        selection_model = self.table.selectionModel()
+        selection_model.clearSelection()
+        current_index = None
+        first_selected_index = None
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            path = str(cell.data(Qt.UserRole)) if cell is not None else ""
+            index = self.table.model().index(row, 0)
+            if path in selected_paths:
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                )
+                first_selected_index = first_selected_index or index
+            if path == current_path:
+                current_index = index
         self.status_label.setText(f"라이브러리 문서 {len(self._entries)}개")
         self.reanalyze_all_button.setEnabled(bool(self._entries))
         if self._entries:
-            self.table.selectRow(0)
+            if current_index is not None:
+                selection_model.setCurrentIndex(
+                    current_index,
+                    QItemSelectionModel.NoUpdate,
+                )
+            elif first_selected_index is not None:
+                selection_model.setCurrentIndex(
+                    first_selected_index,
+                    QItemSelectionModel.NoUpdate,
+                )
+            else:
+                self.table.selectRow(0)
+            self.table.verticalScrollBar().setValue(vertical_position)
+            self.table.horizontalScrollBar().setValue(horizontal_position)
+            self.table.blockSignals(signals_were_blocked)
             self._selection_changed()
         else:
+            self.table.blockSignals(signals_were_blocked)
             self.form.set_metadata(None)
             self._render_analysis(None)
             self.save_button.setEnabled(False)

@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class _MigrationWorker(QThread):
@@ -224,6 +225,7 @@ class LegacyMigrationDialog(QDialog):
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self.setWindowTitle("레거시 라이브러리 변환")
         self.setMinimumSize(760, 480)
         layout = QVBoxLayout(self)

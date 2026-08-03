@@ -33,6 +33,7 @@ from paper_organizer.core.model_recommendation import (
     recommendation_tier_overview,
 )
 from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class _HardwareScanWorker(QThread):
@@ -73,6 +74,7 @@ class _OllamaRestartWorker(QThread):
 class AiSettingsDialog(QDialog):
     def __init__(self, controller: AiSettingsController, parent=None) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self.setWindowTitle("요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1")
         screen = self.screen() or QApplication.primaryScreen()

@@ -97,6 +97,9 @@ class UiSmokeTests(unittest.TestCase):
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
+            self.assertFalse(
+                bool(dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+            )
             self.assertEqual(
                 dialog.windowTitle(),
                 "요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1",
@@ -191,6 +194,17 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(
                 window.windowTitle(), f"Paper Organizer — v{__version__}"
             )
+            self.assertEqual(window._automatic_update_timer.interval(), 60 * 60 * 1000)
+            self.assertFalse(window._automatic_update_timer.isActive())
+            with mock.patch.object(
+                window._update_schedule,
+                "mark_checked",
+            ) as mark_checked:
+                window._update_check_failed("network unavailable", False)
+                window._update_check_finished()
+                mark_checked.assert_not_called()
+                window._update_check_completed(None, False)
+                mark_checked.assert_called_once_with()
             with (
                 mock.patch(
                     "paper_organizer.ui.main_window.QMessageBox.information"
@@ -265,11 +279,18 @@ class UiSmokeTests(unittest.TestCase):
 
             folder_dialog = FolderSettingsDialog(workflow_controller)
             self.assertEqual(folder_dialog.windowTitle(), "요약 감시 옵션")
+            self.assertFalse(
+                bool(
+                    folder_dialog.windowFlags()
+                    & Qt.WindowContextHelpButtonHint
+                )
+            )
             self.assertEqual(folder_dialog.watch_list.count(), 1)
             self.assertTrue(
                 folder_dialog.watch_list.item(0).text().endswith("Downloads")
             )
             self.assertEqual(folder_dialog.interval_spin.value(), 300)
+            self.assertFalse(folder_dialog.watch_subdirectories_check.isChecked())
             self.assertFalse(folder_dialog.remove_source_check.isChecked())
             initial_categories = folder_dialog.focus_list.count()
             with mock.patch(
@@ -343,6 +364,11 @@ class UiSmokeTests(unittest.TestCase):
                 {action.text() for action in window.findChildren(QAction)},
             )
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)
+            creator_label = splash.findChild(QLabel, "splashCreatorLabel")
+            self.assertIsNotNone(creator_label)
+            self.assertGreaterEqual(creator_label.geometry().left(), 400)
+            self.assertGreaterEqual(creator_label.geometry().top(), 390)
+            self.assertIn("font-size: 8pt", creator_label.styleSheet())
             splash.close()
             model_dialog.close()
             dialog.close()
@@ -525,6 +551,7 @@ class UiSmokeTests(unittest.TestCase):
             dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):
+        from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QLabel, QMessageBox
 
         from paper_organizer.application.update_service import (
@@ -556,6 +583,9 @@ class UiSmokeTests(unittest.TestCase):
             asset=asset,
         )
         dialog = UpdateDialog(GitHubUpdateService("1.3.0"), update)
+        self.assertFalse(
+            bool(dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+        )
 
         labels = {label.text() for label in dialog.findChildren(QLabel)}
         self.assertIn(
@@ -572,7 +602,7 @@ class UiSmokeTests(unittest.TestCase):
         dialog.close()
 
     def test_excluded_file_restore_dialog_uses_wide_multi_select_table(self):
-        from PyQt5.QtCore import QItemSelectionModel
+        from PyQt5.QtCore import QItemSelectionModel, Qt
 
         from paper_organizer.application.library_workflow import TrashEntry
         from paper_organizer.ui.library_workflow_widget import TrashRestoreDialog
@@ -605,21 +635,26 @@ class UiSmokeTests(unittest.TestCase):
         ]
         dialog = TrashRestoreDialog(entries)
         self.assertGreaterEqual(dialog.minimumWidth(), 900)
-        self.assertEqual(dialog.table.columnCount(), 4)
+        self.assertFalse(
+            bool(dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+        )
+        self.assertEqual(dialog.table.columnCount(), 5)
         self.assertEqual(
             [
                 dialog.table.horizontalHeaderItem(column).text()
-                for column in range(4)
+                for column in range(5)
             ],
-            ["파일", "판정", "중복", "추정 제목"],
+            ["파일", "판정", "제외 사유", "중복", "추정 제목"],
         )
         self.assertEqual(dialog.table.item(0, 1).text(), "학술 논문")
+        self.assertIn("학술 문서 특징", dialog.table.item(0, 2).text())
         self.assertEqual(
-            dialog.table.item(0, 2).text(),
+            dialog.table.item(0, 3).text(),
             "Published Paper · 같은 문헌 · 0.97",
         )
         self.assertEqual(dialog.table.item(1, 1).text(), "특허")
-        self.assertEqual(dialog.table.item(1, 2).text(), "없음")
+        self.assertIn("사용자가 새 PDF 검토", dialog.table.item(1, 2).text())
+        self.assertEqual(dialog.table.item(1, 3).text(), "없음")
         dialog.table.selectionModel().select(
             dialog.table.model().index(1, 0),
             QItemSelectionModel.Select | QItemSelectionModel.Rows,
@@ -628,7 +663,23 @@ class UiSmokeTests(unittest.TestCase):
             [entry.operation_id for entry in dialog.selected_entries()],
             ["one", "two"],
         )
+        dialog.table.setCurrentCell(1, 0)
+        self.assertIn("사용자가 새 PDF 검토", dialog.reason_label.text())
         dialog.close()
+
+    def test_splash_uses_a_non_null_fallback_when_asset_is_missing(self):
+        from paper_organizer.ui.startup_splash import create_splash
+
+        with tempfile.TemporaryDirectory() as temp:
+            missing = Path(temp) / "missing-splash.png"
+            with mock.patch(
+                "paper_organizer.ui.startup_splash.splash_asset_path",
+                return_value=missing,
+            ):
+                splash = create_splash()
+
+        self.assertFalse(splash.pixmap().isNull())
+        splash.close()
 
     def test_collection_review_supports_batch_store_without_success_popup(self):
         from PyQt5.QtCore import QItemSelectionModel
@@ -1223,6 +1274,10 @@ class UiSmokeTests(unittest.TestCase):
             entry.record.pop("workflow")
             entry.record["analysis"].pop("last_attempt")
             widget.refresh(True)
+            self.assertTrue(widget.select_path(second_pack))
+            widget.refresh(True)
+            self.assertEqual(widget._selected().sidecar_path, second_pack)
+            self.assertTrue(widget.select_path(paperpack))
             widget.table.selectionModel().select(
                 widget.table.model().index(1, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows,

@@ -25,6 +25,7 @@ from paper_organizer.application.update_service import (
     UpdateCancelled,
     UpdateDownloadProgress,
 )
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 def _size_text(size: int) -> str:
@@ -92,6 +93,7 @@ class UpdateDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._service = service
         self._update = update
         self._worker: _UpdateDownloadWorker | None = None

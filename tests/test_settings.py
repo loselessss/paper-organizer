@@ -183,6 +183,27 @@ class SettingsTests(unittest.TestCase):
             save_settings(settings, path)
             self.assertEqual(load_settings(path).watch_folders, [first, second])
 
+    def test_recursive_watch_setting_round_trips(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            settings = AppSettings(watch_subdirectories=True)
+
+            save_settings(settings, path)
+
+            self.assertTrue(load_settings(path).watch_subdirectories)
+
+    def test_recursive_watch_rejects_library_inside_watch_folder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings = AppSettings(
+                watch_folders=[str(root)],
+                watch_subdirectories=True,
+                library_root=str(root / "library"),
+            )
+
+            with self.assertRaises(ValueError):
+                settings.validate()
+
     def test_duplicate_watch_folders_are_rejected(self):
         settings = AppSettings(watch_folders=["C:/papers", "c:/PAPERS"])
         with self.assertRaises(ValueError):

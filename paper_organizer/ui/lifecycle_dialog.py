@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.lifecycle import LifecycleSettingsController
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class LifecyclePreferencesDialog(QDialog):
@@ -26,6 +27,7 @@ class LifecyclePreferencesDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self.setWindowTitle(
             "Paper Organizer 첫 실행 설정" if first_run else "시작 및 종료 설정"

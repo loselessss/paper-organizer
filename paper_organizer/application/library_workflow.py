@@ -1309,6 +1309,7 @@ class LibraryWorkflowController:
         research_categories: list[str] | None = None,
         focus_categories: list[str] | None = None,
         watch_folders: list[Path] | None = None,
+        watch_subdirectories: bool | None = None,
     ) -> AppSettings:
         requested_inputs = watch_folders if watch_folders is not None else [input_dir]
         input_paths: list[Path] = []
@@ -1330,6 +1331,21 @@ class LibraryWorkflowController:
         if any(path == library_path for path in input_paths):
             raise LibraryWorkflowError("감시 폴더와 라이브러리 폴더는 달라야 합니다.")
         settings = self.settings()
+        recursive_watch = (
+            settings.watch_subdirectories
+            if watch_subdirectories is None
+            else bool(watch_subdirectories)
+        )
+        if recursive_watch:
+            for path in input_paths:
+                try:
+                    library_path.relative_to(path)
+                except ValueError:
+                    continue
+                raise LibraryWorkflowError(
+                    "하위 폴더 감시를 사용할 때 PaperPack 라이브러리는 "
+                    "감시 폴더 밖에 두어야 합니다."
+                )
         previous_library = (
             Path(settings.library_root).expanduser().resolve()
             if settings.library_root
@@ -1356,6 +1372,7 @@ class LibraryWorkflowController:
             library_path.mkdir(parents=True, exist_ok=True)
         settings.input_dir = str(input_path)
         settings.watch_folders = [str(path) for path in input_paths]
+        settings.watch_subdirectories = recursive_watch
         settings.library_root = str(library_path)
         settings.auto_enabled = bool(auto_enabled)
         if resource_profile is not None:
@@ -1392,11 +1409,17 @@ class LibraryWorkflowController:
                     ScanProblem(input_dir, "감시 폴더가 없거나 접근할 수 없습니다.")
                 )
                 continue
-            candidates.extend(iter_pdf_candidates(input_dir))
+            candidates.extend(
+                iter_pdf_candidates(
+                    input_dir,
+                    recursive=settings.watch_subdirectories,
+                )
+            )
             tracker = self._trackers.setdefault(input_dir, DiscoveryTracker())
             stable.extend(
                 tracker.scan(
                     input_dir,
+                    recursive=settings.watch_subdirectories,
                     minimum_age_seconds=settings.minimum_age_seconds,
                 )
             )

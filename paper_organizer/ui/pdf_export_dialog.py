@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.core.paperpack import extract_paperpack_pdfs, iter_paperpacks
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class _ExportWorker(QThread):
@@ -44,6 +45,7 @@ class PdfExportDialog(QDialog):
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self._worker: _ExportWorker | None = None
         self.setWindowTitle("PDF 환원 (일괄 추출)")

@@ -250,6 +250,48 @@ class LibraryWorkflowTests(unittest.TestCase):
                 controller.configured_input_dirs(), (first.resolve(), second.resolve())
             )
 
+    def test_subdirectories_are_scanned_only_when_enabled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            nested = input_dir / "journal" / "2026"
+            nested.mkdir(parents=True)
+            write_pdf(nested / "nested-paper.pdf", academic_pages())
+
+            self.assertEqual(self._scan_twice(controller).items, ())
+
+            controller.save_paths(
+                input_dir,
+                library,
+                auto_enabled=False,
+                auto_organize_academic=False,
+                watch_subdirectories=True,
+            )
+            result = self._scan_twice(controller)
+
+            self.assertEqual(len(result.items), 1)
+            self.assertTrue(
+                os.path.samefile(result.items[0].path, nested / "nested-paper.pdf")
+            )
+
+    def test_recursive_watch_rejects_library_inside_watch_folder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "documents"
+            input_dir.mkdir()
+            controller = LibraryWorkflowController(root / "settings.json")
+
+            with self.assertRaisesRegex(
+                Exception,
+                "PaperPack 라이브러리는 감시 폴더 밖",
+            ):
+                controller.save_paths(
+                    input_dir,
+                    input_dir / "library",
+                    auto_enabled=False,
+                    watch_subdirectories=True,
+                )
+
     def test_organize_writes_paperpack_and_rebuilds_index(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

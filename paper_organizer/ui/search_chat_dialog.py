@@ -26,6 +26,7 @@ from paper_organizer.application.conversational_search import (
     ConversationalSearchResult,
     PreparedSearch,
 )
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class _PrepareSearchWorker(QThread):
@@ -91,12 +92,12 @@ class SearchChatDialog(QDialog):
         self, controller: ConversationalSearchController, parent=None
     ) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self._prepared: PreparedSearch | None = None
         self._worker: QThread | None = None
         self._auto_answer_after_prepare = False
         self.setWindowTitle("자연어로 논문 찾기")
-        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self.resize(980, 720)
 
         root = QVBoxLayout(self)

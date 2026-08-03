@@ -55,6 +55,9 @@ from .startup_splash import app_icon_path
 from .update_dialog import UpdateCheckWorker, UpdateDialog
 
 
+AUTOMATIC_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000
+
+
 class PaperOrganizerWindow(QMainWindow):
     def __init__(
         self,
@@ -77,6 +80,11 @@ class PaperOrganizerWindow(QMainWindow):
         self._update_service = GitHubUpdateService(__version__)
         self._update_schedule = UpdateCheckSchedule(ai_settings.settings_path)
         self._update_worker: UpdateCheckWorker | None = None
+        self._automatic_update_timer = QTimer(self)
+        self._automatic_update_timer.setInterval(AUTOMATIC_UPDATE_POLL_INTERVAL_MS)
+        self._automatic_update_timer.timeout.connect(
+            lambda: self.check_for_updates(False)
+        )
         self._available_update: AvailableUpdate | None = None
         self._pending_installer: Path | None = None
         self.setWindowTitle(f"Paper Organizer — v{__version__}")
@@ -203,6 +211,7 @@ class PaperOrganizerWindow(QMainWindow):
         self.statusBar().showMessage("다운로드 폴더의 새 논문을 검색할 준비가 되었습니다.")
         if getattr(sys, "frozen", False):
             QTimer.singleShot(5000, lambda: self.check_for_updates(False))
+            self._automatic_update_timer.start()
 
     def _analysis_progress_changed(self, message: str, busy: bool) -> None:
         self._analysis_status_label.setText(message)
@@ -529,6 +538,10 @@ class PaperOrganizerWindow(QMainWindow):
     def _update_check_completed(
         self, update: AvailableUpdate | None, manual: bool
     ) -> None:
+        try:
+            self._update_schedule.mark_checked()
+        except Exception:
+            pass
         if update is None:
             if manual:
                 QMessageBox.information(
@@ -557,10 +570,6 @@ class PaperOrganizerWindow(QMainWindow):
             QMessageBox.warning(self, "업데이트 확인 실패", message)
 
     def _update_check_finished(self) -> None:
-        try:
-            self._update_schedule.mark_checked()
-        except Exception:
-            pass
         worker = self._update_worker
         self._update_worker = None
         if worker is not None:

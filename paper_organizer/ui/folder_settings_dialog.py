@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
+from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class FolderSettingsDialog(QDialog):
@@ -36,6 +37,7 @@ class FolderSettingsDialog(QDialog):
 
     def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
         super().__init__(parent)
+        suppress_context_help_button(self)
         self._controller = controller
         self.setWindowTitle("요약 감시 옵션")
         self.setMinimumWidth(560)
@@ -69,6 +71,11 @@ class FolderSettingsDialog(QDialog):
         self.interval_spin.setToolTip("5초에서 1시간 사이로 설정할 수 있습니다.")
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
         self.auto_check = QCheckBox("설정한 주기로 가볍게 검색 (안정된 새 PDF만 1회 분석)")
+        self.watch_subdirectories_check = QCheckBox("감시 폴더의 하위 폴더도 포함")
+        self.watch_subdirectories_check.setToolTip(
+            "선택한 모든 감시 폴더 아래를 재귀적으로 검색합니다. "
+            "PaperPack 라이브러리는 감시 폴더 밖에 있어야 합니다."
+        )
         self.remove_source_check = QCheckBox(
             "paperpack 검증 완료 후 입력 폴더의 원본 PDF 삭제"
         )
@@ -86,6 +93,7 @@ class FolderSettingsDialog(QDialog):
         form.addRow("시스템 부하", self.profile_combo)
         form.addRow("스캔 주기", self.interval_spin)
         form.addRow("자동 감시", self.auto_check)
+        form.addRow("검색 범위", self.watch_subdirectories_check)
         form.addRow("자동 보관", self.auto_organize_check)
         form.addRow("입력 PDF", self.remove_source_check)
         root.addLayout(form)
@@ -149,6 +157,7 @@ class FolderSettingsDialog(QDialog):
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         self.interval_spin.setValue(settings.scan_interval_seconds)
         self.auto_check.setChecked(settings.auto_enabled)
+        self.watch_subdirectories_check.setChecked(settings.watch_subdirectories)
         self.remove_source_check.setChecked(settings.remove_source_after_import)
         self.auto_organize_check.setChecked(settings.auto_organize_academic)
         self._load_focus_categories(
@@ -323,6 +332,7 @@ class FolderSettingsDialog(QDialog):
                 research_categories=self._research_categories(),
                 focus_categories=self._checked_focus_categories(),
                 watch_folders=watch_folders,
+                watch_subdirectories=self.watch_subdirectories_check.isChecked(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))
