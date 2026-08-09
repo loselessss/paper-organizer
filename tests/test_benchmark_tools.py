@@ -51,7 +51,7 @@ class BenchmarkToolTests(unittest.TestCase):
                 hardware_profile={
                     "cpu_model": "Test CPU",
                     "memory_total_gb": 16,
-                    "model_disk_path": "C:/Users/Private/.ollama/models",
+                    "model_disk_path": "C:/TestData/.ollama/models",
                     "gpus": [{"name": "Test GPU"}],
                 }
             )
