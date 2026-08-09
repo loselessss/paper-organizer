@@ -112,8 +112,13 @@ class BackgroundAnalysisService:
         removed = cleanup() if cleanup is not None else 0
         return recovered + removed
 
-    def poll_interval(self) -> int:
-        return poll_interval_seconds(load_settings(self._settings_path).resource_profile)
+    def poll_interval(self, purpose: str = "automatic") -> int:
+        settings = load_settings(self._settings_path)
+        if purpose == "manual":
+            return settings.manual_analysis_interval_seconds
+        if purpose == "automatic":
+            return settings.automatic_analysis_interval_seconds
+        raise ValueError("purpose must be automatic or manual")
 
     def readiness(self, *, purpose: str = "background") -> AnalysisReadiness:
         settings = settings_for_summary_purpose(

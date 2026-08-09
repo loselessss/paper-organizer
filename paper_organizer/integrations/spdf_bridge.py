@@ -78,7 +78,8 @@ def _ensure_import_path() -> None:
     root = spdf_root()
     if not spdf_available():
         raise SpdfUnavailable(
-            "sPDF submodule이 없습니다. git submodule update --init --recursive를 실행하세요."
+            "이 Paper Organizer 배포본에 포함된 sPDF를 찾을 수 없습니다. "
+            "Paper Organizer를 다시 설치하세요."
         )
     value = str(root)
     if value not in sys.path:
@@ -125,20 +126,41 @@ def open_pdf(
     tab = window.open_in_tab(str(pdf_path))
     _attach_selection(tab, document_id, selection_callback)
     window.show()
+    window.raise_()
+    window.activateWindow()
     _windows.append(window)
     return window
+
+
+def active_spdf_window() -> Any | None:
+    """Return the most recently used visible sPDF top-level window."""
+
+    for window in reversed(tuple(_windows)):
+        try:
+            if window.isVisible():
+                return window
+        except RuntimeError:
+            _forget_window(window)
+    return None
 
 
 def _attach_selection(tab: Any, document_id: str, callback: Any) -> None:
     if hasattr(tab, "set_selection_document_id"):
         tab.set_selection_document_id(document_id)
-    if callback is None or not hasattr(tab, "selection_changed"):
+    if not hasattr(tab, "selection_changed"):
+        return
+    callbacks = getattr(tab, "_paper_organizer_selection_callbacks", [])
+    for previous in callbacks:
+        try:
+            tab.selection_changed.disconnect(previous)
+        except (RuntimeError, TypeError):
+            pass
+    tab._paper_organizer_selection_callbacks = []
+    if callback is None:
         return
     wrapper = lambda value: callback(_normalized_selection(value))
     tab.selection_changed.connect(wrapper)
-    callbacks = getattr(tab, "_paper_organizer_selection_callbacks", [])
-    callbacks.append(wrapper)
-    tab._paper_organizer_selection_callbacks = callbacks
+    tab._paper_organizer_selection_callbacks = [wrapper]
 
 
 def _forget_window(window: Any) -> None:

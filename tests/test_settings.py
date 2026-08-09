@@ -167,6 +167,19 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AppSettings(summary_timeout_seconds=3601).validate()
 
+    def test_analysis_intervals_are_independently_configurable(self):
+        settings = AppSettings(
+            automatic_analysis_interval_seconds=45,
+            manual_analysis_interval_seconds=3,
+        )
+        settings.validate()
+        self.assertEqual(settings.automatic_analysis_interval_seconds, 45)
+        self.assertEqual(settings.manual_analysis_interval_seconds, 3)
+        with self.assertRaises(ValueError):
+            AppSettings(automatic_analysis_interval_seconds=-1).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(manual_analysis_interval_seconds=3601).validate()
+
     def test_skipped_update_version_must_be_text(self):
         with self.assertRaises(ValueError):
             AppSettings(skipped_update_version=123).validate()

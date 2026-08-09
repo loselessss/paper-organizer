@@ -7,6 +7,7 @@ import fitz
 from paper_organizer.application.library_workflow import (
     _default_metadata,
     _repair_title_text,
+    _repeated_page_lines,
 )
 
 
@@ -39,6 +40,128 @@ def write_title_pdf(
 
 
 class TitleRepairTests(unittest.TestCase):
+    def test_visual_byline_replaces_incomplete_pdf_author_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "full-byline.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((50, 110), "Quantifying circulating cell-free", fontsize=22)
+            page.insert_text((50, 138), "DNA in humans", fontsize=22)
+            page.insert_text(
+                (50, 175),
+                "Romain Meddeb1,2, Zahra Al Amir Dache1,2 & Alain R. Thierry1,2",
+                fontsize=10,
+            )
+            page.insert_text(
+                (50, 215),
+                "To our knowledge this study examines circulating DNA variability.",
+                fontsize=9,
+            )
+            document.set_metadata(
+                {
+                    "title": "Quantifying circulating cell-free DNA in humans",
+                    "author": "Romain Meddeb",
+                }
+            )
+            document.save(path)
+            document.close()
+            reopened = fitz.open(path)
+            try:
+                pages = [page.get_text() for page in reopened]
+            finally:
+                reopened.close()
+
+            metadata = _default_metadata(path, pages)
+
+        self.assertEqual(
+            metadata.authors,
+            ["Romain Meddeb", "Zahra Al Amir Dache", "Alain R. Thierry"],
+        )
+
+    def test_title_repeated_on_wrapper_and_article_page_is_not_a_running_header(self):
+        title = "Effective Melanin Degradation by an Enzyme Complex"
+        pages = [
+            "ResearchGate\nSee discussions, stats, and author profiles for this publication\n"
+            f"Citations 12 Reads 300\n{title}",
+            f"{title}\nAuthors\nAbstract\nThis study examines melanin degradation. "
+            + "Experimental details and results are described here. " * 12,
+            "Methods\nThe enzyme complex was purified and tested. " * 15,
+        ]
+
+        repeated = _repeated_page_lines(pages)
+
+        self.assertNotIn(title.casefold(), repeated)
+
+    def test_repeated_running_header_is_not_used_as_title(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "running-header.pdf"
+            document = fitz.open()
+            for page_number in range(3):
+                page = document.new_page()
+                page.insert_text((50, 70), "JOURNAL RUNNING HEADER", fontsize=20)
+                if page_number == 0:
+                    page.insert_text(
+                        (50, 120),
+                        "A Reliable Method for Protein Folding",
+                        fontsize=18,
+                    )
+                    page.insert_text(
+                        (50, 145),
+                        "under Industrial Conditions",
+                        fontsize=18,
+                    )
+                page.insert_text(
+                    (50, 240),
+                    "Abstract and body text for font-size estimation.",
+                    fontsize=9,
+                )
+            document.save(path)
+            document.close()
+            reopened = fitz.open(path)
+            try:
+                pages = [page.get_text() for page in reopened]
+            finally:
+                reopened.close()
+
+            metadata = _default_metadata(path, pages)
+
+        self.assertEqual(
+            metadata.title,
+            "A Reliable Method for Protein Folding under Industrial Conditions",
+        )
+
+    def test_visual_title_keeps_a_wrapped_second_line(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "wrapped-title.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((50, 115), "Effective Melanin Degradation by a", fontsize=18)
+            page.insert_text(
+                (50, 140),
+                "Synergistic Laccase-Peroxidase Enzyme Complex",
+                fontsize=18,
+            )
+            page.insert_text((50, 175), "Jane Kim and John Lee", fontsize=11)
+            page.insert_text((50, 230), "Abstract This study examines enzymes.", fontsize=9)
+            document.set_metadata(
+                {"title": "Effective Melanin Degradation by a"}
+            )
+            document.save(path)
+            document.close()
+            reopened = fitz.open(path)
+            try:
+                pages = [page.get_text() for page in reopened]
+            finally:
+                reopened.close()
+
+            metadata = _default_metadata(path, pages)
+
+        self.assertEqual(
+            metadata.title,
+            "Effective Melanin Degradation by a "
+            "Synergistic Laccase-Peroxidase Enzyme Complex",
+        )
+
     def test_broken_korean_metadata_uses_visual_page_title(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "Chaperon vectors I.pdf"
@@ -71,6 +194,23 @@ class TitleRepairTests(unittest.TestCase):
             metadata = _default_metadata(path, pages)
 
         self.assertEqual(metadata.title, "Authoritative Metadata Title")
+
+    def test_filename_shaped_metadata_does_not_override_visual_title(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "The_Stability_Improvement_of_a-Amylase_Enzyme_from.pdf"
+            pages = write_title_pdf(
+                path,
+                metadata_title="The_Stability_Improvement_of_a-Amylase_Enzyme_from",
+                page_title="The Stability Improvement of Amylase Enzyme",
+                title_font_size=18,
+            )
+
+            metadata = _default_metadata(path, pages)
+
+        self.assertEqual(
+            metadata.title,
+            "The Stability Improvement of Amylase Enzyme",
+        )
 
 
 if __name__ == "__main__":

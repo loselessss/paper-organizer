@@ -21,6 +21,7 @@ from paper_organizer.core.document_type import (
     classify_document_type,
     detect_document_bundle,
 )
+from paper_organizer.core.document_identity import detect_wrapper_pages
 from paper_organizer.application.summary_preprocessing import (
     PreprocessedDocument,
     is_generic_document_heading,
@@ -389,6 +390,21 @@ def _prepared_from_chunks(
         tuple(index + 1 for index in page_indexes),
     )
     bibliography_text = _bibliography_context(page_texts[0])
+    if len(page_texts) > 1 and (
+        not abstract_pages or page_indexes[0] + 1 not in abstract_pages
+    ):
+        second_page_bibliography = _bibliography_context(page_texts[1])
+        wrapper_pages = {
+            page.pdf_page
+            for page in detect_wrapper_pages(page_texts)
+            if page.confidence >= 0.8
+        }
+        first_score = _bibliography_identity_score(bibliography_text)
+        second_score = _bibliography_identity_score(second_page_bibliography)
+        if _has_bibliography_identity_context(second_page_bibliography) and (
+            1 in wrapper_pages or second_score >= first_score + 2
+        ):
+            bibliography_text = second_page_bibliography
     document_type_text = (
         f"[TITLE PAGE]\n{bibliography_text}\n\n[ABSTRACT]\n{abstract_text}"
     )[:16_000]
@@ -841,11 +857,13 @@ def _validate_bibliography(
     )
 
     authors = tuple(
-        author.strip()
+        cleaned
         for author in data.authors
         if author.strip()
         and not _is_distribution_platform(author)
         and _normalized_value_present(author, source)
+        and _looks_like_author_name(author)
+        if (cleaned := _clean_author_name(author))
     )
     authors_valid = bool(authors)
 
@@ -892,7 +910,63 @@ def _validate_bibliography(
 
 def _normalized_value_present(value: str, normalized_source: str) -> bool:
     normalized = _normalize_bibliography_text(value)
-    return bool(normalized) and normalized in normalized_source
+    if not normalized:
+        return False
+    if normalized in normalized_source:
+        return True
+    # Some publisher PDFs omit spaces inside visually separated title spans
+    # (for example, "TheStabilityImprovementofα-Amylase"). Accept only a
+    # contiguous match after removing separators; word order and every
+    # alphanumeric character must still agree with the page.
+    compact_value = re.sub(r"\s+", "", normalized)
+    compact_source = re.sub(r"\s+", "", normalized_source)
+    return len(compact_value) >= 8 and compact_value in compact_source
+
+
+def _clean_author_name(value: str) -> str:
+    """Remove inline affiliation markers while retaining the personal name."""
+
+    cleaned = " ".join(value.replace("\u00a0", " ").split()).strip(" ,;&")
+    cleaned = re.sub(
+        r"(?<=[^\W\d_])\s*\d+(?:\s*[,.-]\s*\d+)*\s*$",
+        "",
+        cleaned,
+    )
+    return cleaned.strip(" ,;&")
+
+
+def _looks_like_author_name(value: str) -> bool:
+    """Reject body prose that a small model returned as an author entry."""
+
+    cleaned = _clean_author_name(value)
+    if not cleaned or len(cleaned) > 100:
+        return False
+    tokens = re.findall(r"[^\W\d_]+(?:[.'’-][^\W\d_]+)*", cleaned, re.UNICODE)
+    if not 1 <= len(tokens) <= 8:
+        return False
+    prose_words = {
+        "the",
+        "this",
+        "that",
+        "study",
+        "analysis",
+        "measurement",
+        "human",
+        "its",
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "with",
+    }
+    if len(tokens) >= 3 and any(token.casefold() in prose_words for token in tokens):
+        return False
+    if any("가" <= character <= "힣" for character in cleaned):
+        return len(cleaned) <= 30 and len(tokens) <= 4
+    name_like = sum(token[0].isupper() for token in tokens)
+    return name_like >= max(1, math.ceil(len(tokens) * 0.6))
 
 
 def _strip_document_type_title_prefix(value: str) -> str:
@@ -1538,6 +1612,31 @@ def _has_bibliography_identity_context(first_page_text: str) -> bool:
         ),
     )
     return any(signals)
+
+
+def _bibliography_identity_score(value: str) -> int:
+    """Score front-matter evidence before replacing the first-page context."""
+
+    score = 0
+    if re.search(r"\b10\.\d{4,9}/\S+", value, re.IGNORECASE):
+        score += 3
+    if re.search(r"(?<!\d)(?:18|19|20|21)\d{2}(?!\d)", value):
+        score += 1
+    if re.search(r"[,;]|\band\b|\s&\s", value, re.IGNORECASE):
+        score += 1
+    if re.search(
+        r"\b(?:journal|conference|proceedings|university|institute|department|"
+        r"laboratory|centre|center)\b|저널|학회|대학교|연구소",
+        value,
+        re.IGNORECASE,
+    ):
+        score += 1
+    if re.search(
+        r"(?im)^\s*(?:abstract|a\s+b\s+s\s+t\s+r\s+a\s+c\s+t|초록|요약)\b",
+        value,
+    ):
+        score += 2
+    return score
 
 
 def _looks_like_patent(first_page_text: str) -> bool:

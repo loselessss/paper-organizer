@@ -41,6 +41,37 @@ class UiSmokeTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_selection_ai_uses_a_separate_dialog(self):
+        from PyQt5.QtCore import Qt
+
+        from paper_organizer.integrations.spdf_bridge import SpdfSelection
+        from paper_organizer.ui.library_workflow_widget import SelectionAiDialog
+
+        dialog = SelectionAiDialog()
+        self.assertFalse(dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
+        selection = SpdfSelection(
+            text="Selected enzyme activity paragraph.",
+            pdf_page=3,
+            bounding_boxes=((10.0, 20.0, 30.0, 40.0),),
+            document_id="paper-1",
+            document_path=Path("paper.pdf"),
+        )
+        requested = []
+        dialog.action_requested.connect(requested.append)
+
+        dialog.set_selection(selection, service_available=True)
+        self.assertEqual(
+            dialog.selection_preview.toPlainText(), selection.text
+        )
+        self.assertIn("PDF 3쪽", dialog.selection_label.text())
+        self.assertTrue(dialog.translate_button.isEnabled())
+        dialog.summary_button.click()
+        self.assertEqual(requested, ["summarize"])
+        dialog.show_result("선택 영역 요약 결과")
+        self.assertEqual(dialog.result_view.toPlainText(), "선택 영역 요약 결과")
+        self.assertTrue(dialog.copy_button.isEnabled())
+        dialog.close()
+
     def test_claim_display_joins_soft_wraps_and_keeps_claim_boundaries(self):
         from paper_organizer.ui.library_workflow_widget import (
             _format_claims_for_display,
@@ -194,6 +225,15 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(
                 window.windowTitle(), f"Paper Organizer — v{__version__}"
             )
+            with (
+                mock.patch.object(window.queue_widget, "refresh") as refresh_queue,
+                mock.patch.object(
+                    window.queue_widget, "start_background_analysis"
+                ) as start_analysis,
+            ):
+                window._library_reanalysis_queued(3)
+                refresh_queue.assert_called_once_with()
+                start_analysis.assert_called_once_with(immediate_count=3)
             self.assertEqual(window._automatic_update_timer.interval(), 60 * 60 * 1000)
             self.assertFalse(window._automatic_update_timer.isActive())
             with mock.patch.object(
@@ -1080,7 +1120,7 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_selecting_same_library_path_renders_analysis_immediately(self):
         from PyQt5.QtCore import QItemSelectionModel
-        from PyQt5.QtWidgets import QAbstractItemView, QMessageBox
+        from PyQt5.QtWidgets import QAbstractItemView, QMessageBox, QWidget
 
         from paper_organizer.application.library_workflow import (
             EditablePaperMetadata,
@@ -1155,6 +1195,9 @@ class UiSmokeTests(unittest.TestCase):
                 def paperpack_working_copy(self, _path):
                     return None
 
+                def materialize_editable_pdf(self, path):
+                    return path
+
                 def trash_library_entries(self, entries):
                     self.deleted.extend(entries)
                     return mock.Mock(deleted=len(entries), problems=())
@@ -1184,7 +1227,68 @@ class UiSmokeTests(unittest.TestCase):
                 widget = LibraryWidget(
                     controller,
                     translation_service=translation_service,
+                    selection_ai=object(),
                 )
+            self.assertEqual(widget.selection_ai_button.text(), "선택 영역 창 다시 열기…")
+            self.assertEqual(
+                widget.open_with_ai_button.text(),
+                "sPDF + AI",
+            )
+            self.assertFalse(hasattr(widget, "selection_result"))
+            self.assertTrue(widget.select_path(paperpack))
+            row = widget.table.currentRow()
+            with mock.patch(
+                "paper_organizer.ui.library_workflow_widget.open_pdf"
+            ) as opened:
+                widget._open_row(row)
+            self.assertNotIn("selection_callback", opened.call_args.kwargs)
+
+            opened_window = QWidget()
+            with (
+                mock.patch(
+                    "paper_organizer.ui.library_workflow_widget.open_pdf",
+                    return_value=opened_window,
+                ) as opened,
+                mock.patch.object(widget, "_open_selection_ai_dialog") as ai_dialog,
+                mock.patch.object(widget, "_focus_spdf_window") as focus_spdf,
+            ):
+                widget._open_selected_with_ai()
+            self.assertIn("selection_callback", opened.call_args.kwargs)
+            ai_dialog.assert_called_once_with(activate=False)
+            focus_spdf.assert_called_once_with(opened_window)
+            opened_window.close()
+            from paper_organizer.integrations.spdf_bridge import SpdfSelection
+
+            spdf_window = QWidget()
+            available = self.app.primaryScreen().availableGeometry()
+            spdf_window.setGeometry(available)
+            spdf_window.show()
+            self.app.processEvents()
+            original_spdf_geometry = spdf_window.geometry()
+            with mock.patch(
+                "paper_organizer.ui.library_workflow_widget.active_spdf_window",
+                return_value=spdf_window,
+            ):
+                widget._spdf_selection_changed(
+                    SpdfSelection(
+                        text="Selected paragraph",
+                        pdf_page=2,
+                        bounding_boxes=((1.0, 2.0, 3.0, 4.0),),
+                        document_id="paper-one",
+                        document_path=Path("paper-one.pdf"),
+                    )
+                )
+            self.assertIsNotNone(widget._selection_dialog)
+            self.assertIsNone(widget._selection_dialog.parent())
+            self.assertTrue(widget._selection_dialog.isVisible())
+            self.assertFalse(
+                widget._selection_dialog.geometry().intersects(
+                    spdf_window.geometry()
+                )
+            )
+            widget._selection_dialog.close()
+            self.assertEqual(spdf_window.geometry(), original_spdf_geometry)
+            spdf_window.close()
             self.assertEqual(
                 widget.table.selectionMode(),
                 QAbstractItemView.ExtendedSelection,
@@ -1212,7 +1316,8 @@ class UiSmokeTests(unittest.TestCase):
             self.assertNotIn("분석 요약", widget.analysis_view.toPlainText())
             widget.translation_button.click()
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
-            self.assertEqual(widget.table.columnCount(), 8)
+            self.assertEqual(widget.table.columnCount(), 9)
+            self.assertEqual(widget.table.horizontalHeaderItem(8).text(), "검색 위치")
             self.assertEqual(
                 [
                     widget.table.horizontalHeaderItem(column).text()
@@ -1321,13 +1426,19 @@ class UiSmokeTests(unittest.TestCase):
                 start_with_windows=False,
                 close_behavior="background",
             )
-            window = PaperOrganizerWindow(
-                AiSettingsController(secret_store, path),
-                LibraryWorkflowController(path),
-                lifecycle=lifecycle,
-            )
+            with mock.patch(
+                "paper_organizer.ui.main_window.QSystemTrayIcon.isSystemTrayAvailable",
+                return_value=True,
+            ):
+                window = PaperOrganizerWindow(
+                    AiSettingsController(secret_store, path),
+                    LibraryWorkflowController(path),
+                    lifecycle=lifecycle,
+                )
             window.show()
             self.app.processEvents()
+            self.assertIsNotNone(window._tray)
+            self.assertTrue(window._tray.isVisible())
 
             with mock.patch(
                 "paper_organizer.ui.main_window.QSystemTrayIcon.isSystemTrayAvailable",
@@ -1340,6 +1451,7 @@ class UiSmokeTests(unittest.TestCase):
                 start_with_windows=False,
                 close_behavior="quit",
             )
+            self.assertTrue(window._tray.isVisible())
             window.show()
             self.app.processEvents()
             self.assertTrue(window.close())

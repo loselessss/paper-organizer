@@ -149,6 +149,31 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertEqual(controller.analysis_queue(), [])
             self.assertIn("AI 요약을 건너뜁니다", organized.warning)
 
+    def test_inline_abstract_academic_bundle_stays_in_review(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            pages = [
+                "Effective melanin degradation by a synergistic enzyme complex\n"
+                "doi: 10.1016/j.ijbiomac.2019.02.027\n"
+                "Abstract Melanin degradation was measured using laccase and "
+                + "peroxidase in a complete first study. " * 30,
+                "Methods and results for the first paper. " * 40,
+                "A distinct complete article in the same PDF\n"
+                "doi: 10.1000/distinct-paper\n"
+                "Abstract: This second paper reports a separate experiment. "
+                + "Independent methods and results are presented here. " * 30,
+            ]
+            write_pdf(input_dir / "academic-bundle.pdf", pages)
+
+            result = self._scan_twice(controller)
+
+            self.assertEqual(len(result.items), 1)
+            self.assertEqual(result.items[0].detection_status, "multiple_documents")
+            self.assertIn("10.1016/j.ijbiomac.2019.02.027", result.items[0].detection_reason)
+            self.assertEqual(len(controller.analysis_queue()), 1)
+            self.assertEqual(controller.analysis_queue()[0].status, "pending_review")
+
     def test_discovery_ocr_uses_first_five_pages_and_disk_cache(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -579,6 +604,92 @@ class LibraryWorkflowTests(unittest.TestCase):
                 )
 
             self.assertTrue(organized.pdf_path.exists())
+
+    def test_library_entry_can_be_permanently_deleted_without_trash_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "permanent.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Permanent Delete"),
+            )
+            entry = controller.list_library()[0]
+
+            result = controller.permanently_delete_library_entries([entry])
+
+            self.assertEqual(result.deleted, 1)
+            self.assertFalse(organized.pdf_path.exists())
+            self.assertEqual(controller.list_library(), [])
+            self.assertFalse(
+                any(value.kind == "library_entry" for value in controller.list_trash())
+            )
+
+    def test_permanent_delete_removes_all_paperpacks_with_the_same_pdf_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            write_pdf(input_dir / "duplicate.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Duplicate PDF"),
+            )
+            duplicate = library / "papers" / "Other" / "duplicate-copy.paperpack"
+            duplicate.parent.mkdir(parents=True)
+            shutil.copy2(organized.pdf_path, duplicate)
+            controller.invalidate_library_cache()
+            entries = controller.list_library()
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(len(list((library / "papers").rglob("*.paperpack"))), 2)
+
+            result = controller.permanently_delete_library_entries([entries[0]])
+
+            self.assertEqual(result.deleted, 2)
+            self.assertFalse(organized.pdf_path.exists())
+            self.assertFalse(duplicate.exists())
+            self.assertEqual(controller.list_library(), [])
+
+    def test_reanalysis_queues_only_one_item_for_exact_pdf_duplicates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, library = self._controller(root)
+            write_pdf(input_dir / "duplicate.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                EditablePaperMetadata(title="Duplicate PDF"),
+            )
+            duplicate = library / "papers" / "Other" / "duplicate-copy.paperpack"
+            duplicate.parent.mkdir(parents=True)
+            shutil.copy2(organized.pdf_path, duplicate)
+            duplicate_record = load_paperpack_metadata(duplicate)
+            duplicate_record["identity"]["file_id"] += ":duplicate"
+            update_paperpack(duplicate, duplicate_record, changed_by="test")
+            controller.invalidate_library_cache()
+
+            entries = controller.list_library()
+            self.assertEqual(len(entries), 2)
+            queued, problems = controller.queue_reanalysis(entries, high=True)
+
+            self.assertEqual(queued, 1)
+            self.assertEqual(problems, ())
+            self.assertEqual(len(controller.analysis_queue()), 1)
+
+    def test_review_pdf_can_be_permanently_deleted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            source = input_dir / "discard-forever.pdf"
+            write_pdf(source, academic_pages())
+            item = self._scan_twice(controller).items[0]
+
+            result = controller.permanently_delete_review_items([item])
+
+            self.assertEqual(result.deleted, 1)
+            self.assertFalse(source.exists())
+            self.assertEqual(controller.list_trash(), [])
 
     def test_library_trash_retries_a_transient_windows_file_lock(self):
         with tempfile.TemporaryDirectory() as temp:

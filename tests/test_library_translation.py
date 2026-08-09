@@ -37,13 +37,14 @@ class FakeProvider:
 
 
 class FakeWorkflow:
-    def __init__(self):
+    def __init__(self, model="qwen3:4b"):
         self.saved = []
+        self.model = model
 
     def settings(self):
         return AppSettings(
             summary_provider="ollama",
-            selected_model="qwen3:4b",
+            selected_model=self.model,
         )
 
     def save_analysis_translation(self, entry, **values):
@@ -116,6 +117,20 @@ class LibraryTranslationTests(unittest.TestCase):
         self.assertEqual(service.cached(paper).text, "번역된 분석")
         record["description"]["summary"] = "Changed analysis"
         self.assertIsNone(service.cached(paper))
+
+    def test_translation_rejects_local_model_below_4b(self):
+        workflow = FakeWorkflow("granite4.1:3b")
+        provider = FakeProvider(["번역 결과"])
+        service = LibraryTranslationService(
+            workflow,
+            MemorySecrets(),
+            provider_factory=lambda *_args, **_kwargs: provider,
+        )
+        paper = entry({"description": {"summary": "Original analysis"}})
+
+        with self.assertRaisesRegex(ValueError, "최소 4B.*8B 이상"):
+            service.translate(paper)
+        self.assertEqual(provider.requests, [])
 
 
 if __name__ == "__main__":

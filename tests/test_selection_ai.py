@@ -67,6 +67,29 @@ class SelectionAiTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "OCR"):
             SelectionAiService(NoSecrets()).run(selection, "translate")
 
+    def test_translation_rejects_local_model_below_4b(self):
+        with tempfile.TemporaryDirectory() as temp:
+            settings_path = Path(temp) / "settings.json"
+            save_settings(
+                AppSettings(
+                    summary_provider="ollama",
+                    selected_model="qwen3:1.7b",
+                ),
+                settings_path,
+            )
+            selection = SpdfSelection(
+                text="translate these words",
+                pdf_page=1,
+                bounding_boxes=((1, 2, 3, 4),),
+                document_id="paper-1",
+                document_path=Path("paper.pdf"),
+            )
+
+            with self.assertRaisesRegex(ValueError, "최소 4B.*8B 이상"):
+                SelectionAiService(NoSecrets(), settings_path).run(
+                    selection, "translate"
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

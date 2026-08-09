@@ -65,7 +65,11 @@ from paper_organizer.application.library_translation import (
     analysis_translation_source_hash,
 )
 from paper_organizer.application.selection_ai import SelectionAiService
-from paper_organizer.integrations.spdf_bridge import SpdfSelection, open_pdf
+from paper_organizer.integrations.spdf_bridge import (
+    SpdfSelection,
+    active_spdf_window,
+    open_pdf,
+)
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
@@ -489,17 +493,27 @@ class _BackgroundAnalysisWorker(QThread):
                 in {"completed", "translation_completed", "skipped", "cancelled", "failed"}
                 and self._immediate_remaining
             ):
+                try:
+                    manual_interval = self._service.poll_interval("manual")
+                except TypeError:
+                    manual_interval = 0
+                if manual_interval <= 0:
+                    continue
+                self._wake.wait(manual_interval)
+                self._wake.clear()
                 continue
             if result.state == "ocr_completed":
                 # OCR is only a preparation stage for the same item.
                 if self._immediate_remaining:
                     continue
                 self._wake.set()
-            wait_seconds = (
-                1
-                if self._immediate_remaining
-                else self._service.poll_interval()
-            )
+            if self._immediate_remaining:
+                wait_seconds = 1
+            else:
+                try:
+                    wait_seconds = self._service.poll_interval("automatic")
+                except TypeError:
+                    wait_seconds = self._service.poll_interval()
             self._wake.wait(wait_seconds)
             self._wake.clear()
         self._processing = False
@@ -707,19 +721,33 @@ class CollectionReviewWidget(QWidget):
         self.open_button = QPushButton("sPDF로 열기")
         self.organize_button = QPushButton("선택 항목 분석 큐로 보내기")
         self.trash_button = QPushButton("제외 목록으로 보내기")
+        self.delete_pdf_button = QPushButton("선택 PDF 완전 삭제…")
+        self.delete_duplicate_button = QPushButton("기존 중복 항목 완전 삭제…")
         self.restore_button = QPushButton("제외 목록에서 복원…")
         self.select_all_button.clicked.connect(self.table.selectAll)
         self.open_button.clicked.connect(self._open_selected)
         self.organize_button.clicked.connect(self._organize_selected)
         self.trash_button.clicked.connect(self._trash_selected)
+        self.delete_pdf_button.clicked.connect(self._permanently_delete_selected)
+        self.delete_duplicate_button.clicked.connect(
+            self._permanently_delete_duplicate
+        )
         self.restore_button.clicked.connect(self._restore_trash)
-        for button in (self.open_button, self.organize_button, self.trash_button):
+        for button in (
+            self.open_button,
+            self.organize_button,
+            self.trash_button,
+            self.delete_pdf_button,
+            self.delete_duplicate_button,
+        ):
             button.setEnabled(False)
         review_actions.addWidget(self.select_all_button, 0, 0)
         review_actions.addWidget(self.open_button, 0, 1)
         review_actions.addWidget(self.organize_button, 1, 0)
         review_actions.addWidget(self.trash_button, 1, 1)
         review_actions.addWidget(self.restore_button, 2, 0)
+        review_actions.addWidget(self.delete_pdf_button, 2, 1)
+        review_actions.addWidget(self.delete_duplicate_button, 3, 0, 1, 2)
         review_actions.setColumnStretch(1, 1)
         root.addLayout(review_actions)
         self._reload_watch_settings()
@@ -819,6 +847,12 @@ class CollectionReviewWidget(QWidget):
         self.open_button.setEnabled(enabled)
         self.organize_button.setEnabled(enabled)
         self.trash_button.setEnabled(enabled)
+        self.delete_pdf_button.setEnabled(enabled)
+        self.delete_duplicate_button.setEnabled(
+            len(selected) == 1
+            and selected[0].duplicate is not None
+            and selected[0].duplicate.sidecar_path.is_file()
+        )
         if len(selected) > 1:
             self.detail_label.setText(
                 f"{len(selected)}개 PDF를 선택했습니다. 일괄 보관할 때는 각 PDF의 "
@@ -889,6 +923,16 @@ class CollectionReviewWidget(QWidget):
         organize_action.triggered.connect(self._organize_selected)
         trash_action = menu.addAction("제외 목록으로 보내기")
         trash_action.triggered.connect(self._trash_selected)
+        delete_action = menu.addAction("선택 PDF 완전 삭제…")
+        delete_action.triggered.connect(self._permanently_delete_selected)
+        if len(items) == 1 and items[0].duplicate is not None:
+            delete_duplicate_action = menu.addAction("기존 중복 항목 완전 삭제…")
+            delete_duplicate_action.setEnabled(
+                items[0].duplicate.sidecar_path.is_file()
+            )
+            delete_duplicate_action.triggered.connect(
+                self._permanently_delete_duplicate
+            )
         menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def _organize_selected(self) -> None:
@@ -1006,6 +1050,71 @@ class CollectionReviewWidget(QWidget):
             )
         if not moved:
             return
+        self.queue_changed.emit()
+        self.scan_now(False)
+
+    def _permanently_delete_selected(self) -> None:
+        items = self._selected_items()
+        if not items:
+            return
+        names = "\n".join(f"• {item.path.name}" for item in items[:8])
+        if len(items) > 8:
+            names += f"\n• 외 {len(items) - 8}개"
+        if QMessageBox.warning(
+            self,
+            "선택 PDF 완전 삭제",
+            f"다음 PDF {len(items)}개를 복구할 수 없게 완전히 삭제합니다.\n\n"
+            f"{names}\n\n이 작업은 되돌릴 수 없습니다. 계속할까요?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            result = self._controller.permanently_delete_review_items(items)
+        except Exception as exc:
+            QMessageBox.warning(self, "PDF 완전 삭제 실패", str(exc))
+            return
+        self.status_label.setText(
+            f"PDF {result.deleted}개를 완전히 삭제했습니다."
+            + (f" · 실패 {len(result.problems)}개" if result.problems else "")
+        )
+        if result.problems:
+            QMessageBox.warning(self, "일부 PDF 삭제 실패", "\n".join(result.problems[:10]))
+        self.queue_changed.emit()
+        self.scan_now(False)
+
+    def _permanently_delete_duplicate(self) -> None:
+        items = self._selected_items()
+        if len(items) != 1 or items[0].duplicate is None:
+            return
+        duplicate = items[0].duplicate
+        if QMessageBox.warning(
+            self,
+            "기존 중복 항목 완전 삭제",
+            "다음 기존 라이브러리 항목을 복구할 수 없게 완전히 삭제합니다.\n\n"
+            f"• {duplicate.title or duplicate.sidecar_path.name}\n"
+            f"• {duplicate.sidecar_path}\n\n"
+            "새로 발견된 PDF는 남습니다. 이 작업은 되돌릴 수 없습니다. 계속할까요?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            result = self._controller.permanently_delete_duplicate_reference(items[0])
+        except Exception as exc:
+            QMessageBox.warning(self, "기존 중복 항목 삭제 실패", str(exc))
+            return
+        self.status_label.setText(
+            f"기존 중복 항목 {result.deleted}건을 완전히 삭제했습니다."
+            + (f" · 확인 필요 {len(result.problems)}건" if result.problems else "")
+        )
+        if result.problems:
+            QMessageBox.warning(
+                self,
+                "기존 중복 항목 삭제 확인 필요",
+                "\n".join(result.problems[:10]),
+            )
+        self.library_changed.emit()
         self.queue_changed.emit()
         self.scan_now(False)
 
@@ -1578,6 +1687,108 @@ class SelectionAiWorker(QThread):
         self.completed.emit(result)
 
 
+class SelectionAiDialog(QDialog):
+    """Show ephemeral translation and summary actions outside the library pane."""
+
+    action_requested = pyqtSignal(str)
+    cancel_requested = pyqtSignal()
+    closed = pyqtSignal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("선택 영역 번역·요약")
+        suppress_context_help_button(self)
+        self.resize(720, 560)
+        layout = QVBoxLayout(self)
+
+        self.selection_label = QLabel()
+        self.selection_label.setWordWrap(True)
+        layout.addWidget(self.selection_label)
+
+        self.selection_preview = QTextEdit()
+        self.selection_preview.setReadOnly(True)
+        self.selection_preview.setPlaceholderText("sPDF에서 선택한 텍스트가 표시됩니다.")
+        layout.addWidget(self.selection_preview, 2)
+
+        actions = QHBoxLayout()
+        self.translate_button = QPushButton("번역")
+        self.summary_button = QPushButton("요약")
+        self.copy_button = QPushButton("결과 복사")
+        self.cancel_button = QPushButton("요청 취소")
+        self.copy_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        self.translate_button.clicked.connect(
+            lambda: self.action_requested.emit("translate")
+        )
+        self.summary_button.clicked.connect(
+            lambda: self.action_requested.emit("summarize")
+        )
+        self.copy_button.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.result_view.toPlainText())
+        )
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        actions.addWidget(self.translate_button)
+        actions.addWidget(self.summary_button)
+        actions.addStretch(1)
+        actions.addWidget(self.copy_button)
+        actions.addWidget(self.cancel_button)
+        layout.addLayout(actions)
+
+        result_group = QGroupBox("AI 결과")
+        result_layout = QVBoxLayout(result_group)
+        self.result_view = QTextEdit()
+        self.result_view.setReadOnly(True)
+        self.result_view.setPlaceholderText("번역 또는 요약 결과가 여기에 표시됩니다.")
+        result_layout.addWidget(self.result_view)
+        layout.addWidget(result_group, 3)
+
+        close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        close_buttons.rejected.connect(self.close)
+        layout.addWidget(close_buttons)
+
+    def closeEvent(self, event) -> None:
+        self.closed.emit()
+        super().closeEvent(event)
+
+    def set_selection(
+        self,
+        selection: SpdfSelection | None,
+        *,
+        service_available: bool,
+    ) -> None:
+        available = bool(
+            selection is not None
+            and selection.text.strip()
+            and not selection.requires_ocr
+            and service_available
+        )
+        self.translate_button.setEnabled(available)
+        self.summary_button.setEnabled(available)
+        if selection is None:
+            self.selection_label.setText("sPDF에서 번역하거나 요약할 텍스트를 선택하세요.")
+            self.selection_preview.clear()
+        elif selection.requires_ocr:
+            self.selection_label.setText(
+                f"PDF {selection.pdf_page}쪽 선택 영역에는 텍스트 레이어가 없습니다. "
+                "sPDF에서 OCR을 먼저 실행하세요."
+            )
+            self.selection_preview.clear()
+        else:
+            self.selection_label.setText(
+                f"PDF {selection.pdf_page}쪽 · {len(selection.text)}자"
+            )
+            self.selection_preview.setPlainText(selection.text)
+
+    def set_busy(self, busy: bool) -> None:
+        self.translate_button.setEnabled(not busy and self.translate_button.isEnabled())
+        self.summary_button.setEnabled(not busy and self.summary_button.isEnabled())
+        self.cancel_button.setEnabled(busy)
+
+    def show_result(self, text: str) -> None:
+        self.result_view.setPlainText(text)
+        self.copy_button.setEnabled(bool(text.strip()))
+
+
 class LibraryWidget(QWidget):
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
@@ -1598,6 +1809,9 @@ class LibraryWidget(QWidget):
         self._selection_ai = selection_ai
         self._spdf_selection: SpdfSelection | None = None
         self._selection_worker: SelectionAiWorker | None = None
+        self._selection_dialog: SelectionAiDialog | None = None
+        self._tiled_spdf_window = None
+        self._tiled_spdf_geometry = None
         self._translation_path = ""
         self._translation_cache: dict[str, LibraryTranslation] = {}
         self._entries: list[LibraryEntry] = []
@@ -1615,7 +1829,7 @@ class LibraryWidget(QWidget):
         search_row.addWidget(self.search_edit, 1)
         search_row.addWidget(refresh_button)
         root.addLayout(search_row)
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
             [
                 "제목",
@@ -1626,6 +1840,7 @@ class LibraryWidget(QWidget):
                 "번역 상태",
                 "등록일",
                 "분석일",
+                "검색 위치",
             ]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1634,9 +1849,11 @@ class LibraryWidget(QWidget):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 260)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.setColumnWidth(2, 72)
+        self.table.setColumnWidth(8, 115)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.itemSelectionChanged.connect(self._selection_changed)
@@ -1655,42 +1872,10 @@ class LibraryWidget(QWidget):
         self.type_suggestion_label = QLabel()
         self.type_suggestion_label.setWordWrap(True)
         detail_layout.addWidget(self.type_suggestion_label)
-        self.selection_label = QLabel("sPDF에서 텍스트를 선택하면 이곳에서 번역·요약할 수 있습니다.")
-        self.selection_label.setWordWrap(True)
-        detail_layout.addWidget(self.selection_label)
-        selection_actions = QHBoxLayout()
-        self.selection_translate_button = QPushButton("선택 영역 번역")
-        self.selection_summary_button = QPushButton("선택 영역 요약")
-        self.selection_copy_button = QPushButton("결과 복사")
-        self.selection_cancel_button = QPushButton("요청 취소")
-        for button in (
-            self.selection_translate_button,
-            self.selection_summary_button,
-            self.selection_copy_button,
-            self.selection_cancel_button,
-        ):
-            button.setEnabled(False)
-            selection_actions.addWidget(button)
-        self.selection_translate_button.clicked.connect(
-            lambda: self._run_selection_ai("translate")
-        )
-        self.selection_summary_button.clicked.connect(
-            lambda: self._run_selection_ai("summarize")
-        )
-        self.selection_copy_button.clicked.connect(
-            lambda: QApplication.clipboard().setText(self.selection_result.toPlainText())
-        )
-        self.selection_cancel_button.clicked.connect(
-            lambda: self._selection_worker.cancel() if self._selection_worker else None
-        )
-        detail_layout.addLayout(selection_actions)
-        self.selection_result = QTextEdit()
-        self.selection_result.setReadOnly(True)
-        self.selection_result.setMaximumHeight(140)
-        self.selection_result.hide()
-        detail_layout.addWidget(self.selection_result)
         edit_actions = QHBoxLayout()
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
+        self.open_with_ai_button = QPushButton("sPDF + AI")
+        self.open_with_ai_button.setToolTip("AI 번역/요약 창과 함께 sPDF를 엽니다.")
         self.translation_button = QPushButton("AI 번역")
         self.translation_button.setCheckable(True)
         self.translation_button.setToolTip(
@@ -1709,6 +1894,7 @@ class LibraryWidget(QWidget):
         self.save_button.clicked.connect(self._save_selected)
         self.save_button.setEnabled(False)
         edit_actions.addStretch(1)
+        edit_actions.addWidget(self.open_with_ai_button)
         edit_actions.addWidget(self.restore_translation_button)
         edit_actions.addWidget(self.translation_button)
         edit_actions.addWidget(self.save_button)
@@ -1722,39 +1908,63 @@ class LibraryWidget(QWidget):
         detail_layout.addWidget(analysis_group, 1)
 
         splitter = QSplitter(Qt.Horizontal)
+        self.library_splitter = splitter
         splitter.addWidget(self.table)
         splitter.addWidget(detail_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setChildrenCollapsible(False)
+        splitter.setChildrenCollapsible(True)
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, True)
+        self.table.setMinimumWidth(0)
+        detail_panel.setMinimumWidth(0)
+        splitter.setSizes([760, 420])
         root.addWidget(splitter, 1)
         self._render_analysis(None)
         actions = QHBoxLayout()
         self.open_button = QPushButton("sPDF로 열기")
+        self.selection_ai_button = QPushButton("선택 영역 창 다시 열기…")
+        self.selection_ai_button.setToolTip(
+            "sPDF에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
+            "닫은 창을 다시 열 때 사용하세요."
+        )
         self.apply_pdf_button = QPushButton("편집본을 PaperPack에 적용")
         self.discard_pdf_button = QPushButton("편집본 폐기")
         self.delete_button = QPushButton("선택 항목을 앱 휴지통으로 이동")
+        self.permanent_delete_button = QPushButton("선택 항목 완전 삭제…")
         self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
         self.reanalyze_all_button = QPushButton("전체 논문 재요약")
         self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
         self.open_button.clicked.connect(self._open_selected)
+        self.open_with_ai_button.clicked.connect(self._open_selected_with_ai)
+        self.selection_ai_button.clicked.connect(
+            lambda: self._open_selection_ai_dialog(activate=True)
+        )
         self.apply_pdf_button.clicked.connect(self._apply_pdf_edit)
         self.discard_pdf_button.clicked.connect(self._discard_pdf_edit)
         self.delete_button.clicked.connect(self._delete_selected)
+        self.permanent_delete_button.clicked.connect(
+            self._permanently_delete_library_selected
+        )
         self.reanalyze_selected_button.clicked.connect(self._reanalyze_selected)
         self.reanalyze_all_button.clicked.connect(self._reanalyze_all)
         self.approve_category_button.clicked.connect(self._approve_category)
         self.open_button.setEnabled(False)
+        self.open_with_ai_button.setEnabled(False)
+        self.selection_ai_button.setEnabled(False)
         self.apply_pdf_button.setEnabled(False)
         self.discard_pdf_button.setEnabled(False)
         self.delete_button.setEnabled(False)
+        self.permanent_delete_button.setEnabled(False)
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
         self.approve_category_button.setEnabled(False)
         actions.addWidget(self.open_button)
+        actions.addWidget(self.selection_ai_button)
         actions.addWidget(self.apply_pdf_button)
         actions.addWidget(self.discard_pdf_button)
         actions.addWidget(self.delete_button)
+        actions.addWidget(self.permanent_delete_button)
         actions.addStretch(1)
         root.addLayout(actions)
         analysis_actions = QHBoxLayout()
@@ -1883,10 +2093,27 @@ class LibraryWidget(QWidget):
                 translation_status,
                 _format_library_date(entry.paperpack_created_at),
                 _format_library_date(entry.analysis_completed_at),
+                " · ".join(
+                    (
+                        {
+                            "title": "제목",
+                            "summary": "요약",
+                            "metadata": "서지",
+                            "body": (
+                                f"본문 {entry.search_page}쪽"
+                                if entry.search_page
+                                else "본문"
+                            ),
+                        }.get(location, location)
+                        for location in entry.search_locations
+                    )
+                ),
             ]
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setData(Qt.UserRole, str(entry.sidecar_path.resolve()))
+                if column == 8 and entry.search_snippet:
+                    cell.setToolTip(entry.search_snippet)
                 self.table.setItem(row, column, cell)
         self.table.setSortingEnabled(True)
         if sort_column >= 0:
@@ -1935,6 +2162,7 @@ class LibraryWidget(QWidget):
             self.apply_pdf_button.setEnabled(False)
             self.discard_pdf_button.setEnabled(False)
             self.delete_button.setEnabled(False)
+            self.permanent_delete_button.setEnabled(False)
             self.reanalyze_selected_button.setEnabled(False)
             self.approve_category_button.setEnabled(False)
 
@@ -2024,8 +2252,14 @@ class LibraryWidget(QWidget):
         self.open_button.setEnabled(
             any(value.pdf_path.is_file() for value in entries)
         )
+        self.open_with_ai_button.setEnabled(
+            len(entries) == 1
+            and entries[0].pdf_path.is_file()
+            and self._selection_ai is not None
+        )
         self.reanalyze_selected_button.setEnabled(bool(entries))
         self.delete_button.setEnabled(bool(entries))
+        self.permanent_delete_button.setEnabled(bool(entries))
         self.approve_category_button.setEnabled(
             bool(
                 entry
@@ -2449,7 +2683,7 @@ class LibraryWidget(QWidget):
             "현재 분석 결과는 새 분석이 성공할 때까지 유지됩니다.",
         ) != QMessageBox.Yes:
             return
-        self._queue_reanalysis(entries)
+        self._queue_reanalysis(entries, high=True)
 
     def _reanalyze_all(self) -> None:
         entries = self._controller.list_library()
@@ -2459,10 +2693,10 @@ class LibraryWidget(QWidget):
             self,
             "전체 논문 재요약",
             f"라이브러리 전체 {len(entries)}건을 재요약 대기열에 넣을까요? "
-            "백그라운드에서 한 건씩 조용히 처리합니다.",
+            "수동 분석 모델과 수동 분석 간격으로 한 건씩 처리합니다.",
         ) != QMessageBox.Yes:
             return
-        self._queue_reanalysis(entries)
+        self._queue_reanalysis(entries, high=True)
 
     def _queue_reanalysis(
         self, entries: list[LibraryEntry], *, high: bool = False
@@ -2473,7 +2707,7 @@ class LibraryWidget(QWidget):
             QMessageBox.warning(self, "재요약 요청 실패", str(exc))
             return
         self.status_label.setText(
-            f"재요약 {queued}건을 분석 대기열에 넣었습니다."
+            f"수동 재요약 {queued}건을 분석 대기열에 넣었습니다."
             + (f" · 제외 {len(problems)}건" if problems else "")
         )
         if problems:
@@ -2555,6 +2789,11 @@ class LibraryWidget(QWidget):
         menu = QMenu(self)
         open_action = menu.addAction("sPDF로 열기")
         open_action.triggered.connect(self._open_selected)
+        open_with_ai_action = menu.addAction("AI 번역/요약과 함께 열기")
+        open_with_ai_action.setEnabled(
+            len(entries) == 1 and self._selection_ai is not None
+        )
+        open_with_ai_action.triggered.connect(self._open_selected_with_ai)
         explorer_action = menu.addAction("탐색기에서 열기")
         explorer_action.triggered.connect(self._open_in_explorer)
         menu.addSeparator()
@@ -2575,6 +2814,10 @@ class LibraryWidget(QWidget):
         menu.addSeparator()
         delete_action = menu.addAction("선택 항목을 앱 휴지통으로 이동…")
         delete_action.triggered.connect(self._delete_selected)
+        permanent_delete_action = menu.addAction("선택 항목 완전 삭제…")
+        permanent_delete_action.triggered.connect(
+            self._permanently_delete_library_selected
+        )
         menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def _open_in_explorer(self) -> None:
@@ -2636,6 +2879,46 @@ class LibraryWidget(QWidget):
         if result.deleted:
             self.metadata_changed.emit()
 
+    def _permanently_delete_library_selected(self) -> None:
+        entries = self._selected_entries()
+        if not entries:
+            return
+        titles = "\n".join(
+            f"• {entry.metadata.title or entry.sidecar_path.stem}"
+            for entry in entries[:8]
+        )
+        if len(entries) > 8:
+            titles += f"\n• 외 {len(entries) - 8}건"
+        if QMessageBox.warning(
+            self,
+            "라이브러리 항목 완전 삭제",
+            f"다음 {len(entries)}건의 PDF/PaperPack과 분석 내용을 완전히 삭제합니다.\n\n"
+            f"{titles}\n\n"
+            "앱 휴지통에 남지 않으며 복원할 수 없습니다. 감시 폴더의 별도 원본은 "
+            "삭제하지 않습니다. 계속할까요?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            result = self._controller.permanently_delete_library_entries(entries)
+        except Exception as exc:
+            QMessageBox.warning(self, "완전 삭제 실패", str(exc))
+            return
+        self.refresh(True)
+        self.status_label.setText(
+            f"라이브러리 항목 {result.deleted}건을 완전히 삭제했습니다."
+            + (f" · 확인 필요 {len(result.problems)}건" if result.problems else "")
+        )
+        if result.problems:
+            QMessageBox.warning(
+                self,
+                "일부 항목 완전 삭제 확인 필요",
+                "\n".join(result.problems[:10]),
+            )
+        if result.deleted:
+            self.metadata_changed.emit()
+
     def _open_selected(self) -> None:
         failures: list[str] = []
         for entry in self._selected_entries():
@@ -2645,13 +2928,32 @@ class LibraryWidget(QWidget):
                     editable_pdf,
                     self,
                     document_id=str(entry.record.get("id") or entry.work_id),
-                    selection_callback=self._spdf_selection_changed,
                 )
             except Exception as exc:
                 failures.append(f"{entry.metadata.title}: {exc}")
         self._refresh_pdf_edit_actions(self._selected_entries())
         if failures:
             QMessageBox.warning(self, "일부 sPDF 열기 실패", "\n".join(failures[:10]))
+
+    def _open_selected_with_ai(self) -> None:
+        entries = self._selected_entries()
+        if len(entries) != 1 or self._selection_ai is None:
+            return
+        entry = entries[0]
+        try:
+            editable_pdf = self._controller.materialize_editable_pdf(entry.pdf_path)
+            self._spdf_selection = None
+            spdf_window = open_pdf(
+                editable_pdf,
+                self,
+                document_id=str(entry.record.get("id") or entry.work_id),
+                selection_callback=self._spdf_selection_changed,
+            )
+            self._open_selection_ai_dialog(activate=False)
+            self._focus_spdf_window(spdf_window)
+            self._refresh_pdf_edit_actions(entries)
+        except Exception as exc:
+            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
 
     def _open_row(self, row: int) -> None:
         cell = self.table.item(row, 0)
@@ -2674,7 +2976,6 @@ class LibraryWidget(QWidget):
                 editable_pdf,
                 self,
                 document_id=str(entry.record.get("id") or entry.work_id),
-                selection_callback=self._spdf_selection_changed,
             )
             self._refresh_pdf_edit_actions(self._selected_entries())
         except Exception as exc:
@@ -2688,25 +2989,137 @@ class LibraryWidget(QWidget):
             and not selection.requires_ocr
             and self._selection_ai is not None
         )
-        self.selection_translate_button.setEnabled(available)
-        self.selection_summary_button.setEnabled(available)
-        if selection is None:
-            self.selection_label.setText(
-                "sPDF에서 텍스트를 선택하면 이곳에서 번역·요약할 수 있습니다."
+        self.selection_ai_button.setEnabled(
+            available and self._selection_worker is None
+        )
+        if self._selection_dialog is not None:
+            self._selection_dialog.set_selection(
+                selection,
+                service_available=self._selection_ai is not None,
             )
-        elif selection.requires_ocr:
-            self.selection_label.setText(
-                f"PDF {selection.pdf_page}쪽 선택 영역에는 텍스트 레이어가 없습니다. sPDF에서 OCR을 먼저 실행하세요."
+            self._selection_dialog.set_busy(self._selection_worker is not None)
+        if available and (
+            self._selection_dialog is None
+            or not self._selection_dialog.isVisible()
+        ):
+            self._open_selection_ai_dialog(activate=False)
+            self._focus_spdf_window(active_spdf_window())
+
+    def _open_selection_ai_dialog(self, *, activate: bool = True) -> None:
+        if self._selection_dialog is None:
+            dialog = SelectionAiDialog()
+            dialog.action_requested.connect(self._run_selection_ai)
+            dialog.cancel_requested.connect(
+                lambda: self._selection_worker.cancel()
+                if self._selection_worker
+                else None
             )
-        else:
-            preview = " ".join(selection.text.split())[:180]
-            self.selection_label.setText(
-                f"PDF {selection.pdf_page}쪽 · {len(selection.text)}자: {preview}"
+            dialog.closed.connect(self._restore_tiled_spdf_window)
+            self._selection_dialog = dialog
+        self._selection_dialog.set_selection(
+            self._spdf_selection,
+            service_available=self._selection_ai is not None,
+        )
+        self._selection_dialog.show()
+        self._position_selection_ai_dialog()
+        self._selection_dialog.raise_()
+        if activate:
+            self._selection_dialog.activateWindow()
+
+    @staticmethod
+    def _focus_spdf_window(window) -> None:
+        if window is None:
+            return
+        try:
+            window.show()
+            window.raise_()
+            window.activateWindow()
+        except RuntimeError:
+            pass
+
+    def close_selection_ai_dialog(self) -> None:
+        if self._selection_dialog is not None:
+            self._selection_dialog.close()
+
+    def _position_selection_ai_dialog(self) -> None:
+        dialog = self._selection_dialog
+        spdf_window = active_spdf_window()
+        if dialog is None or spdf_window is None:
+            return
+        try:
+            spdf_frame = spdf_window.frameGeometry()
+        except RuntimeError:
+            return
+        screen = QApplication.screenAt(spdf_frame.center())
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        margin = 10
+        minimum_width = 380
+        height = min(560, max(320, available.height() - margin * 2))
+        top = max(available.top() + margin, min(spdf_frame.top(), available.bottom() - height))
+        right_x = spdf_frame.right() + 1 + margin
+        right_width = available.right() - right_x + 1
+        left_width = spdf_frame.left() - available.left() - margin
+        if right_width >= minimum_width:
+            dialog.setGeometry(
+                right_x,
+                top,
+                min(720, right_width),
+                height,
             )
+            return
+        if left_width >= minimum_width:
+            width = min(720, left_width)
+            dialog.setGeometry(
+                spdf_frame.left() - margin - width,
+                top,
+                width,
+                height,
+            )
+            return
+
+        if self._tiled_spdf_window is None:
+            self._tiled_spdf_window = spdf_window
+            self._tiled_spdf_geometry = spdf_window.geometry()
+        dialog_width = max(minimum_width, int(available.width() * 0.4) - margin)
+        spdf_width = available.width() - dialog_width - margin
+        try:
+            spdf_window.setGeometry(
+                available.left(),
+                available.top(),
+                spdf_width,
+                available.height(),
+            )
+        except RuntimeError:
+            self._tiled_spdf_window = None
+            self._tiled_spdf_geometry = None
+            return
+        dialog.setGeometry(
+            available.left() + spdf_width + margin,
+            available.top(),
+            dialog_width,
+            available.height(),
+        )
+
+    def _restore_tiled_spdf_window(self) -> None:
+        window = self._tiled_spdf_window
+        geometry = self._tiled_spdf_geometry
+        self._tiled_spdf_window = None
+        self._tiled_spdf_geometry = None
+        if window is None or geometry is None:
+            return
+        try:
+            window.setGeometry(geometry)
+        except RuntimeError:
+            pass
 
     def _run_selection_ai(self, action: str) -> None:
         if self._selection_ai is None or self._spdf_selection is None:
             return
+        self._open_selection_ai_dialog()
         settings = self._controller.settings()
         allow_cloud_once = False
         if (
@@ -2721,8 +3134,8 @@ class LibraryWidget(QWidget):
             if answer != QMessageBox.Yes:
                 return
             allow_cloud_once = True
-        for button in (self.selection_translate_button, self.selection_summary_button):
-            button.setEnabled(False)
+        self._selection_dialog.set_busy(True)
+        self.selection_ai_button.setEnabled(False)
         worker = SelectionAiWorker(
             self._selection_ai,
             self._spdf_selection,
@@ -2732,22 +3145,32 @@ class LibraryWidget(QWidget):
         )
         worker.completed.connect(self._selection_ai_completed)
         worker.failed.connect(self._selection_ai_failed)
-        worker.finished.connect(lambda: setattr(self, "_selection_worker", None))
+        worker.finished.connect(self._selection_ai_finished)
         self._selection_worker = worker
-        self.selection_cancel_button.setEnabled(True)
         worker.start()
 
-    def _selection_ai_completed(self, result) -> None:
-        self.selection_result.setPlainText(result.text)
-        self.selection_result.show()
-        self.selection_copy_button.setEnabled(True)
-        self.selection_cancel_button.setEnabled(False)
+    def _selection_ai_finished(self) -> None:
+        self._selection_worker = None
         self._spdf_selection_changed(self._spdf_selection)
-        self.selection_cancel_button.setEnabled(False)
+
+    def _selection_ai_completed(self, result) -> None:
+        if self._selection_dialog is not None:
+            self._selection_dialog.show_result(result.text)
+            self._selection_dialog.set_selection(
+                self._spdf_selection,
+                service_available=self._selection_ai is not None,
+            )
+            self._selection_dialog.set_busy(False)
+        self._spdf_selection_changed(self._spdf_selection)
 
     def _selection_ai_failed(self, message: str) -> None:
+        if self._selection_dialog is not None:
+            self._selection_dialog.set_selection(
+                self._spdf_selection,
+                service_available=self._selection_ai is not None,
+            )
+            self._selection_dialog.set_busy(False)
         self._spdf_selection_changed(self._spdf_selection)
-        self.selection_cancel_button.setEnabled(False)
         QMessageBox.warning(self, "선택 영역 AI 실패", message)
 
     def _apply_pdf_edit(self) -> None:

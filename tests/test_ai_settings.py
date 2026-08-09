@@ -47,6 +47,8 @@ class AiSettingsControllerTests(unittest.TestCase):
                 model_profile="quality",
                 summary_language="source",
                 summary_timeout_seconds=1500,
+                automatic_analysis_interval_seconds=20,
+                manual_analysis_interval_seconds=2,
                 ollama_residency_mode="30m",
                 ollama_resident_model="qwen3:4b",
             )
@@ -59,9 +61,13 @@ class AiSettingsControllerTests(unittest.TestCase):
         self.assertEqual(view.model_profile, "quality")
         self.assertEqual(view.summary_language, "source")
         self.assertEqual(view.summary_timeout_seconds, 1500)
+        self.assertEqual(view.automatic_analysis_interval_seconds, 20)
+        self.assertEqual(view.manual_analysis_interval_seconds, 2)
         self.assertEqual(view.ollama_residency_mode, "30m")
         self.assertEqual(view.ollama_resident_model, "qwen3:4b")
         self.assertEqual(saved["summary_timeout_seconds"], 1500)
+        self.assertEqual(saved["automatic_analysis_interval_seconds"], 20)
+        self.assertEqual(saved["manual_analysis_interval_seconds"], 2)
         self.assertEqual(saved["ollama_residency_mode"], "30m")
         self.assertNotIn("api_key", saved)
 

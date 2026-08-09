@@ -62,6 +62,8 @@ class AiSettingsView:
     last_hardware_scan_at: str
     summary_language: str
     summary_timeout_seconds: int
+    automatic_analysis_interval_seconds: int
+    manual_analysis_interval_seconds: int
     background_model: str
     manual_model: str
     background_model_resident: bool
@@ -126,6 +128,12 @@ class AiSettingsController:
             last_hardware_scan_at=settings.last_hardware_scan_at,
             summary_language=settings.summary_language,
             summary_timeout_seconds=settings.summary_timeout_seconds,
+            automatic_analysis_interval_seconds=(
+                settings.automatic_analysis_interval_seconds
+            ),
+            manual_analysis_interval_seconds=(
+                settings.manual_analysis_interval_seconds
+            ),
             background_model=ollama_model_for_purpose(
                 settings,
                 "background",
@@ -207,6 +215,8 @@ class AiSettingsController:
         model_profile: str | None = None,
         summary_language: str | None = None,
         summary_timeout_seconds: int | None = None,
+        automatic_analysis_interval_seconds: int | None = None,
+        manual_analysis_interval_seconds: int | None = None,
         background_model: str | None = None,
         manual_model: str | None = None,
         background_model_resident: bool | None = None,
@@ -236,6 +246,14 @@ class AiSettingsController:
             settings.summary_language = summary_language
         if summary_timeout_seconds is not None:
             settings.summary_timeout_seconds = summary_timeout_seconds
+        if automatic_analysis_interval_seconds is not None:
+            settings.automatic_analysis_interval_seconds = (
+                automatic_analysis_interval_seconds
+            )
+        if manual_analysis_interval_seconds is not None:
+            settings.manual_analysis_interval_seconds = (
+                manual_analysis_interval_seconds
+            )
         if ollama_residency_mode is not None:
             settings.ollama_residency_mode = ollama_residency_mode
         if ollama_resident_model is not None:

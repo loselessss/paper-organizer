@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -11,7 +12,7 @@ import statistics
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -53,6 +54,7 @@ from paper_organizer.core.document_identity import (
     PdfIdentityError,
     build_identity_from_pages,
     compare_identities,
+    detect_wrapper_pages,
     extract_page_texts,
     sha256_file,
 )
@@ -215,12 +217,47 @@ class LibraryEntry:
     record: dict[str, Any] = field(repr=False, compare=False)
     paperpack_created_at: str = ""
     analysis_completed_at: str = ""
+    search_locations: tuple[str, ...] = ()
+    search_page: int = 0
+    search_snippet: str = ""
+
+
+def _entry_metadata_search_locations(
+    entry: LibraryEntry, query: str
+) -> tuple[str, ...]:
+    tokens = tuple(token for token in query.casefold().split() if token)
+    if not tokens:
+        return ()
+    metadata = entry.metadata
+    fields = (
+        ("title", metadata.title),
+        ("summary", metadata.summary),
+        (
+            "metadata",
+            " ".join(
+                (
+                    *metadata.authors,
+                    str(metadata.year or ""),
+                    metadata.venue,
+                    metadata.category,
+                    metadata.subcategory,
+                    *metadata.tags,
+                )
+            ),
+        ),
+    )
+    return tuple(
+        label
+        for label, value in fields
+        if all(token in value.casefold() for token in tokens)
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class LibraryDeletionResult:
     deleted: int
     problems: tuple[str, ...] = ()
+    operation_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,6 +569,26 @@ def _move_file_with_retry(source: Path, destination: Path) -> None:
         raise last_error
 
 
+def _unlink_file_with_retry(path: Path) -> None:
+    """Permanently remove one file after short-lived Windows locks clear."""
+
+    last_error: OSError | None = None
+    for attempt in range(4):
+        try:
+            path.unlink()
+            return
+        except OSError as exc:
+            retryable = isinstance(exc, PermissionError) or getattr(
+                exc, "winerror", None
+            ) in {5, 32, 33}
+            if not retryable or attempt == 3:
+                raise
+            last_error = exc
+            time.sleep(0.1 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+
+
 def _identity_from_record(record: dict[str, Any]) -> DocumentIdentity:
     identity = record.get("identity")
     file_data = record.get("file")
@@ -604,22 +661,28 @@ def _metadata_for_library_entry(
     record: dict[str, Any], sidecar_path: Path
 ) -> EditablePaperMetadata:
     metadata = _metadata_from_record(record)
-    has_patent_details = any(
-        (
-            metadata.patent_office,
-            metadata.publication_number,
-            metadata.application_number,
-            metadata.assignee,
-        )
-    )
-    if metadata.document_type == "patent" and has_patent_details:
-        return metadata
     if sidecar_path.suffix.casefold() != PAPERPACK_SUFFIX:
         return metadata
     try:
         pages = [text for _number, text in content_pages(load_paperpack_content(sidecar_path))]
         if metadata.document_type == "patent" or _detection(pages)[0] == "patent_likely":
-            return _apply_patent_metadata(metadata, pages)
+            original = _metadata_from_record(record)
+            parsed = _apply_patent_metadata(metadata, pages)
+            sources = record.get("curation", {}).get("field_sources", {})
+            sources = sources if isinstance(sources, dict) else {}
+            protected_fields = {
+                "bibliography.title": "title",
+                "bibliography.authors": "authors",
+                "bibliography.year": "year",
+                "patent.office": "patent_office",
+                "patent.publication_number": "publication_number",
+                "patent.application_number": "application_number",
+                "patent.assignee": "assignee",
+            }
+            for field_name, attribute in protected_fields.items():
+                if sources.get(field_name) == "user":
+                    setattr(parsed, attribute, getattr(original, attribute))
+            return parsed
     except (OSError, PaperPackError, TypeError, ValueError):
         pass
     return metadata
@@ -670,6 +733,7 @@ def _history_has_explicit_user_bibliography_change(
 
 
 def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadata:
+    repeated_lines = _repeated_page_lines(page_texts)
     pdf_title = ""
     pdf_author = ""
     visual_title = ""
@@ -678,23 +742,48 @@ def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadat
         try:
             pdf_title = str(document.metadata.get("title") or "").strip()
             pdf_author = str(document.metadata.get("author") or "").strip()
-            visual_title = _extract_visual_title(document)
+            visual_title = _extract_visual_title(
+                document,
+                excluded_lines=repeated_lines,
+            )
         finally:
             document.close()
     except Exception:
         pass
     pdf_title = _repair_title_text(pdf_title)
-    if not _is_usable_title(pdf_title):
+    if (
+        not _is_usable_title(pdf_title)
+        or _normalized_title_line(pdf_title) in repeated_lines
+    ):
         pdf_title = ""
     lines = [
         " ".join(line.split())
         for line in (page_texts[0].splitlines() if page_texts else [])
         if 5 <= len(" ".join(line.split())) <= 240
     ]
-    title = pdf_title or visual_title or (lines[0] if lines else path.stem)
+    filename_title = " ".join(path.stem.replace("_", " ").split())
+    fallback_title = next(
+        (
+            line
+            for line in lines
+            if _is_usable_title(line)
+            and _normalized_title_line(line) not in repeated_lines
+        ),
+        filename_title,
+    )
+    if (
+        pdf_title
+        and visual_title
+        and visual_title.casefold().startswith(pdf_title.casefold())
+        and len(visual_title) > len(pdf_title)
+    ):
+        title = visual_title
+    else:
+        title = pdf_title or visual_title or fallback_title
     authors = [value.strip() for value in re.split(r"[;,]", pdf_author) if value.strip()]
-    if not authors:
-        authors = _extract_first_page_byline(lines)
+    visual_authors = _extract_first_page_byline(lines, title)
+    if len(visual_authors) > len(authors):
+        authors = visual_authors
     beginning = " ".join(page_texts[:3])
     match = _YEAR_RE.search(beginning)
     return EditablePaperMetadata(
@@ -790,6 +879,8 @@ def _is_usable_title(value: str) -> bool:
         return False
     if is_generic_document_heading(value):
         return False
+    if value.count("_") >= 2 and value.count(" ") <= 1:
+        return False
     folded = value.casefold().strip(" ._-")
     if re.fullmatch(
         r"(?:untitled|document|scan|제목\s*없음)(?:[\s._-]*\d+)?",
@@ -804,7 +895,52 @@ def _is_usable_title(value: str) -> bool:
     return True
 
 
-def _extract_visual_title(document: fitz.Document) -> str:
+def _normalized_title_line(value: str) -> str:
+    return " ".join(value.casefold().split()).strip(" ._-")
+
+
+def _repeated_page_lines(page_texts: list[str]) -> set[str]:
+    """Return running headers repeated across non-wrapper content pages."""
+
+    wrapper_indexes = {
+        page.pdf_page - 1
+        for page in detect_wrapper_pages(page_texts)
+        if page.confidence >= 0.8
+    }
+    if len(page_texts) > 1:
+        first_has_abstract = bool(
+            re.search(r"(?im)^\s*(?:abstract|초록|요약)\b", page_texts[0])
+        )
+        second_has_abstract = bool(
+            re.search(r"(?im)^\s*(?:abstract|초록|요약)\b", page_texts[1])
+        )
+        if not first_has_abstract and second_has_abstract:
+            wrapper_indexes.add(0)
+    content_pages = [
+        text
+        for index, text in enumerate(page_texts)
+        if index not in wrapper_indexes
+    ]
+    if len(content_pages) < 2:
+        return set()
+    counts: dict[str, int] = {}
+    for page_text in content_pages:
+        seen_on_page = {
+            normalized
+            for raw_line in page_text.splitlines()
+            if 5 <= len(normalized := _normalized_title_line(raw_line)) <= 240
+        }
+        for normalized in seen_on_page:
+            counts[normalized] = counts.get(normalized, 0) + 1
+    threshold = max(2, (len(content_pages) * 3 + 4) // 5)
+    return {line for line, count in counts.items() if count >= threshold}
+
+
+def _extract_visual_title(
+    document: fitz.Document,
+    *,
+    excluded_lines: set[str] | None = None,
+) -> str:
     """Return a prominent first-page heading when layout evidence is strong."""
 
     if document.page_count < 1:
@@ -814,7 +950,8 @@ def _extract_visual_title(document: fitz.Document) -> str:
         raw = page.get_text("dict")
     except Exception:
         return ""
-    candidates: list[tuple[float, float, str]] = []
+    excluded = excluded_lines or set()
+    visual_lines: list[tuple[float, float, float, str]] = []
     font_sizes: list[float] = []
     for block in raw.get("blocks", []):
         if not isinstance(block, dict) or block.get("type", 0) != 0:
@@ -833,24 +970,71 @@ def _extract_visual_title(document: fitz.Document) -> str:
             )
             text = " ".join(text.split())
             top = min(float(span.get("bbox", (0, 0, 0, 0))[1]) for span in spans)
+            bottom = max(
+                float(span.get("bbox", (0, 0, 0, 0))[3]) for span in spans
+            )
             size = max(float(span.get("size") or 0) for span in spans)
-            if top <= page.rect.height * 0.5 and _is_usable_title(text):
-                candidates.append((size, top, text))
+            if (
+                top <= page.rect.height * 0.5
+                and _is_usable_title(text)
+                and _normalized_title_line(text) not in excluded
+            ):
+                visual_lines.append((top, bottom, size, text))
     positive_sizes = [size for size in font_sizes if size > 0]
-    if not candidates or not positive_sizes:
+    if not visual_lines or not positive_sizes:
         return ""
-    body_size = statistics.median(positive_sizes)
-    prominent = [
-        candidate
-        for candidate in candidates
-        if candidate[0] >= max(body_size * 1.3, body_size + 2)
+    ordered_sizes = sorted(positive_sizes)
+    lower_half = ordered_sizes[: max(1, (len(ordered_sizes) + 1) // 2)]
+    body_size = statistics.median_low(lower_half)
+    prominence = max(body_size * 1.3, body_size + 2)
+    visual_lines.sort(key=lambda value: (value[0], -value[2]))
+    starts = [
+        index
+        for index, (_top, _bottom, size, _text) in enumerate(visual_lines)
+        if size >= prominence
     ]
-    if not prominent:
+    if not starts:
         return ""
-    return max(prominent, key=lambda candidate: (candidate[0], -candidate[1]))[2]
+
+    candidates: list[tuple[float, float, str]] = []
+    stop_prefixes = (
+        "abstract",
+        "introduction",
+        "department",
+        "university",
+        "institute",
+        "received",
+        "accepted",
+        "doi",
+        "http",
+    )
+    for start in starts:
+        top, bottom, size, text = visual_lines[start]
+        parts = [text]
+        last_bottom = bottom
+        for next_top, next_bottom, next_size, next_text in visual_lines[start + 1 :]:
+            if len(parts) >= 4:
+                break
+            gap = next_top - last_bottom
+            folded = next_text.casefold()
+            if (
+                gap > max(size, next_size) * 1.35
+                or next_size < prominence
+                or next_size < size * 0.82
+                or folded.startswith(stop_prefixes)
+                or "@" in next_text
+            ):
+                break
+            combined = " ".join([*parts, next_text])
+            if len(combined) > 240 or not _is_usable_title(combined):
+                break
+            parts.append(next_text)
+            last_bottom = next_bottom
+        candidates.append((size, top, " ".join(parts)))
+    return max(candidates, key=lambda candidate: (candidate[0], -candidate[1], len(candidate[2])))[2]
 
 
-def _extract_first_page_byline(lines: list[str]) -> list[str]:
+def _extract_first_page_byline(lines: list[str], title: str = "") -> list[str]:
     """Conservatively extract author names between the title and abstract."""
 
     excluded = (
@@ -868,6 +1052,53 @@ def _extract_first_page_byline(lines: list[str]) -> list[str]:
         "http",
         "@",
     )
+    compact_title = re.sub(r"[^\w]+", "", title.casefold())
+    title_end = -1
+    if compact_title:
+        for start in range(min(12, len(lines))):
+            accumulated = ""
+            for end in range(start, min(len(lines), start + 6)):
+                accumulated += re.sub(r"[^\w]+", "", lines[end].casefold())
+                if compact_title in accumulated:
+                    title_end = end
+                    break
+                if len(accumulated) > len(compact_title) * 1.25:
+                    break
+            if title_end >= 0:
+                break
+    if title_end >= 0:
+        author_lines: list[str] = []
+        for line in lines[title_end + 1 : title_end + 8]:
+            folded = line.casefold()
+            if folded.startswith(("abstract", "introduction", "to our knowledge")):
+                break
+            if any(marker in folded for marker in excluded):
+                if author_lines:
+                    break
+                continue
+            without_numbers = re.sub(r"\d+(?:\s*[,.-]\s*\d+)*", " ", line)
+            tokens = re.findall(r"[^\W\d_]+", without_numbers, re.UNICODE)
+            uppercase = sum(token[0].isupper() for token in tokens)
+            if not tokens or uppercase < max(1, math.ceil(len(tokens) * 0.5)):
+                if author_lines:
+                    break
+                continue
+            author_lines.append(line)
+        combined = " ".join(author_lines)
+        combined = re.sub(r"\d+(?:\s*[,.-]\s*\d+)*", " ", combined)
+        values: list[str] = []
+        for raw in re.split(r"\s*[,;]\s*|\s+(?:and|&)\s+", combined):
+            value = " ".join(raw.split()).strip(" ,;&")
+            tokens = re.findall(r"[^\W\d_]+", value, re.UNICODE)
+            if not 1 <= len(tokens) <= 6:
+                continue
+            uppercase = sum(token[0].isupper() for token in tokens)
+            if uppercase < max(1, math.ceil(len(tokens) * 0.6)):
+                continue
+            values.append(value)
+        if len(values) >= 2:
+            return list(dict.fromkeys(values))
+
     initial_name = re.compile(
         r"(?:^|,\s*|\band\s+)(?:[A-Z]\.\s*)+[A-Z][A-Za-z'’-]+(?:\s|$)"
     )
@@ -927,7 +1158,7 @@ def _is_supported_document(status: str) -> bool:
     return status in {"academic_likely", "patent_likely"}
 
 
-_PATENT_INID_RE = re.compile(r"^\s*[\[(](\d{2})[\])]\s*(.*)$")
+_PATENT_INID_RE = re.compile(r"(?<!\w)[\[(]\s*(\d{2})\s*[\])]")
 
 
 def _patent_inid_blocks(text: str) -> dict[str, list[str]]:
@@ -939,18 +1170,27 @@ def _patent_inid_blocks(text: str) -> dict[str, list[str]]:
         line = " ".join(raw_line.split())
         if not line:
             continue
-        match = _PATENT_INID_RE.match(line)
-        if match:
-            code = match.group(1)
-            if code == "19" and code in blocks:
-                # Some PDFs are bundles of patent front pages. Never merge the
-                # next patent's title, inventors or identifiers into the first.
-                break
-            current = code
-            blocks.setdefault(current, [])
-            payload = match.group(2).strip()
-            if payload:
-                blocks[current].append(payload)
+        matches = list(_PATENT_INID_RE.finditer(line))
+        if matches:
+            prefix = line[: matches[0].start()].strip(" ;,")
+            if prefix and current:
+                blocks.setdefault(current, []).append(prefix)
+            for index, match in enumerate(matches):
+                code = match.group(1)
+                if code == "19" and code in blocks:
+                    # Some PDFs are bundles of patent front pages. Never merge
+                    # the next patent's fields into the first.
+                    return blocks
+                current = code
+                blocks.setdefault(current, [])
+                end = (
+                    matches[index + 1].start()
+                    if index + 1 < len(matches)
+                    else len(line)
+                )
+                payload = line[match.end() : end].strip(" ;,")
+                if payload:
+                    blocks[current].append(payload)
             continue
         if current:
             blocks[current].append(line)
@@ -959,12 +1199,15 @@ def _patent_inid_blocks(text: str) -> dict[str, list[str]]:
 
 _KOREAN_ADDRESS_RE = re.compile(
     r"(?:"
-    r"특별시|광역시|특별자치(?:시|도)|경기도|강원도|충청[남북]도|"
+    r"[가-힣]+(?:특별시|광역시|특별자치(?:시|도))|"
+    r"경기도|강원도|충청[남북]도|"
     r"전라[남북]도|경상[남북]도|제주도|"
     r"\d+(?:번지|호|동)|(?:로|길)\s*\d+|아파트|빌딩|"
     r"\([^)]*(?:동|읍|면|리)[^)]*\)"
     r")"
 )
+
+
 def _korean_inid_parties(
     blocks: dict[str, list[str]],
     codes: tuple[str, ...],
@@ -977,6 +1220,7 @@ def _korean_inid_parties(
         if not rows:
             continue
         values: list[str] = []
+        previous_was_address = False
         for index, row in enumerate(rows):
             line = " ".join(row.split()).strip(" ;,")
             if index == 0:
@@ -984,19 +1228,28 @@ def _korean_inid_parties(
                     if line.startswith(label):
                         line = line[len(label) :].lstrip(" :#.")
                         break
+            address_match = _KOREAN_ADDRESS_RE.search(line)
+            address_started = address_match is not None
+            if address_match is not None:
+                line = line[: address_match.start()].rstrip(" ;,")
             if (
                 not line
                 or line in labels
                 or any(marker in line for marker in ("심사관", "대리인"))
-                or _KOREAN_ADDRESS_RE.search(line)
-                or any(character.isdigit() for character in line)
             ):
+                if address_started:
+                    previous_was_address = True
                 continue
-            values.extend(
-                value.strip(" ;,")
-                for value in re.split(r"\s*;\s*", line)
-                if value.strip(" ;,")
-            )
+            if any(character.isdigit() for character in line):
+                previous_was_address = True
+                continue
+            if not (address_started and previous_was_address):
+                values.extend(
+                    value.strip(" ;,")
+                    for value in re.split(r"\s*;\s*", line)
+                    if value.strip(" ;,")
+                )
+            previous_was_address = address_started
         if values:
             return list(dict.fromkeys(values))
     return []
@@ -2103,12 +2356,16 @@ class LibraryWorkflowController:
         queued = 0
         problems: list[str] = []
         current = {item.queue_id: item for item in queue.load()}
+        seen_file_hashes: set[str] = set()
         for entry in entries:
             title = entry.metadata.title or entry.sidecar_path.stem
             file_sha256 = str(entry.record.get("file", {}).get("sha256") or "").strip()
             if not file_sha256 or not entry.sidecar_path.is_file():
                 problems.append(f"{title}: PaperPack 또는 파일 식별자가 없습니다.")
                 continue
+            if file_sha256 in seen_file_hashes:
+                continue
+            seen_file_hashes.add(file_sha256)
             bundle_reason = self.mark_multiple_document_if_needed(
                 entry.sidecar_path
             )
@@ -2282,6 +2539,27 @@ class LibraryWorkflowController:
             )
         record = load_paperpack_metadata(source)
         inferred_metadata = _metadata_for_library_entry(record, source)
+        repeated_title_lines: set[str] = set()
+        preferred_title = ""
+        preferred_authors: list[str] = []
+        try:
+            paper_page_texts = [
+                text
+                for _number, text in content_pages(
+                    load_paperpack_content(source)
+                )
+            ]
+            repeated_title_lines = _repeated_page_lines(paper_page_texts)
+            preview_pdf = execution.preview.pdf_path
+            if preview_pdf.is_file():
+                preferred_metadata = _default_metadata(
+                    preview_pdf,
+                    paper_page_texts,
+                )
+                preferred_title = preferred_metadata.title
+                preferred_authors = preferred_metadata.authors
+        except (OSError, PaperPackError, TypeError, ValueError):
+            pass
         if inferred_metadata.document_type == "patent":
             _apply_metadata(record, inferred_metadata)
         now = _now_iso()
@@ -2339,6 +2617,11 @@ class LibraryWorkflowController:
         }:
             values["contributions"] = list(data.contributions)
             values["limitations"] = list(data.limitations)
+        if (
+            execution.preview.summary_strategy == "bibliography_only"
+            or not data.summary.strip()
+        ):
+            values.pop("summary", None)
         for name, value in values.items():
             field = f"description.{name}"
             current_source = str(sources.get(field) or "")
@@ -2350,7 +2633,14 @@ class LibraryWorkflowController:
             description[name] = value
             sources[field] = f"ai:{result.provider}"
         sources["classification.ai_tags"] = f"ai:{result.provider}"
-        self._apply_ai_bibliography(record, data, f"ai:{result.provider}")
+        self._apply_ai_bibliography(
+            record,
+            data,
+            f"ai:{result.provider}",
+            excluded_titles=repeated_title_lines,
+            preferred_title=preferred_title,
+            preferred_authors=preferred_authors,
+        )
         curation["revision"] = int(curation.get("revision", 0)) + 1
         curation["last_edited_at"] = now
         curation["last_edited_by"] = f"ai:{result.provider}"
@@ -2375,7 +2665,13 @@ class LibraryWorkflowController:
 
     @staticmethod
     def _apply_ai_bibliography(
-        record: dict[str, Any], data: Any, source_label: str
+        record: dict[str, Any],
+        data: Any,
+        source_label: str,
+        *,
+        excluded_titles: set[str] | None = None,
+        preferred_title: str = "",
+        preferred_authors: list[str] | None = None,
     ) -> None:
         """Overwrite only fields the user has not curated or locked.
 
@@ -2413,13 +2709,35 @@ class LibraryWorkflowController:
         year: int | None = None
         if data.year.strip().isdigit() and len(data.year.strip()) == 4:
             year = int(data.year.strip())
+        ai_title = data.title.strip()
+        deterministic_title = preferred_title.strip()
+        ai_title_words = len(ai_title.split())
+        deterministic_words = len(deterministic_title.split())
+        use_deterministic_title = bool(
+            _is_usable_title(deterministic_title)
+            and ai_title
+            and (
+                ai_title.casefold() == data.venue.strip().casefold()
+                or ai_title_words < max(2, math.ceil(deterministic_words * 0.65))
+            )
+        )
+        title_value = deterministic_title if use_deterministic_title else ai_title
+        deterministic_authors = [
+            value.strip() for value in (preferred_authors or []) if value.strip()
+        ]
+        use_deterministic_authors = len(deterministic_authors) >= 2
+        author_value = (
+            deterministic_authors
+            if use_deterministic_authors
+            else [value.strip() for value in data.authors if value.strip()]
+        )
         candidates = [
-            (bibliography, "bibliography.title", "title", data.title.strip()),
+            (bibliography, "bibliography.title", "title", title_value),
             (
                 bibliography,
                 "bibliography.authors",
                 "authors",
-                [value.strip() for value in data.authors if value.strip()],
+                author_value,
             ),
             (bibliography, "bibliography.year", "year", year),
             (
@@ -2444,10 +2762,23 @@ class LibraryWorkflowController:
         for target, field, key, value in candidates:
             if not value:
                 continue
+            if field == "bibliography.title" and (
+                not _is_usable_title(str(value))
+                or _normalized_title_line(str(value)) in (excluded_titles or set())
+            ):
+                continue
             if not replaceable(field, target.get(key)):
                 continue
             target[key] = value
-            sources[field] = source_label
+            sources[field] = (
+                "auto:regex"
+                if (
+                    field == "bibliography.title" and use_deterministic_title
+                ) or (
+                    field == "bibliography.authors" and use_deterministic_authors
+                )
+                else source_label
+            )
 
     def _relocate_for_classification(
         self, paperpack: Path, record: dict[str, Any]
@@ -3162,7 +3493,14 @@ class LibraryWorkflowController:
             ).casefold()
             if normalized_query and normalized_query not in " ".join(haystack.split()):
                 continue
-            matches.append(entry)
+            matches.append(
+                replace(
+                    entry,
+                    search_locations=_entry_metadata_search_locations(
+                        entry, normalized_query
+                    ),
+                )
+            )
         return matches
 
     def suggested_document_type(self, entry: LibraryEntry) -> str | None:
@@ -3284,6 +3622,7 @@ class LibraryWorkflowController:
 
         deleted = 0
         problems: list[str] = []
+        operation_ids: list[str] = []
         for entry, targets, file_sha256, file_id, related_queue in plans:
             title = entry.metadata.title or entry.sidecar_path.stem
             current_queue = tuple(
@@ -3383,6 +3722,7 @@ class LibraryWorkflowController:
                 )
                 continue
             deleted += 1
+            operation_ids.append(operation_id)
             for queue_item in current_queue:
                 try:
                     queue.remove(queue_item.queue_id)
@@ -3427,14 +3767,165 @@ class LibraryWorkflowController:
             except Exception as exc:
                 problems.append(f"통합 색인 재생성 실패: {exc}")
         self._library_cache = None
-        return LibraryDeletionResult(deleted, tuple(problems))
+        return LibraryDeletionResult(
+            deleted,
+            tuple(problems),
+            tuple(operation_ids),
+        )
 
     def permanently_delete_library_entries(
         self, entries: Iterable[LibraryEntry]
     ) -> LibraryDeletionResult:
-        """Backward-compatible name; library removal is always recoverable."""
+        """Permanently remove approved entries and every exact-PDF duplicate."""
 
-        return self.trash_library_entries(entries)
+        selected = list(entries)
+        selected_paths = {
+            entry.sidecar_path.expanduser().resolve() for entry in selected
+        }
+        selected_hashes = {
+            str(entry.record.get("file", {}).get("sha256") or "").strip()
+            for entry in selected
+        }
+        selected_hashes.discard("")
+        _input_dir, root = self.configured_paths()
+        expanded: list[LibraryEntry] = []
+        seen_paths: set[Path] = set()
+        for entry in (*selected, *self.list_library()):
+            path = entry.sidecar_path.expanduser().resolve()
+            file_sha256 = str(
+                entry.record.get("file", {}).get("sha256") or ""
+            ).strip()
+            if path in seen_paths:
+                continue
+            if path not in selected_paths and file_sha256 not in selected_hashes:
+                continue
+            seen_paths.add(path)
+            expanded.append(entry)
+
+        for sidecar in iter_paperpacks(root):
+            path = sidecar.expanduser().resolve()
+            if path in seen_paths:
+                continue
+            try:
+                record = load_paperpack_metadata(path)
+                file_sha256 = str(
+                    record.get("file", {}).get("sha256")
+                    or inspect_paperpack(path).pdf_sha256
+                    or ""
+                ).strip()
+                if file_sha256 not in selected_hashes:
+                    continue
+                identity = _identity_from_record(record)
+                created_at, analyzed_at = _library_entry_timestamps(record, path)
+                expanded.append(
+                    LibraryEntry(
+                        pdf_path=path,
+                        sidecar_path=path,
+                        metadata=_metadata_for_library_entry(record, path),
+                        work_id=identity.work_id,
+                        source_variant=identity.source_variant,
+                        record=record,
+                        paperpack_created_at=created_at,
+                        analysis_completed_at=analyzed_at,
+                    )
+                )
+                seen_paths.add(path)
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                PaperPackError,
+            ):
+                continue
+
+        result = self.trash_library_entries(expanded)
+        trash_root = (root / "trash").resolve()
+        problems = list(result.problems)
+        purged = 0
+        for operation_id in result.operation_ids:
+            operation_dir = (trash_root / operation_id).resolve()
+            manifest = operation_dir / "manifest.json"
+            try:
+                if not _inside(trash_root, operation_dir) or not manifest.is_file():
+                    raise LibraryWorkflowError("영구 삭제할 휴지통 기록을 찾을 수 없습니다.")
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                if (
+                    data.get("operation_id") != operation_id
+                    or data.get("kind") != "library_entry"
+                ):
+                    raise LibraryWorkflowError("영구 삭제할 휴지통 기록이 올바르지 않습니다.")
+                shutil.rmtree(operation_dir)
+                purged += 1
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                problems.append(
+                    f"{operation_id}: 완전 삭제하지 못해 앱 휴지통에 남겼습니다: {exc}"
+                )
+            except LibraryWorkflowError as exc:
+                problems.append(f"{operation_id}: {exc}")
+        return LibraryDeletionResult(purged, tuple(problems))
+
+    def permanently_delete_review_items(
+        self, items: Iterable[ReviewItem]
+    ) -> LibraryDeletionResult:
+        """Permanently delete explicitly selected source PDFs."""
+
+        selected = list(items)
+        if not selected:
+            raise LibraryWorkflowError("완전 삭제할 PDF를 선택하세요.")
+        plans: list[tuple[ReviewItem, Path]] = []
+        seen: set[Path] = set()
+        for item in selected:
+            source = item.path.expanduser().resolve()
+            if source in seen:
+                raise LibraryWorkflowError("같은 PDF가 중복 선택되었습니다.")
+            seen.add(source)
+            if not source.is_file() or sha256_file(source) != item.identity.file_sha256:
+                raise LibraryWorkflowError(
+                    f"파일이 없거나 검토 후 내용이 바뀌었습니다: {source.name}"
+                )
+            plans.append((item, source))
+
+        deleted = 0
+        problems: list[str] = []
+        for item, source in plans:
+            try:
+                _unlink_file_with_retry(source)
+            except OSError as exc:
+                problems.append(
+                    f"{source.name}: 완전 삭제 실패: {exc}. "
+                    "sPDF와 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
+                )
+                continue
+            deleted += 1
+            self._forget_discovery(source)
+            self._cache.pop(source, None)
+            try:
+                self._queue().remove(f"sha256:{item.identity.file_sha256}")
+            except AnalysisQueueError:
+                pass
+        return LibraryDeletionResult(deleted, tuple(problems))
+
+    def permanently_delete_duplicate_reference(
+        self, item: ReviewItem
+    ) -> LibraryDeletionResult:
+        """Permanently delete the existing library item matched as a duplicate."""
+
+        duplicate = item.duplicate
+        if duplicate is None:
+            raise LibraryWorkflowError("기존 중복 항목을 찾을 수 없습니다.")
+        wanted = duplicate.sidecar_path.expanduser().resolve()
+        entry = next(
+            (
+                value
+                for value in self.list_library()
+                if value.sidecar_path.expanduser().resolve() == wanted
+            ),
+            None,
+        )
+        if entry is None:
+            raise LibraryWorkflowError("기존 중복 PDF 또는 PaperPack을 찾을 수 없습니다.")
+        return self.permanently_delete_library_entries([entry])
 
     def rebuild_search_index(self, *, progress=None) -> tuple[int, tuple[str, ...]]:
         """Rebuild the disposable full-text cache from every paperpack."""
@@ -3459,7 +3950,7 @@ class LibraryWorkflowController:
         if not hits:
             return self.list_library(normalized)
         by_path = {
-            entry.pdf_path.resolve(): entry for entry in self.list_library()
+            entry.sidecar_path.resolve(): entry for entry in self.list_library()
         }
         entries: list[LibraryEntry] = []
         for hit in hits:
@@ -3469,7 +3960,14 @@ class LibraryWorkflowController:
                 continue
             entry = by_path.get(path)
             if entry is not None:
-                entries.append(entry)
+                entries.append(
+                    replace(
+                        entry,
+                        search_locations=hit.match_locations,
+                        search_page=hit.page,
+                        search_snippet=hit.snippet,
+                    )
+                )
         return entries or self.list_library(normalized)
 
     def _index_search_entry(self, paperpack: Path) -> str:

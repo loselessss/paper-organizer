@@ -191,7 +191,7 @@ class PaperOrganizerWindow(QMainWindow):
             lifecycle_action = QAction("시작 및 종료 설정...", self)
             lifecycle_action.triggered.connect(self.show_lifecycle_settings)
             watch_settings_menu.addAction(lifecycle_action)
-            self._create_system_tray()
+        self._ensure_system_tray()
         watch_settings_menu.menuAction().setVisible(
             bool(watch_settings_menu.actions())
         )
@@ -234,11 +234,7 @@ class PaperOrganizerWindow(QMainWindow):
         if self.queue_widget is None:
             return
         self.queue_widget.refresh()
-        if (
-            self._library_workflow is not None
-            and self._library_workflow.settings().background_analysis_enabled
-        ):
-            self.queue_widget.start_background_analysis()
+        self.queue_widget.start_background_analysis(immediate_count=count)
 
     def _library_translation_queued(self, count: int) -> None:
         if self.queue_widget is None:
@@ -454,10 +450,11 @@ class PaperOrganizerWindow(QMainWindow):
         )
         if not dialog.exec_():
             return
-        if self._lifecycle.settings().close_behavior == "quit":
-            if self._tray is not None:
-                self._dispose_tray()
-            return
+        self._ensure_system_tray()
+
+    def _ensure_system_tray(self) -> None:
+        """Keep the tray icon visible for the entire application lifetime."""
+
         if QSystemTrayIcon.isSystemTrayAvailable():
             if self._tray is None:
                 self._create_system_tray()
@@ -730,6 +727,8 @@ class PaperOrganizerWindow(QMainWindow):
         if self._update_worker is not None and self._update_worker.isRunning():
             self._update_worker.requestInterruption()
             self._update_worker.wait(1000)
+        if self.library_widget is not None:
+            self.library_widget.close_selection_ai_dialog()
         if self._tray is not None:
             self._dispose_tray()
         super().closeEvent(event)

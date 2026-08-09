@@ -38,6 +38,10 @@ _WO_NUMBER = re.compile(r"\bWO\s*\d{4}\s*/?\s*\d{4,6}\s*[A-Z]\d?\b", re.I)
 _PCT_NUMBER = re.compile(r"\bPCT\s*/\s*[A-Z]{2}\s*\d{4}\s*/\s*\d{4,6}\b", re.I)
 _KR_NUMBER = re.compile(r"(?:\b10\s*[-–]\s*\d{4}\s*[-–]\s*\d{4,7}\b|\b10\s*[-–]\s*\d{6,10}\b)")
 _DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.I)
+_ABSTRACT_FRONT = re.compile(
+    r"(?im)^\s*(?:abstract|a\s+b\s+s\s+t\s+r\s+a\s+c\s+t|초록|요약)"
+    r"(?:\s*$|\s*[:.\-–—]\s*\S|\s+\S)"
+)
 
 
 def detect_document_bundle(page_texts: Iterable[str]) -> DocumentBundleDecision:
@@ -70,8 +74,10 @@ def detect_document_bundle(page_texts: Iterable[str]) -> DocumentBundleDecision:
             continue
 
         # A DOI alone is common in references and running headers. Requiring an
-        # abstract heading on the same page makes this a conservative title-page test.
-        if re.search(r"(?im)^\s*(?:abstract|초록|요약)\s*[:.]?\s*$", front):
+        # abstract start on the same page makes this a conservative title-page
+        # test. Publishers commonly place the first abstract sentence on the
+        # same line as the heading, so do not require a heading-only line.
+        if _ABSTRACT_FRONT.search(front):
             doi = _DOI.search(front)
             if doi:
                 normalized = doi.group(0).rstrip(".,;)]}").casefold()

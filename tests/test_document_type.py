@@ -75,6 +75,44 @@ class DocumentTypeTests(unittest.TestCase):
         self.assertTrue(decision.is_multiple)
         self.assertEqual(decision.document_count, 2)
 
+    def test_inline_abstract_title_pages_are_a_bundle(self) -> None:
+        first = (
+            "Effective melanin degradation by a synergistic enzyme complex\n"
+            "doi: 10.1016/j.ijbiomac.2019.02.027\n"
+            "Abstract Melanin degradation was measured using two enzymes."
+        )
+        second = (
+            "A distinct article in the same PDF\n"
+            "https://doi.org/10.1000/distinct-paper\n"
+            "ABSTRACT: This is the second complete paper in the file."
+        )
+
+        decision = detect_document_bundle([first, "body", second])
+
+        self.assertTrue(decision.is_multiple)
+        self.assertEqual(decision.document_count, 2)
+        self.assertEqual(
+            decision.identifiers,
+            (
+                "10.1016/j.ijbiomac.2019.02.027",
+                "10.1000/distinct-paper",
+            ),
+        )
+
+    def test_same_doi_wrapper_and_inline_abstract_are_one_document(self) -> None:
+        wrapper = (
+            "Publisher access page\n"
+            "doi: 10.1016/j.ijbiomac.2019.02.027\n"
+            "Abstract and indexing information"
+        )
+        article = (
+            "Effective melanin degradation\n"
+            "doi: 10.1016/j.ijbiomac.2019.02.027\n"
+            "Abstract Melanin degradation was measured."
+        )
+
+        self.assertFalse(detect_document_bundle([wrapper, article]).is_multiple)
+
 
 if __name__ == "__main__":
     unittest.main()

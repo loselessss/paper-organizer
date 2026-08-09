@@ -52,6 +52,8 @@ class AppSettings:
     summary_provider: str = "ollama"
     summary_language: str = "ko"
     summary_timeout_seconds: int = 900
+    automatic_analysis_interval_seconds: int = 30
+    manual_analysis_interval_seconds: int = 0
     openai_model: str = "gpt-5.6"
     anthropic_model: str = "claude-sonnet-4-6"
     cloud_processing_consent: bool = False
@@ -167,6 +169,22 @@ class AppSettings:
             or not 60 <= self.summary_timeout_seconds <= 3600
         ):
             raise ValueError("summary_timeout_seconds must be between 60 and 3600")
+        for name, value in (
+            (
+                "automatic_analysis_interval_seconds",
+                self.automatic_analysis_interval_seconds,
+            ),
+            (
+                "manual_analysis_interval_seconds",
+                self.manual_analysis_interval_seconds,
+            ),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= 3600
+            ):
+                raise ValueError(f"{name} must be between 0 and 3600")
         if not isinstance(self.cloud_processing_consent, bool):
             raise ValueError("cloud_processing_consent must be a boolean")
         if not isinstance(self.last_update_check_at, str):

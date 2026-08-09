@@ -193,6 +193,12 @@ class SearchIndexTests(unittest.TestCase):
 
             self.assertEqual(len(entries), 1)
             self.assertIn("thermostable", entries[0].metadata.title.casefold())
+            self.assertEqual(entries[0].search_locations, ("body",))
+            self.assertEqual(entries[0].search_page, 2)
+
+            title_entries = controller.search_library("transformer architecture")
+            self.assertEqual(len(title_entries), 1)
+            self.assertIn("title", title_entries[0].search_locations)
 
             self.assertEqual(len(controller.search_library("")), 2)
 

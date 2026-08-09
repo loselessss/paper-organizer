@@ -13,6 +13,7 @@ from paper_organizer.application.library_workflow import (
     LibraryEntry,
     LibraryWorkflowController,
 )
+from paper_organizer.application.translation_policy import require_translation_model
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import settings_for_summary_purpose
 from paper_organizer.providers.base import (
@@ -93,6 +94,7 @@ class LibraryTranslationService:
             self._workflow.settings(),
             "manual",
         )
+        require_translation_model(settings)
         if (
             settings.summary_provider in {"openai", "anthropic"}
             and not settings.cloud_processing_consent

@@ -9,6 +9,7 @@ from threading import Event
 from typing import Callable, Literal
 
 from paper_organizer.infra.secrets import SecretStore
+from paper_organizer.application.translation_policy import require_translation_model
 from paper_organizer.infra.settings import (
     default_settings_path,
     load_settings,
@@ -67,6 +68,8 @@ class SelectionAiService:
         settings = settings_for_summary_purpose(
             load_settings(self._settings_path), "manual"
         )
+        if action == "translate":
+            require_translation_model(settings)
         cloud = settings.summary_provider in {"openai", "anthropic"}
         consent = settings.cloud_processing_consent or allow_cloud_once
         if cloud and not consent:

@@ -20,9 +20,11 @@ from paper_organizer.application.summary_service import (
     _publication_year_present,
     _review_methods_supported_by_source,
     _strip_document_type_title_prefix,
+    _validate_bibliography,
 )
 from paper_organizer.infra.settings import AppSettings, save_settings
 from paper_organizer.providers import CloudConsentRequiredError, ProviderError
+from paper_organizer.providers.base import BibliographyData
 
 
 SUMMARY = {
@@ -130,6 +132,29 @@ def make_pdf(path: Path, page_count: int = 12) -> None:
 
 
 class SummaryServiceTests(unittest.TestCase):
+    def test_bibliography_author_validation_rejects_body_prose_and_strips_affiliations(self):
+        source = (
+            "Quantifying circulating cell-free DNA in humans\n"
+            "Romain Meddeb1,2,3,4, Zahra Al Amir Dache1,2,3,4\n"
+            "Human cellular aging is usually marked by senescence and cell death."
+        )
+        validated, verified, _needs_retry = _validate_bibliography(
+            BibliographyData(
+                title="Quantifying circulating cell-free DNA in humans",
+                authors=(
+                    "Romain Meddeb1,2,3,4",
+                    "Human cellular aging is usually marked by senescence and cell death.",
+                ),
+                year="",
+                venue="",
+            ),
+            source,
+            is_patent=False,
+        )
+
+        self.assertEqual(validated.authors, ("Romain Meddeb",))
+        self.assertIn("authors", verified)
+
     def test_bibliography_title_drops_joined_document_type_label(self):
         self.assertEqual(
             _strip_document_type_title_prefix(
@@ -242,6 +267,58 @@ class SummaryServiceTests(unittest.TestCase):
             "primary research paper",
             research_client.calls[1]["payload"]["messages"][0]["content"],
         )
+
+    def test_second_page_supplies_bibliography_when_first_page_has_no_abstract(self):
+        prepared = prepare_text_summary(
+            Path("wrapped.paperpack"),
+            [
+                "Journal cover page\nJBC issue information\nDownloaded wrapper notice",
+                "Mechanism of a thermostable enzyme\n"
+                + "Jane Doe and John Roe\nJournal of Biological Chemistry 2026\n"
+                + "Abstract\n"
+                + (
+                    "We report a catalytic mechanism supported by kinetic "
+                    "measurements and structural evidence across multiple variants. "
+                    * 8
+                )
+                + "\nIntroduction\nThe enzyme mechanism is investigated in detail. " * 10,
+                "Methods and Results\nKinetic assays and structures support the mechanism. "
+                * 20,
+            ],
+            AppSettings(selected_model="qwen3:1.7b"),
+        )
+
+        self.assertIn("Mechanism of a thermostable enzyme", prepared.bibliography_text)
+        self.assertNotIn("JBC issue information", prepared.bibliography_text)
+
+    def test_first_page_standfirst_is_not_mistaken_for_a_wrapper(self):
+        prepared = prepare_text_summary(
+            Path("scientific-reports.paperpack"),
+            [
+                "Scientific Reports | (2019) 9:5220 | "
+                "https://doi.org/10.1038/s41598-019-41593-4\n"
+                "Quantifying circulating cell-free DNA in humans\n"
+                "Romain Meddeb, Zahra Al Amir Dache, Simon Thezenas & Alain Thierry\n"
+                + (
+                    "To our knowledge this comprehensive study examines sources of "
+                    "variability in circulating DNA measurements from healthy donors. "
+                    * 10
+                ),
+                "Introduction\nHuman cellular aging and inflammation affect its measurement.\n"
+                + "Body text and experimental background continue here. " * 25
+                + "\nScientific Reports | (2019) 9:5220 | "
+                "https://doi.org/10.1038/s41598-019-41593-4",
+                "Methods and Results\nThe samples were quantified and compared. " * 25,
+            ],
+            AppSettings(selected_model="qwen3:1.7b"),
+        )
+
+        self.assertIn(
+            "Quantifying circulating cell-free DNA in humans",
+            prepared.bibliography_text,
+        )
+        self.assertIn("Romain Meddeb", prepared.bibliography_text)
+        self.assertNotIn("Human cellular aging", prepared.bibliography_text)
 
     def test_failed_or_uncertain_ai_type_confirmation_falls_back_to_research(self):
         settings = AppSettings(
@@ -421,6 +498,62 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(execution.result.data.authors, ("시험 저자",))
         self.assertEqual(execution.result.data.year, "2026")
         self.assertEqual(execution.result.data.venue, "시험 저널")
+        self.assertEqual(
+            execution.bibliography_verified_fields,
+            ("title", "authors", "year", "venue"),
+        )
+
+    def test_bibliography_accepts_publisher_title_with_missing_spaces(self):
+        bibliography = {
+            "title": (
+                "The Stability Improvement of α-Amylase Enzyme from "
+                "Aspergillus fumigatus by Immobilization on a Bentonite Matrix"
+            ),
+            "authors": [
+                "Yandri Yandri",
+                "Ezra Rheinsky Tiarsa",
+                "Tati Suhartati",
+                "Heri Satria",
+                "Bambang Irawan",
+                "Sutopo Hadi",
+            ],
+            "year": "2022",
+            "venue": "Biochemistry Research International",
+        }
+        settings = AppSettings(
+            summary_provider="ollama",
+            selected_model="qwen3:8b",
+        )
+        prepared = prepare_text_summary(
+            Path("amylase.paperpack"),
+            [
+                "Hindawi\nBiochemistry Research International\nVolume 2022, "
+                "Article ID 3797629\nhttps://doi.org/10.1155/2022/3797629\n"
+                "Research Article\n"
+                "TheStabilityImprovementofα-AmylaseEnzymefromAspergillus\n"
+                "fumigatus by Immobilization on a Bentonite Matrix\n"
+                "Yandri Yandri,1 Ezra Rheinsky Tiarsa,1 Tati Suhartati,1 "
+                "Heri Satria,1 Bambang Irawan,2 and Sutopo Hadi1\n"
+                "Abstract The enzyme stability was evaluated after immobilization. "
+                + "Experimental evidence and measurements are reported. " * 40,
+            ],
+            settings,
+        )
+
+        execution = run_prepared_summary(
+            prepared,
+            settings,
+            MemorySecretStore(),
+            http_client=FakeHttpClient(bibliography=bibliography),
+        )
+
+        self.assertEqual(execution.result.data.title, bibliography["title"])
+        self.assertEqual(execution.result.data.authors, tuple(bibliography["authors"]))
+        self.assertEqual(execution.result.data.year, "2022")
+        self.assertEqual(
+            execution.result.data.venue,
+            "Biochemistry Research International",
+        )
         self.assertEqual(
             execution.bibliography_verified_fields,
             ("title", "authors", "year", "venue"),

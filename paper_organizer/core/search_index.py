@@ -48,6 +48,40 @@ class SearchHit:
     subcategory: str
     page: int
     snippet: str
+    match_locations: tuple[str, ...] = ()
+
+
+def _metadata_match_locations(row: sqlite3.Row, query: str) -> tuple[str, ...]:
+    tokens = tuple(token.casefold() for token in query.split() if token.strip())
+    if not tokens:
+        return ()
+    field_values = tuple(
+        (label, " ".join(str(row[column] or "") for column in columns).casefold())
+        for label, columns in (
+        ("title", ("title",)),
+        ("summary", ("summary",)),
+        (
+            "metadata",
+            (
+                "authors",
+                "year",
+                "venue",
+                "patent_number",
+                "category",
+                "subcategory",
+                "tags",
+            ),
+        ),
+        )
+    )
+    combined = " ".join(value for _label, value in field_values)
+    if not all(token in combined for token in tokens):
+        return ()
+    return tuple(
+        label
+        for label, value in field_values
+        if any(token in value for token in tokens)
+    )
 
 
 def search_index_path(library_root: Path) -> Path:
@@ -281,6 +315,8 @@ def search(
         return []
     statement = _fts_query(query)
     with _connect(target) as connection:
+        work_rows = connection.execute("SELECT * FROM works ORDER BY title").fetchall()
+        work_by_id = {str(row["file_id"]): row for row in work_rows}
         rows = connection.execute(
             f"""
             SELECT
@@ -319,6 +355,33 @@ def search(
                 subcategory=row["subcategory"],
                 page=int(row["page"]),
                 snippet=" ".join(str(row["snippet"] or "").split()),
+                match_locations=(
+                    *_metadata_match_locations(work_by_id[row["file_id"]], query),
+                    "body",
+                ),
+            )
+        )
+        if len(hits) >= limit:
+            break
+    for row in work_rows:
+        file_id = str(row["file_id"])
+        if file_id in seen:
+            continue
+        locations = _metadata_match_locations(row, query)
+        if not locations:
+            continue
+        hits.append(
+            SearchHit(
+                file_id=file_id,
+                relative_path=str(row["relative_path"]),
+                title=str(row["title"]),
+                venue=str(row["venue"]),
+                year=str(row["year"]),
+                category=str(row["category"]),
+                subcategory=str(row["subcategory"]),
+                page=0,
+                snippet="",
+                match_locations=locations,
             )
         )
         if len(hits) >= limit:
@@ -350,8 +413,7 @@ def search_metadata(
     with _connect(target) as connection:
         rows = connection.execute(
             """
-            SELECT file_id, relative_path, title, venue, year, category, subcategory
-            FROM works
+            SELECT * FROM works
             WHERE lower(
                 title || ' ' || authors || ' ' || year || ' ' || venue || ' ' ||
                 patent_number || ' ' || category || ' ' || subcategory || ' ' ||
@@ -373,6 +435,7 @@ def search_metadata(
             subcategory=row["subcategory"],
             page=0,
             snippet="",
+            match_locations=_metadata_match_locations(row, query),
         )
         for row in rows
     ]

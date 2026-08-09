@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -150,6 +151,20 @@ class AiSettingsDialog(QDialog):
         self.timeout_spin.setToolTip(
             "AI 요청 한 번의 최대 대기 시간입니다. 느린 로컬 모델에는 900초 이상을 권장합니다."
         )
+        self.automatic_interval_spin = QSpinBox()
+        self.automatic_interval_spin.setRange(0, 3600)
+        self.automatic_interval_spin.setSuffix("초")
+        self.automatic_interval_spin.setSpecialValueText("간격 없음")
+        self.automatic_interval_spin.setToolTip(
+            "백그라운드 자동 분석 작업 사이의 대기 시간입니다."
+        )
+        self.manual_interval_spin = QSpinBox()
+        self.manual_interval_spin.setRange(0, 3600)
+        self.manual_interval_spin.setSuffix("초")
+        self.manual_interval_spin.setSpecialValueText("간격 없음")
+        self.manual_interval_spin.setToolTip(
+            "사용자가 선택 분석 또는 전체 재분석을 요청했을 때 작업 사이의 대기 시간입니다."
+        )
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("보수적", "conservative")
         self.profile_combo.addItem("표준", "standard")
@@ -171,6 +186,8 @@ class AiSettingsDialog(QDialog):
         form.addRow("클라우드 동의", self.consent_check)
         form.addRow("요약 언어", self.language_combo)
         form.addRow("요약 제한 시간", self.timeout_spin)
+        form.addRow("자동 분석 간격", self.automatic_interval_spin)
+        form.addRow("수동 분석 간격", self.manual_interval_spin)
         form.addRow("클라우드 처리량", self.profile_combo)
         form.addRow("최대 병렬 요청", self.parallel_spin)
         form.addRow("월간 참고 예산(강제 차단 아님)", self.budget_spin)
@@ -231,6 +248,13 @@ class AiSettingsDialog(QDialog):
         )
         local_form.addRow("백그라운드 모델", model_row)
         local_form.addRow("수동 요약 모델", self.manual_model_combo)
+        translation_guidance = QLabel(
+            "AI 번역은 수동 요약 모델을 사용합니다. 최소 4B, 8B 이상 권장."
+        )
+        translation_guidance.setWordWrap(True)
+        translation_guidance.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        translation_guidance.setStyleSheet("color: #8a4b00;")
+        local_form.addRow("번역 모델", translation_guidance)
         local_form.addRow("", self.model_status)
         local_form.addRow("용도 / 주의", self.model_guidance)
         local_form.addRow("백그라운드 상주", self.background_resident_check)
@@ -337,6 +361,10 @@ class AiSettingsDialog(QDialog):
         language_index = self.language_combo.findData(view.summary_language)
         self.language_combo.setCurrentIndex(max(0, language_index))
         self.timeout_spin.setValue(view.summary_timeout_seconds)
+        self.automatic_interval_spin.setValue(
+            view.automatic_analysis_interval_seconds
+        )
+        self.manual_interval_spin.setValue(view.manual_analysis_interval_seconds)
         profile_index = self.profile_combo.findData(view.cloud_request_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         settings = self._controller.settings()
@@ -710,6 +738,10 @@ class AiSettingsDialog(QDialog):
                 model_profile=self.model_profile_combo.currentData(),
                 summary_language=self.language_combo.currentData(),
                 summary_timeout_seconds=self.timeout_spin.value(),
+                automatic_analysis_interval_seconds=(
+                    self.automatic_interval_spin.value()
+                ),
+                manual_analysis_interval_seconds=self.manual_interval_spin.value(),
                 background_model=str(
                     self.model_combo.currentData() or ""
                 ),

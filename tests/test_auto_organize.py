@@ -175,6 +175,46 @@ class AutoOrganizeTests(unittest.TestCase):
         self.assertEqual(metadata.application_number, "10-2020-0012345")
         self.assertEqual(metadata.assignee, "유전체편집연구소")
 
+    def test_inline_and_spaced_inid_markers_do_not_leak_into_patent_title(self):
+        metadata = _apply_patent_metadata(
+            EditablePaperMetadata(title="bad-fallback-title"),
+            [
+                "[ 19 ] 대한민국특허청(KR) [ 11 ] 등록번호 10-3456789 "
+                "[ 54 ] 발명의 명칭 고효율 효소 복합체 및 이의 제조 방법 "
+                "[ 51 ] 국제특허분류 C12N 9/00 [ 57 ] 요약 본 발명은 효소에 관한 것이다.\n"
+                "[ 45 ] 공고일자 2025년 01월 02일 "
+                "[ 72 ] 발명자 김효소; 이단백질 "
+                "[ 73 ] 특허권자 효소연구소\n"
+                + "본 발명의 상세한 설명과 실시예가 이어진다. " * 20,
+            ],
+        )
+
+        self.assertEqual(metadata.title, "고효율 효소 복합체 및 이의 제조 방법")
+        self.assertEqual(metadata.authors, ["김효소", "이단백질"])
+        self.assertEqual(metadata.year, 2025)
+        self.assertEqual(metadata.publication_number, "10-3456789")
+
+    def test_korean_patent_parties_exclude_postal_addresses(self):
+        metadata = _apply_patent_metadata(
+            EditablePaperMetadata(title="fallback"),
+            [
+                "(19) 대한민국특허청(KR)\n"
+                "(11) 공개번호 10-2024-0144776\n"
+                "(54) 발명의 명칭 향상된 특이성을 갖는 CAS9 단백질 및 이의 용도\n"
+                "(71) 출원인\n"
+                "주식회사 진씨커\n"
+                "서울특별시 성동구 성수일로10길 26, 1002-1004호\n"
+                "(72) 발명자\n"
+                "예성혁 서울특별시 성동구 성수일로10길 26, 1203호\n"
+                "(45) 공개일자 2024년10월02일\n"
+            ],
+        )
+
+        self.assertEqual(metadata.authors, ["예성혁"])
+        self.assertEqual(metadata.assignee, "주식회사 진씨커")
+        self.assertNotIn("국제특허분류", metadata.title)
+        self.assertNotIn("요약", metadata.title)
+
     def _controller(self, root: Path, *, auto_organize: bool = True):
         input_dir = root / "downloads"
         library = root / "library"

@@ -229,6 +229,65 @@ class SystemInstructionTests(unittest.TestCase):
 
 
 class AiClassificationTests(unittest.TestCase):
+    def test_short_journal_masthead_does_not_replace_deterministic_title(self):
+        record = {
+            "bibliography": {"title": "Old Automatic Title"},
+            "classification": {},
+            "curation": {
+                "field_sources": {"bibliography.title": "auto:regex"},
+                "locked_fields": [],
+            },
+        }
+
+        LibraryWorkflowController._apply_ai_bibliography(
+            record,
+            execution(
+                Path("paper.pdf"),
+                title="Scientific Reports",
+                venue="Scientific Reports",
+                authors=("Human cellular aging is usually marked by senescence.",),
+            ).result.data,
+            "ai:ollama",
+            preferred_title="Quantifying circulating cell-free DNA in humans",
+            preferred_authors=["Romain Meddeb", "Zahra Al Amir Dache"],
+        )
+
+        self.assertEqual(
+            record["bibliography"]["title"],
+            "Quantifying circulating cell-free DNA in humans",
+        )
+        self.assertEqual(
+            record["curation"]["field_sources"]["bibliography.title"],
+            "auto:regex",
+        )
+        self.assertEqual(
+            record["bibliography"]["authors"],
+            ["Romain Meddeb", "Zahra Al Amir Dache"],
+        )
+        self.assertEqual(
+            record["curation"]["field_sources"]["bibliography.authors"],
+            "auto:regex",
+        )
+
+    def test_ai_bibliography_rejects_section_or_repeated_header_as_title(self):
+        record = {
+            "bibliography": {"title": "Existing Candidate"},
+            "classification": {},
+            "curation": {
+                "field_sources": {"bibliography.title": "auto:regex"},
+                "locked_fields": [],
+            },
+        }
+
+        LibraryWorkflowController._apply_ai_bibliography(
+            record,
+            execution(Path("paper.pdf"), title="JOURNAL RUNNING HEADER").result.data,
+            "ai:ollama",
+            excluded_titles={"journal running header"},
+        )
+
+        self.assertEqual(record["bibliography"]["title"], "Existing Candidate")
+
     def test_ai_confirmed_document_type_source_is_persisted(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -436,6 +495,31 @@ class AiClassificationTests(unittest.TestCase):
             description = load_paperpack_metadata(final)["description"]
             self.assertEqual(description["contributions"], ["8B 기여"])
             self.assertEqual(description["limitations"], ["8B 한계"])
+
+    def test_bibliography_only_reanalysis_does_not_erase_existing_summary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, library, pack = self._organized(root)
+            pdf = controller.materialize_pdf(pack)
+            controller.apply_analysis_result(
+                pack,
+                execution(pdf, summary="기존 AI 요약"),
+            )
+            moved = next((library / "papers").rglob("*.paperpack"))
+            moved_pdf = controller.materialize_pdf(moved)
+            controller.apply_analysis_result(
+                moved,
+                execution(
+                    moved_pdf,
+                    summary="",
+                    summary_strategy="bibliography_only",
+                ),
+            )
+
+            final = next((library / "papers").rglob("*.paperpack"))
+            record = load_paperpack_metadata(final)
+            self.assertEqual(record["description"]["summary"], "기존 AI 요약")
+            self.assertEqual(record["analysis"]["summary"], "")
 
     def test_category_suggestion_requires_approval_then_can_be_requeued(self):
         with tempfile.TemporaryDirectory() as temp:
