@@ -7,6 +7,12 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Callable
 
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_BACKGROUND,
+    AI_PRIORITY_MANUAL,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.application.library_workflow import LibraryWorkflowController
 from paper_organizer.application.library_translation import LibraryTranslationService
 from paper_organizer.application.summary_service import (
@@ -62,6 +68,7 @@ class BackgroundAnalysisService:
         ollama_stopper: Callable[[], bool] | None = None,
         memory_available_gb: Callable[[], float] | None = None,
         memory_total_gb: Callable[[], float] | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._workflow = workflow
         self._summary = summary
@@ -84,6 +91,7 @@ class BackgroundAnalysisService:
         else:
             self._memory_total_gb = hardware.total_memory_gb
         self._cancel_requested = Event()
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def request_cancel(self) -> None:
         """Cancel the current result and interrupt an app-managed Ollama process."""
@@ -291,22 +299,29 @@ class BackgroundAnalysisService:
         item = self._workflow.claim_next_analysis()
         if item is None:
             return AnalysisRunEvent("idle", "다른 작업이 대기열을 갱신했습니다.")
-        if on_start is not None:
-            on_start(
-                AnalysisRunEvent(
-                    "translation_started" if item.task_type == "translation" else "started",
-                    (
-                        f"{item.title} AI 번역을 시작했습니다."
-                        if item.task_type == "translation"
-                        else f"{item.title} 분석을 시작했습니다."
-                    ),
-                    item.queue_id,
-                    item.title,
-                )
-            )
+        execution_lease = self._execution_queue.acquire(
+            item.task_type,
+            item.title,
+            priority=(AI_PRIORITY_MANUAL if force else AI_PRIORITY_BACKGROUND),
+        )
         prepared = None
         execution = None
         try:
+            if on_start is not None:
+                on_start(
+                    AnalysisRunEvent(
+                        "translation_started"
+                        if item.task_type == "translation"
+                        else "started",
+                        (
+                            f"{item.title} AI 번역을 시작했습니다."
+                            if item.task_type == "translation"
+                            else f"{item.title} 분석을 시작했습니다."
+                        ),
+                        item.queue_id,
+                        item.title,
+                    )
+                )
             self._raise_if_cancelled()
             if item.task_type == "translation":
                 if self._translation is None:
@@ -414,17 +429,20 @@ class BackgroundAnalysisService:
                 item.title,
             )
         finally:
-            should_keep_runtime = (
-                keep_runtime() if callable(keep_runtime) else keep_runtime
-            )
-            if (
-                settings.summary_provider == "ollama"
-                and settings.ollama_residency_mode == "unload"
-                and not should_keep_runtime
-            ):
-                from paper_organizer.infra.ollama_installer import stop_managed_runtime
+            try:
+                should_keep_runtime = (
+                    keep_runtime() if callable(keep_runtime) else keep_runtime
+                )
+                if (
+                    settings.summary_provider == "ollama"
+                    and settings.ollama_residency_mode == "unload"
+                    and not should_keep_runtime
+                ):
+                    from paper_organizer.infra.ollama_installer import stop_managed_runtime
 
-                stop_managed_runtime()
+                    stop_managed_runtime()
+            finally:
+                execution_lease.release()
 
     def _raise_if_cancelled(self) -> None:
         if self._cancel_requested.is_set():

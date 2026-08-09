@@ -5,8 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from threading import Thread
 from typing import Callable
 
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_SEARCH,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.application.library_workflow import (
     LibraryEntry,
     LibraryWorkflowController,
@@ -153,6 +159,7 @@ class ConversationalSearchController:
         http_client: JsonHttpClient | None = None,
         ollama: OllamaRuntimeInspector | None = None,
         start_local_runtime: Callable[[], bool] | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._workflow = workflow
         self._secret_store = secret_store
@@ -162,6 +169,7 @@ class ConversationalSearchController:
         self._start_local_runtime = start_local_runtime or (
             lambda: start_runtime(inspector=self._ollama)
         )
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def provider_view(self) -> SearchProviderView:
         settings = load_settings(self._settings_path)
@@ -211,22 +219,27 @@ class ConversationalSearchController:
             http_client=self._http_client,
         )
         try:
-            plan_result = provider.plan_search(
-                SearchPlanRequest(
-                    question=normalized,
-                    cloud_consent=consent,
+            with self._execution_queue.slot(
+                "search_plan",
+                normalized[:80],
+                priority=AI_PRIORITY_SEARCH,
+            ):
+                plan_result = provider.plan_search(
+                    SearchPlanRequest(
+                        question=normalized,
+                        cloud_consent=consent,
+                    )
                 )
-            )
             plan = plan_result.data
             candidates = self._retrieve_candidates(normalized, plan)
             context_text, candidates = _build_context(candidates)
         except Exception:
             if view.provider == "ollama":
-                stop_managed_runtime()
+                self._stop_local_runtime_in_queue()
             raise
         if not candidates:
             if view.provider == "ollama":
-                stop_managed_runtime()
+                self._stop_local_runtime_in_queue()
             return PreparedSearch(
                 question=normalized,
                 provider=view.provider,
@@ -274,21 +287,26 @@ class ConversationalSearchController:
             self._secret_store,
             http_client=self._http_client,
         )
-        try:
-            result = provider.answer_search(
-                SearchAnswerRequest(
-                    question=prepared.question,
-                    context_text=prepared.context_text,
-                    allowed_file_ids=tuple(
-                        candidate.file_id for candidate in prepared.candidates
-                    ),
-                    cloud_consent=consent,
-                    context_window=prepared.context_window,
+        with self._execution_queue.slot(
+            "search_answer",
+            prepared.question[:80],
+            priority=AI_PRIORITY_SEARCH,
+        ):
+            try:
+                result = provider.answer_search(
+                    SearchAnswerRequest(
+                        question=prepared.question,
+                        context_text=prepared.context_text,
+                        allowed_file_ids=tuple(
+                            candidate.file_id for candidate in prepared.candidates
+                        ),
+                        cloud_consent=consent,
+                        context_window=prepared.context_window,
+                    )
                 )
-            )
-        finally:
-            if view.provider == "ollama":
-                stop_managed_runtime()
+            finally:
+                if view.provider == "ollama":
+                    stop_managed_runtime()
         answer = _validated_answer(result.data, prepared.candidates)
         return ConversationalSearchResult(
             answer=answer,
@@ -298,7 +316,18 @@ class ConversationalSearchController:
         )
 
     def stop_local_runtime(self) -> None:
-        stop_managed_runtime()
+        Thread(
+            target=self._stop_local_runtime_in_queue,
+            daemon=True,
+        ).start()
+
+    def _stop_local_runtime_in_queue(self) -> None:
+        with self._execution_queue.slot(
+            "runtime_cleanup",
+            "Ollama 검색 종료",
+            priority=AI_PRIORITY_SEARCH,
+        ):
+            stop_managed_runtime()
 
     def _retrieve_candidates(
         self, question: str, plan: SearchPlanData

@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_MODEL_VERIFICATION,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.core.model_recommendation import (
     ModelSpec,
     load_model_catalog,
@@ -86,12 +91,14 @@ class OllamaModelManagerService:
         runtime: OllamaRuntimeInspector | None = None,
         client: OllamaModelClient | None = None,
         catalog_path: Path | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._settings_path = settings_path or default_settings_path()
         self._hardware = hardware or HardwareInspector()
         self._runtime = runtime or OllamaRuntimeInspector()
         self._client = client or OllamaModelClient()
         self._catalog_path = catalog_path
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def snapshot(self) -> OllamaModelSnapshot:
         hardware = self._hardware.inspect()
@@ -219,7 +226,13 @@ class OllamaModelManagerService:
             on_progress=on_progress,
             cancel=cancel,
         )
-        verification = self._client.verify(plan.model_id)
+        with self._execution_queue.slot(
+            "model_verification",
+            plan.model_id,
+            priority=AI_PRIORITY_MODEL_VERIFICATION,
+            cancel_event=cancel,
+        ):
+            verification = self._client.verify(plan.model_id)
         settings = load_settings(self._settings_path)
         known = {name.casefold() for name in settings.managed_ollama_models}
         newly_managed = plan.model_id.casefold() not in known
@@ -243,7 +256,12 @@ class OllamaModelManagerService:
         )
         if entry is None:
             raise ValueError("설치된 Ollama 모델이 아닙니다.")
-        verification = self._client.verify(entry.model_id)
+        with self._execution_queue.slot(
+            "model_verification",
+            entry.model_id,
+            priority=AI_PRIORITY_MODEL_VERIFICATION,
+        ):
+            verification = self._client.verify(entry.model_id)
         settings = load_settings(self._settings_path)
         _record_verification(settings, verification)
         save_settings(settings, self._settings_path)

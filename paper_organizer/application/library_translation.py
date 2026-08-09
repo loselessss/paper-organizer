@@ -13,6 +13,11 @@ from paper_organizer.application.library_workflow import (
     LibraryEntry,
     LibraryWorkflowController,
 )
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_MANUAL,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.application.translation_policy import require_translation_model
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import settings_for_summary_purpose
@@ -53,11 +58,13 @@ class LibraryTranslationService:
         *,
         provider_factory: Callable = build_provider,
         http_client: JsonHttpClient | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._workflow = workflow
         self._secret_store = secret_store
         self._provider_factory = provider_factory
         self._http_client = http_client
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def has_source(self, entry: LibraryEntry) -> bool:
         return bool(analysis_translation_text(entry.record))
@@ -119,22 +126,27 @@ class LibraryTranslationService:
             stage="translation",
             advanced_analysis=False,
         )
-        result = provider.summarize(request)
-        translated = result.data.summary.strip()
-        if _needs_korean_retry(source_text, translated):
-            result = provider.summarize(
-                SummaryRequest(
-                    document_text=source_text,
-                    cloud_consent=settings.cloud_processing_consent,
-                    max_output_tokens=request.max_output_tokens,
-                    prompt_version=TRANSLATION_PROMPT_VERSION,
-                    output_language="ko",
-                    stage="translation",
-                    language_retry=True,
-                    advanced_analysis=False,
-                )
-            )
+        with self._execution_queue.slot(
+            "translation",
+            entry.metadata.title or entry.sidecar_path.stem,
+            priority=AI_PRIORITY_MANUAL,
+        ):
+            result = provider.summarize(request)
             translated = result.data.summary.strip()
+            if _needs_korean_retry(source_text, translated):
+                result = provider.summarize(
+                    SummaryRequest(
+                        document_text=source_text,
+                        cloud_consent=settings.cloud_processing_consent,
+                        max_output_tokens=request.max_output_tokens,
+                        prompt_version=TRANSLATION_PROMPT_VERSION,
+                        output_language="ko",
+                        stage="translation",
+                        language_retry=True,
+                        advanced_analysis=False,
+                    )
+                )
+                translated = result.data.summary.strip()
         if not translated or _needs_korean_retry(source_text, translated):
             raise ProviderError("AI가 유효한 한국어 번역문을 반환하지 않았습니다.")
         saved = self._workflow.save_analysis_translation(

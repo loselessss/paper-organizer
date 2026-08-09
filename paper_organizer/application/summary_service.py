@@ -13,6 +13,12 @@ from typing import Callable
 import fitz
 
 from paper_organizer import __version__
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_BACKGROUND,
+    AI_PRIORITY_MANUAL,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
 from paper_organizer.core.document_type import (
     PATENT,
@@ -195,11 +201,13 @@ class SummaryController:
         settings_path: Path | None = None,
         http_client: JsonHttpClient | None = None,
         ollama_starter: Callable[[], bool] | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._http_client = http_client
         self._ollama_starter = ollama_starter
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def prepare(
         self,
@@ -252,13 +260,22 @@ class SummaryController:
                     "Ollama 서버를 시작할 수 없습니다. "
                     "AI 설정에서 Ollama 설치 상태를 확인하세요."
                 )
-        return run_prepared_summary(
-            prepared,
-            settings,
-            self._secret_store,
-            allow_cloud_once=allow_cloud_once,
-            http_client=self._http_client,
-        )
+        with self._execution_queue.slot(
+            "analysis",
+            prepared.preview.pdf_path.name,
+            priority=(
+                AI_PRIORITY_MANUAL
+                if purpose == "manual"
+                else AI_PRIORITY_BACKGROUND
+            ),
+        ):
+            return run_prepared_summary(
+                prepared,
+                settings,
+                self._secret_store,
+                allow_cloud_once=allow_cloud_once,
+                http_client=self._http_client,
+            )
 
 
 def prepare_summary(

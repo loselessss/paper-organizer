@@ -8,6 +8,11 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Literal
 
+from paper_organizer.application.ai_execution import (
+    AI_PRIORITY_SELECTION,
+    AiExecutionQueue,
+    global_ai_execution_queue,
+)
 from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.application.translation_policy import require_translation_model
 from paper_organizer.infra.settings import (
@@ -45,11 +50,13 @@ class SelectionAiService:
         *,
         provider_factory: Callable = build_provider,
         http_client: JsonHttpClient | None = None,
+        execution_queue: AiExecutionQueue | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._provider_factory = provider_factory
         self._http_client = http_client
+        self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def run(
         self,
@@ -84,17 +91,23 @@ class SelectionAiService:
             if action == "translate"
             else "selection-summary-v1"
         )
-        result = provider.summarize(
-            SummaryRequest(
-                document_text=selection.text,
-                cloud_consent=consent,
-                max_output_tokens=max(256, min(2_000, math.ceil(len(selection.text) / 2))),
-                prompt_version=prompt_version,
-                output_language="ko" if action == "translate" else settings.summary_language,
-                stage="translation" if action == "translate" else "direct",
-                advanced_analysis=False,
+        with self._execution_queue.slot(
+            f"selection_{action}",
+            f"PDF {selection.pdf_page}쪽 선택 영역",
+            priority=AI_PRIORITY_SELECTION,
+            cancel_event=cancel_event,
+        ):
+            result = provider.summarize(
+                SummaryRequest(
+                    document_text=selection.text,
+                    cloud_consent=consent,
+                    max_output_tokens=max(256, min(2_000, math.ceil(len(selection.text) / 2))),
+                    prompt_version=prompt_version,
+                    output_language="ko" if action == "translate" else settings.summary_language,
+                    stage="translation" if action == "translate" else "direct",
+                    advanced_analysis=False,
+                )
             )
-        )
         if cancel_event is not None and cancel_event.is_set():
             raise SelectionAiCancelled("선택 영역 AI 작업이 취소됐습니다.")
         text = result.data.summary.strip()
