@@ -354,7 +354,17 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             border-top: 1px solid #e5e5e5;
         }
 
-        QFrame#analysisQueuePopup {
+        QLabel#libraryTitleLabel {
+            font-weight: 600;
+            padding-right: 2px;
+        }
+
+        QLabel#libraryCountLabel {
+            color: #5f5f5f;
+            padding-right: 8px;
+        }
+
+        QFrame#analysisQueuePopup, QFrame#newPdfReviewPopup {
             background: #fafafa;
             border: 1px solid #dddddd;
             border-radius: 8px;

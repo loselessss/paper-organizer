@@ -11,7 +11,7 @@ from paper_organizer.integrations.spdf_bridge import (
 class SpdfBridgeTests(unittest.TestCase):
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
-        self.assertEqual(spdf_version(), "1.8.0")
+        self.assertEqual(spdf_version(), "1.9.0")
 
     def test_public_selection_payload_is_normalized_without_qt_objects(self):
         class Payload:
