@@ -27,6 +27,7 @@ from paper_organizer.application.conversational_search import (
     PreparedSearch,
 )
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
+from paper_organizer.ui.fluent_style import decorate_button
 
 
 class _PrepareSearchWorker(QThread):
@@ -97,6 +98,7 @@ class SearchChatDialog(QDialog):
         self._prepared: PreparedSearch | None = None
         self._worker: QThread | None = None
         self._auto_answer_after_prepare = False
+        self._stop_requested = False
         self.setWindowTitle("자연어로 논문 찾기")
         self.resize(980, 720)
 
@@ -123,11 +125,16 @@ class SearchChatDialog(QDialog):
         action_row = QHBoxLayout()
         self.search_button = QPushButton("후보 논문 찾기")
         self.answer_button = QPushButton("근거 본문으로 답변 생성")
+        self.stop_button = QPushButton("정지")
         self.answer_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        decorate_button(self.stop_button, "stop", role="destructive")
         self.search_button.clicked.connect(self._prepare)
         self.answer_button.clicked.connect(self._answer)
+        self.stop_button.clicked.connect(self._stop_search)
         action_row.addWidget(self.search_button)
         action_row.addWidget(self.answer_button)
+        action_row.addWidget(self.stop_button)
         action_row.addStretch(1)
         root.addLayout(action_row)
 
@@ -188,6 +195,7 @@ class SearchChatDialog(QDialog):
             ) != QMessageBox.Yes:
                 return
             allow_cloud_once = True
+        self._stop_requested = False
         self._set_busy(True, "질문을 해석하고 로컬 전문 검색을 실행하고 있습니다…")
         worker = _PrepareSearchWorker(
             self._controller,
@@ -202,6 +210,8 @@ class SearchChatDialog(QDialog):
         worker.start()
 
     def _prepared_ready(self, prepared: PreparedSearch) -> None:
+        if self._stop_requested:
+            return
         self._prepared = prepared
         self._auto_answer_after_prepare = False
         self._render_candidates(prepared)
@@ -252,6 +262,7 @@ class SearchChatDialog(QDialog):
             ) != QMessageBox.Yes:
                 return
             allow_cloud_once = True
+        self._stop_requested = False
         self._set_busy(True, "후보 본문에서 근거를 확인하고 있습니다…")
         worker = _AnswerSearchWorker(
             self._controller,
@@ -266,6 +277,8 @@ class SearchChatDialog(QDialog):
         worker.start()
 
     def _answer_ready(self, result: ConversationalSearchResult) -> None:
+        if self._stop_requested:
+            return
         confidence = {"high": "높음", "medium": "보통", "low": "낮음"}.get(
             result.answer.confidence,
             result.answer.confidence,
@@ -315,8 +328,22 @@ class SearchChatDialog(QDialog):
 
     def _failed(self, message: str) -> None:
         self._controller.stop_local_runtime()
+        if self._stop_requested:
+            self.status_label.setText("자연어 검색을 정지했습니다.")
+            return
         self.status_label.setText(f"자연어 검색 실패: {message}")
         QMessageBox.warning(self, "자연어 검색 실패", message)
+
+    def _stop_search(self) -> None:
+        worker = self._worker
+        if worker is None:
+            return
+        self._stop_requested = True
+        self._auto_answer_after_prepare = False
+        worker.requestInterruption()
+        self._controller.stop_local_runtime()
+        self.stop_button.setEnabled(False)
+        self.status_label.setText("자연어 검색 정지를 요청했습니다…")
 
     def _set_busy(self, busy: bool, message: str) -> None:
         self.search_button.setEnabled(not busy)
@@ -325,6 +352,7 @@ class SearchChatDialog(QDialog):
             and self._prepared is not None
             and bool(self._prepared.candidates)
         )
+        self.stop_button.setEnabled(busy)
         self.question_edit.setEnabled(not busy)
         self.table.setEnabled(not busy)
         self.status_label.setText(message)
@@ -334,7 +362,12 @@ class SearchChatDialog(QDialog):
         self._worker = None
         if worker is not None:
             worker.deleteLater()
+        stopped = self._stop_requested
+        self._stop_requested = False
         self._set_busy(False, self.status_label.text())
+        if stopped:
+            self.status_label.setText("자연어 검색을 정지했습니다.")
+            return
         if self._auto_answer_after_prepare:
             self._auto_answer_after_prepare = False
             QTimer.singleShot(0, self._answer)

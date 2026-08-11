@@ -279,6 +279,14 @@ class UiSmokeTests(unittest.TestCase):
             window.toggle_analysis_queue()
             self.app.processEvents()
             self.assertFalse(analysis_popup.isVisible())
+            window.show()
+            self.app.processEvents()
+            window.toggle_analysis_queue()
+            self.app.processEvents()
+            self.assertTrue(analysis_popup.isVisible())
+            window.hide()
+            self.app.processEvents()
+            self.assertFalse(analysis_popup.isVisible())
             with (
                 mock.patch.object(window.queue_widget, "refresh") as refresh_queue,
                 mock.patch.object(
@@ -288,7 +296,10 @@ class UiSmokeTests(unittest.TestCase):
                 window._library_reanalysis_queued(3)
                 refresh_queue.assert_called_once_with()
                 start_analysis.assert_called_once_with(immediate_count=3)
-            self.assertEqual(window._automatic_update_timer.interval(), 60 * 60 * 1000)
+            self.assertEqual(
+                window._automatic_update_timer.interval(),
+                24 * 60 * 60 * 1000,
+            )
             self.assertFalse(window._automatic_update_timer.isActive())
             with mock.patch.object(
                 window._update_schedule,
@@ -511,6 +522,13 @@ class UiSmokeTests(unittest.TestCase):
         )
         self.assertIn("ollama", dialog.provider_label.text())
         self.assertFalse(dialog.answer_button.isEnabled())
+        self.assertEqual(dialog.stop_button.text(), "정지")
+        self.assertFalse(dialog.stop_button.icon().isNull())
+        self.assertFalse(dialog.stop_button.isEnabled())
+        dialog._set_busy(True, "검색 중")
+        self.assertTrue(dialog.stop_button.isEnabled())
+        dialog._set_busy(False, "대기")
+        self.assertFalse(dialog.stop_button.isEnabled())
         dialog.reject()
         self.assertEqual(controller.stop_calls, 1)
 
@@ -1358,7 +1376,9 @@ class UiSmokeTests(unittest.TestCase):
                 widget.table.selectionMode(),
                 QAbstractItemView.ExtendedSelection,
             )
-            self.assertTrue(widget.search_edit.isClearButtonEnabled())
+            self.assertFalse(widget.search_edit.isClearButtonEnabled())
+            self.assertEqual(widget.clear_search_button.text(), "")
+            self.assertFalse(widget.clear_search_button.icon().isNull())
             self.assertEqual(
                 widget.search_edit.placeholderText(),
                 "제목·저자·키워드 검색 · 자연어 질문 검색도 가능",

@@ -58,7 +58,7 @@ from .startup_splash import app_icon_path
 from .update_dialog import UpdateCheckWorker, UpdateDialog
 
 
-AUTOMATIC_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000
+AUTOMATIC_UPDATE_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 
 class PaperOrganizerWindow(QMainWindow):
@@ -187,6 +187,15 @@ class PaperOrganizerWindow(QMainWindow):
     def _analysis_progress_changed(self, message: str, busy: bool) -> None:
         self._analysis_status_label.setText(message)
         self._analysis_progress_bar.setVisible(busy)
+
+    def changeEvent(self, event) -> None:
+        if event.type() == event.WindowStateChange and self.isMinimized():
+            self._hide_analysis_queue_popup()
+        super().changeEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._hide_analysis_queue_popup()
+        super().hideEvent(event)
 
     def _papers_auto_organized(self, titles: list) -> None:
         if not titles:
@@ -334,7 +343,7 @@ class PaperOrganizerWindow(QMainWindow):
         if popup is None:
             return
         if popup.isVisible():
-            popup.hide()
+            self._hide_analysis_queue_popup()
         else:
             self._show_analysis_queue_popup("queue")
 
@@ -362,6 +371,11 @@ class PaperOrganizerWindow(QMainWindow):
         popup.move(origin)
         popup.show()
         popup.raise_()
+
+    def _hide_analysis_queue_popup(self) -> None:
+        popup = self._analysis_queue_popup
+        if popup is not None and popup.isVisible():
+            popup.hide()
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -739,6 +753,7 @@ class PaperOrganizerWindow(QMainWindow):
             )
 
     def closeEvent(self, event) -> None:
+        self._hide_analysis_queue_popup()
         if self.collection_widget and self.collection_widget.is_busy():
             QMessageBox.information(
                 self,
