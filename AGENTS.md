@@ -37,6 +37,7 @@ git submodule update --init
    없이 실행돼야 합니다.
 5. **쓰기는 원자적으로.** 임시 파일에 쓴 뒤 `os.replace`로 교체합니다
    (`_atomic_json_write`, `create_paperpack` 참고).
+6. **sPDF는 Submodule로 받아온다.** sPDF는 해당 Repository에서 받아오고 Paper organizer에서는 명시된 버전으로 고정하고 업데이트 알림 및 기능을 사용하지 않는다
 
 ## 코드 관례
 
