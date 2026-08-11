@@ -5,20 +5,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QPoint, QSize, Qt, QTimer
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
     QApplication,
+    QFrame,
     QLabel,
+    QVBoxLayout,
     QMainWindow,
     QMenu,
     QMessageBox,
     QProgressBar,
-    QSplitter,
     QSystemTrayIcon,
     QTabWidget,
+    QToolBar,
 )
 
 from paper_organizer import __version__
@@ -40,6 +42,7 @@ from paper_organizer.application.update_service import (
 from paper_organizer.application.update_schedule import UpdateCheckSchedule
 
 from .ai_settings_dialog import AiSettingsDialog
+from .fluent_style import apply_fluent_theme, decorate_action
 from .library_workflow_widget import (
     AnalysisQueueWidget,
     CollectionReviewWidget,
@@ -71,6 +74,7 @@ class PaperOrganizerWindow(QMainWindow):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        apply_fluent_theme(QApplication.instance())
         self._ai_settings = ai_settings
         self._lifecycle = lifecycle
         self._conversational_search = conversational_search
@@ -92,7 +96,7 @@ class PaperOrganizerWindow(QMainWindow):
         self.resize(1280, 760)
 
         self._library_workflow = library_workflow
-        self.tabs = QTabWidget()
+        self._analysis_queue_popup: QFrame | None = None
         self.collection_widget = None
         self.queue_widget = None
         self.library_widget = None
@@ -125,14 +129,17 @@ class PaperOrganizerWindow(QMainWindow):
             self.collection_widget.library_requested.connect(
                 self._open_queue_item_in_library
             )
-            collect_split = QSplitter(Qt.Horizontal)
-            collect_split.addWidget(self.collection_widget)
-            collect_split.addWidget(self.queue_widget)
-            collect_split.setStretchFactor(0, 3)
-            collect_split.setStretchFactor(1, 2)
-            collect_split.setChildrenCollapsible(False)
-            self.tabs.addTab(self.library_widget, "라이브러리")
-            self.tabs.addTab(collect_split, "새 PDF 및 분석 큐")
+            self.analysis_tabs = QTabWidget()
+            self.analysis_tabs.setObjectName("analysisQueueTabs")
+            self.analysis_tabs.addTab(self.collection_widget, "새 PDF")
+            self.analysis_tabs.addTab(self.queue_widget, "분석 큐")
+            popup = QFrame(self, Qt.Tool | Qt.FramelessWindowHint)
+            popup.setObjectName("analysisQueuePopup")
+            popup.setMinimumSize(760, 520)
+            popup_layout = QVBoxLayout(popup)
+            popup_layout.setContentsMargins(0, 0, 0, 0)
+            popup_layout.addWidget(self.analysis_tabs)
+            self._analysis_queue_popup = popup
         if self.queue_widget is not None:
             self.queue_widget.library_requested.connect(
                 self._open_queue_item_in_library
@@ -154,50 +161,14 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget.natural_search_requested.connect(
                 self.show_natural_search
             )
-        self.setCentralWidget(self.tabs)
         if self.library_widget is not None:
-            self.tabs.setCurrentWidget(self.library_widget)
-
-        settings_menu = self.menuBar().addMenu("설정")
-        watch_settings_menu = settings_menu.addMenu("요약 감시 옵션")
-        engine_settings_menu = settings_menu.addMenu("요약 엔진 옵션")
-        if self._library_workflow is not None:
-            folder_action = QAction("감시 폴더·자동 보관·연구분야...", self)
-            folder_action.triggered.connect(self.show_folder_settings)
-            watch_settings_menu.addAction(folder_action)
-        if self._library_workflow is not None:
-            tools_menu = self.menuBar().addMenu("도구")
-            export_action = QAction("PDF 환원 (일괄 추출)...", self)
-            export_action.triggered.connect(self.show_pdf_export)
-            tools_menu.addAction(export_action)
-            migration_action = QAction("레거시 라이브러리 변환...", self)
-            migration_action.triggered.connect(self.show_legacy_migration)
-            tools_menu.addAction(migration_action)
-            if self._conversational_search is not None:
-                natural_search_action = QAction("자연어로 논문 찾기...", self)
-                natural_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
-                natural_search_action.triggered.connect(
-                    lambda: self.show_natural_search("")
-                )
-                tools_menu.addAction(natural_search_action)
-            tools_menu.addSeparator()
-            reindex_action = QAction("검색 색인 재구축", self)
-            reindex_action.triggered.connect(self.rebuild_search_index)
-            tools_menu.addAction(reindex_action)
-        self._create_ai_menu(engine_settings_menu)
+            self.setCentralWidget(self.library_widget)
+        self._engine_settings_menu = QMenu(self)
+        self._create_ai_menu(self._engine_settings_menu)
+        self.menuBar().hide()
         self._create_shortcuts()
-        self._create_help_menu()
-        if self._lifecycle is not None:
-            lifecycle_action = QAction("시작 및 종료 설정...", self)
-            lifecycle_action.triggered.connect(self.show_lifecycle_settings)
-            watch_settings_menu.addAction(lifecycle_action)
         self._ensure_system_tray()
-        watch_settings_menu.menuAction().setVisible(
-            bool(watch_settings_menu.actions())
-        )
-        engine_settings_menu.menuAction().setVisible(
-            bool(engine_settings_menu.actions())
-        )
+        self._create_command_ribbon()
         self._analysis_status_label = QLabel("")
         self._analysis_progress_bar = QProgressBar()
         self._analysis_progress_bar.setRange(0, 0)
@@ -259,9 +230,11 @@ class PaperOrganizerWindow(QMainWindow):
             menu.addAction(action)
         menu.addSeparator()
         ai_settings_action = QAction("제공자·모델·언어·제한 시간...", self)
+        decorate_action(ai_settings_action, "settings")
         ai_settings_action.triggered.connect(self.show_ai_settings)
         menu.addAction(ai_settings_action)
         models_action = QAction("Ollama 모델 관리...", self)
+        decorate_action(models_action, "download")
         models_action.triggered.connect(self.show_ollama_models)
         menu.addAction(models_action)
         menu.aboutToShow.connect(self._sync_provider_actions)
@@ -270,27 +243,125 @@ class PaperOrganizerWindow(QMainWindow):
     def _create_shortcuts(self) -> None:
         if self.collection_widget is not None:
             scan_action = QAction("새 PDF 검색", self)
+            decorate_action(scan_action, "search")
             scan_action.setShortcut(QKeySequence.Refresh)
             scan_action.triggered.connect(lambda: self.collection_widget.scan_now(True))
             self.addAction(scan_action)
         if self.library_widget is not None:
             search_action = QAction("라이브러리 검색", self)
+            decorate_action(search_action, "search")
             search_action.setShortcut(QKeySequence.Find)
             search_action.triggered.connect(self.library_widget.search_edit.setFocus)
             self.addAction(search_action)
 
-    def _create_help_menu(self) -> None:
-        menu = self.menuBar().addMenu("도움말")
-        update_action = QAction("업데이트 확인...", self)
-        update_action.triggered.connect(lambda: self.check_for_updates(True))
-        menu.addAction(update_action)
-        menu.addSeparator()
-        about_action = QAction("Paper Organizer 정보", self)
-        about_action.triggered.connect(self._show_about)
-        menu.addAction(about_action)
-        shortcuts_action = QAction("단축키", self)
-        shortcuts_action.triggered.connect(self._show_shortcuts)
-        menu.addAction(shortcuts_action)
+        if self._conversational_search is not None:
+            natural_search_action = QAction("자연어로 논문 찾기", self)
+            decorate_action(natural_search_action, "search")
+            natural_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+            natural_search_action.triggered.connect(
+                lambda: self.show_natural_search("")
+            )
+            self.addAction(natural_search_action)
+
+    def _create_command_ribbon(self) -> None:
+        ribbon = QToolBar("빠른 명령", self)
+        ribbon.setObjectName("commandRibbon")
+        ribbon.setMovable(False)
+        ribbon.setFloatable(False)
+        ribbon.setIconSize(QSize(14, 14))
+        ribbon.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self._command_ribbon = ribbon
+        self.addToolBar(Qt.TopToolBarArea, ribbon)
+
+        def add_command(
+            text: str,
+            icon_name: str,
+            slot,
+            tooltip: str = "",
+        ) -> QAction:
+            action = QAction(text, self)
+            decorate_action(action, icon_name)
+            if tooltip:
+                action.setToolTip(tooltip)
+            action.triggered.connect(slot)
+            ribbon.addAction(action)
+            return action
+
+        if self._analysis_queue_popup is not None:
+            add_command("분석 큐", "menu", self.toggle_analysis_queue)
+            ribbon.addSeparator()
+        if self.collection_widget is not None:
+            add_command(
+                "새 PDF",
+                "search",
+                self.show_new_pdf_review,
+            )
+        if self.library_widget is not None:
+            add_command("검색", "search", self.library_widget.search_edit.setFocus)
+
+        ribbon.addSeparator()
+        if self._library_workflow is not None:
+            add_command("감시 설정", "folder", self.show_folder_settings)
+        add_command("AI 설정", "settings", self.show_ai_settings)
+        add_command("모델", "download", self.show_ollama_models)
+        if self._lifecycle is not None:
+            add_command("시작/종료", "settings", self.show_lifecycle_settings)
+
+        if self._library_workflow is not None:
+            ribbon.addSeparator()
+            if self._conversational_search is not None:
+                add_command(
+                    "자연어 검색",
+                    "search",
+                    lambda: self.show_natural_search(""),
+                )
+            add_command("PDF 환원", "pdf", self.show_pdf_export)
+            add_command("재구축", "refresh", self.rebuild_search_index)
+            add_command("마이그레이션", "archive", self.show_legacy_migration)
+
+        ribbon.addSeparator()
+        add_command("업데이트", "download", lambda: self.check_for_updates(True))
+        add_command("단축키", "select", self._show_shortcuts)
+        add_command("정보", "help", self._show_about)
+
+    def show_new_pdf_review(self) -> None:
+        self._show_analysis_queue_popup("review")
+        if self.collection_widget is not None:
+            self.collection_widget.scan_now(True)
+
+    def toggle_analysis_queue(self) -> None:
+        popup = self._analysis_queue_popup
+        if popup is None:
+            return
+        if popup.isVisible():
+            popup.hide()
+        else:
+            self._show_analysis_queue_popup("queue")
+
+    def show_analysis_queue(self) -> None:
+        self._show_analysis_queue_popup("queue")
+        if self.queue_widget is not None:
+            self.queue_widget.refresh()
+
+    def _show_analysis_queue_popup(self, page: str = "queue") -> None:
+        popup = self._analysis_queue_popup
+        if popup is None:
+            return
+        tabs = getattr(self, "analysis_tabs", None)
+        if tabs is not None:
+            tabs.setCurrentIndex(0 if page == "review" else 1)
+        toolbar = getattr(self, "_command_ribbon", None)
+        if toolbar is not None:
+            origin = toolbar.mapToGlobal(QPoint(8, toolbar.height()))
+        else:
+            origin = self.mapToGlobal(QPoint(8, 0))
+        toolbar_height = toolbar.height() if toolbar is not None else 0
+        available_height = max(520, self.height() - toolbar_height - 72)
+        popup_width = min(max(760, int(self.width() * 0.72)), self.width() - 32)
+        popup.resize(popup_width, available_height)
+        popup.move(origin)
+        popup.show()
+        popup.raise_()
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -392,7 +463,6 @@ class PaperOrganizerWindow(QMainWindow):
     def _open_natural_search_result(self, path: str) -> None:
         if self.library_widget is None:
             return
-        self.tabs.setCurrentWidget(self.library_widget)
         self.library_widget.select_path(path)
 
     def show_pdf_export(self) -> None:
@@ -661,7 +731,6 @@ class PaperOrganizerWindow(QMainWindow):
     def _open_queue_item_in_library(self, path: str) -> None:
         if self.library_widget is None:
             return
-        self.tabs.setCurrentWidget(self.library_widget)
         if not self.library_widget.select_path(path):
             QMessageBox.information(
                 self,

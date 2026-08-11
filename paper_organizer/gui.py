@@ -45,6 +45,7 @@ def main() -> int:
     from paper_organizer.infra.ollama_installer import stop_managed_runtime
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
+    from paper_organizer.ui.fluent_style import apply_fluent_theme
     from paper_organizer.ui.lifecycle_dialog import LifecyclePreferencesDialog
     from paper_organizer.ui.single_instance import SingleInstanceGuard
     from paper_organizer.ui.startup_splash import StartupLoader, create_splash
@@ -52,6 +53,7 @@ def main() -> int:
     start_in_background = "--background" in sys.argv[1:]
     qt_argv = [argument for argument in sys.argv if argument != "--background"]
     app = QApplication.instance() or QApplication(qt_argv)
+    apply_fluent_theme(app)
     single_instance = SingleInstanceGuard()
     if not single_instance.acquire():
         return 0

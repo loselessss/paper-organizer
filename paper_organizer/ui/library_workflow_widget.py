@@ -71,6 +71,7 @@ from paper_organizer.integrations.spdf_bridge import (
     open_pdf,
 )
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
+from paper_organizer.ui.fluent_style import decorate_button
 
 
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
@@ -396,6 +397,31 @@ class TrashRestoreDialog(QDialog):
             self.accept()
 
 
+class ReviewMetadataDialog(QDialog):
+    """Edit one review item's metadata without shrinking the review list."""
+
+    def __init__(self, metadata: EditablePaperMetadata, parent=None) -> None:
+        super().__init__(parent)
+        suppress_context_help_button(self)
+        self.setWindowTitle("새 PDF 색인 수정")
+        self.resize(640, 420)
+        layout = QVBoxLayout(self)
+        self.form = MetadataForm("분석 큐로 보내기 전에 수정할 색인")
+        self.form.set_metadata(metadata)
+        layout.addWidget(self.form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.button(QDialogButtonBox.Ok).setText("수정 적용")
+        buttons.button(QDialogButtonBox.Cancel).setText("취소")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def metadata(self) -> EditablePaperMetadata:
+        return self.form.metadata()
+
+
 class _ScanWorker(QThread):
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -670,6 +696,7 @@ class CollectionReviewWidget(QWidget):
         super().__init__(parent)
         self._controller = controller
         self._items: list[ReviewItem] = []
+        self._metadata_overrides: dict[str, EditablePaperMetadata] = {}
         self._worker: _ScanWorker | None = None
         self._schedule_followup = False
         self._auto_timer = QTimer(self)
@@ -681,6 +708,8 @@ class CollectionReviewWidget(QWidget):
         self.scan_button.clicked.connect(lambda: self.scan_now(True))
         self.settings_button = QPushButton("요약 감시 옵션…")
         self.settings_button.clicked.connect(self._show_folder_settings)
+        decorate_button(self.scan_button, "search", role="primary")
+        decorate_button(self.settings_button, "settings")
         self.status_label = QLabel()
         self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -705,27 +734,41 @@ class CollectionReviewWidget(QWidget):
         self.table.cellDoubleClicked.connect(
             lambda row, _column: self._open_row(row)
         )
-        root.addWidget(self.table, 1)
+        self.table.setMinimumHeight(360)
+        root.addWidget(self.table, 3)
 
         self.detail_label = QLabel("검토할 PDF를 선택하세요.")
         self.detail_label.setWordWrap(True)
         self.detail_label.setMinimumWidth(0)
         self.detail_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.detail_label.setMaximumHeight(78)
         root.addWidget(self.detail_label)
         self.form = MetadataForm("이동 전에 수정할 색인")
         self.form.set_metadata(None)
-        root.addWidget(self.form)
+        self.form.hide()
 
         review_actions = QGridLayout()
         self.select_all_button = QPushButton("전체 선택")
         self.open_button = QPushButton("sPDF로 열기")
+        self.edit_button = QPushButton("색인 수정…")
         self.organize_button = QPushButton("선택 항목 분석 큐로 보내기")
         self.trash_button = QPushButton("제외 목록으로 보내기")
         self.delete_pdf_button = QPushButton("선택 PDF 완전 삭제…")
         self.delete_duplicate_button = QPushButton("기존 중복 항목 완전 삭제…")
         self.restore_button = QPushButton("제외 목록에서 복원…")
+        decorate_button(self.select_all_button, "select")
+        decorate_button(self.open_button, "open")
+        decorate_button(self.edit_button, "edit")
+        decorate_button(self.organize_button, "archive", role="primary")
+        decorate_button(self.trash_button, "archive")
+        decorate_button(self.delete_pdf_button, "delete", role="destructive")
+        decorate_button(
+            self.delete_duplicate_button, "delete", role="destructive"
+        )
+        decorate_button(self.restore_button, "restore")
         self.select_all_button.clicked.connect(self.table.selectAll)
         self.open_button.clicked.connect(self._open_selected)
+        self.edit_button.clicked.connect(self._edit_selected_metadata)
         self.organize_button.clicked.connect(self._organize_selected)
         self.trash_button.clicked.connect(self._trash_selected)
         self.delete_pdf_button.clicked.connect(self._permanently_delete_selected)
@@ -735,6 +778,7 @@ class CollectionReviewWidget(QWidget):
         self.restore_button.clicked.connect(self._restore_trash)
         for button in (
             self.open_button,
+            self.edit_button,
             self.organize_button,
             self.trash_button,
             self.delete_pdf_button,
@@ -743,11 +787,12 @@ class CollectionReviewWidget(QWidget):
             button.setEnabled(False)
         review_actions.addWidget(self.select_all_button, 0, 0)
         review_actions.addWidget(self.open_button, 0, 1)
-        review_actions.addWidget(self.organize_button, 1, 0)
-        review_actions.addWidget(self.trash_button, 1, 1)
+        review_actions.addWidget(self.edit_button, 0, 2)
+        review_actions.addWidget(self.organize_button, 1, 0, 1, 2)
+        review_actions.addWidget(self.trash_button, 1, 2)
         review_actions.addWidget(self.restore_button, 2, 0)
         review_actions.addWidget(self.delete_pdf_button, 2, 1)
-        review_actions.addWidget(self.delete_duplicate_button, 3, 0, 1, 2)
+        review_actions.addWidget(self.delete_duplicate_button, 2, 2)
         review_actions.setColumnStretch(1, 1)
         root.addLayout(review_actions)
         self._reload_watch_settings()
@@ -785,6 +830,11 @@ class CollectionReviewWidget(QWidget):
 
     def _scan_ready(self, result: ReviewScan) -> None:
         self._items = list(result.items)
+        self._metadata_overrides = {
+            key: value
+            for key, value in self._metadata_overrides.items()
+            if any(item.identity.file_sha256 == key for item in self._items)
+        }
         self.table.setRowCount(len(self._items))
         for row, item in enumerate(self._items):
             duplicate = item.duplicate
@@ -840,11 +890,12 @@ class CollectionReviewWidget(QWidget):
         selected = self._selected_items()
         item = selected[0] if len(selected) == 1 else None
         self.form.set_metadata(
-            self._controller.suggest_metadata(item) if item else None
+            self._metadata_for_item(item) if item else None
         )
         self.form.setEnabled(item is not None)
         enabled = bool(selected)
         self.open_button.setEnabled(enabled)
+        self.edit_button.setEnabled(item is not None)
         self.organize_button.setEnabled(enabled)
         self.trash_button.setEnabled(enabled)
         self.delete_pdf_button.setEnabled(enabled)
@@ -872,6 +923,23 @@ class CollectionReviewWidget(QWidget):
                 f"\n{'; '.join(item.duplicate.match.reasons)}"
             )
         self.detail_label.setText(detail)
+
+    def _metadata_for_item(self, item: ReviewItem) -> EditablePaperMetadata:
+        return self._metadata_overrides.get(
+            item.identity.file_sha256,
+            self._controller.suggest_metadata(item),
+        )
+
+    def _edit_selected_metadata(self) -> None:
+        item = self._selected()
+        if item is None:
+            return
+        dialog = ReviewMetadataDialog(self._metadata_for_item(item), self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        self._metadata_overrides[item.identity.file_sha256] = dialog.metadata()
+        self.status_label.setText(f"{item.path.name}의 색인 수정을 적용했습니다.")
+        self._selection_changed()
 
     def _open_selected(self) -> None:
         failures: list[str] = []
@@ -919,6 +987,9 @@ class CollectionReviewWidget(QWidget):
                 lambda: self.library_requested.emit(str(duplicate.sidecar_path))
             )
         menu.addSeparator()
+        if len(items) == 1:
+            edit_action = menu.addAction("색인 수정…")
+            edit_action.triggered.connect(self._edit_selected_metadata)
         organize_action = menu.addAction("분석 큐로 보내기")
         organize_action.triggered.connect(self._organize_selected)
         trash_action = menu.addAction("제외 목록으로 보내기")
@@ -991,7 +1062,7 @@ class CollectionReviewWidget(QWidget):
         for item in items:
             try:
                 metadata = (
-                    self.form.metadata()
+                    self._metadata_for_item(item)
                     if len(items) == 1
                     else self._controller.suggest_metadata(item)
                 )
@@ -1225,6 +1296,14 @@ class AnalysisQueueWidget(QWidget):
         self.retry_button = QPushButton("실패 항목 다시 분석")
         self.background_button = QPushButton("백그라운드 분석 시작")
         self.immediate_stop_button = QPushButton("즉시 정지")
+        decorate_button(refresh_button, "refresh")
+        decorate_button(select_all_button, "select")
+        decorate_button(self.priority_button, "priority")
+        decorate_button(self.run_now_button, "ai", role="primary")
+        decorate_button(self.remove_button, "cancel")
+        decorate_button(self.retry_button, "refresh")
+        decorate_button(self.background_button, "ai", role="primary")
+        decorate_button(self.immediate_stop_button, "stop", role="destructive")
         self.immediate_stop_button.setToolTip(
             "현재 결과를 저장하지 않고 항목을 대기열로 되돌립니다. "
             "앱이 시작한 Ollama 작업은 즉시 종료합니다."
@@ -1824,6 +1903,7 @@ class LibraryWidget(QWidget):
         self.search_edit.setClearButtonEnabled(True)
         refresh_button = QPushButton("새로고침")
         refresh_button.clicked.connect(self._search_or_refresh)
+        decorate_button(refresh_button, "refresh")
         self.search_edit.returnPressed.connect(self._submit_search)
         self.search_edit.textChanged.connect(self._search_text_changed)
         search_row.addWidget(self.search_edit, 1)
@@ -1887,6 +1967,10 @@ class LibraryWidget(QWidget):
         self.restore_translation_button.setToolTip(
             "PaperPack에 한 건만 보관한 직전 AI 번역으로 되돌립니다."
         )
+        decorate_button(self.save_button, "save", role="primary")
+        decorate_button(self.open_with_ai_button, "ai")
+        decorate_button(self.translation_button, "translate")
+        decorate_button(self.restore_translation_button, "restore")
         self.translation_button.toggled.connect(self._translation_toggled)
         self.restore_translation_button.clicked.connect(
             self._restore_previous_translation
@@ -1918,7 +2002,7 @@ class LibraryWidget(QWidget):
         splitter.setCollapsible(1, True)
         self.table.setMinimumWidth(0)
         detail_panel.setMinimumWidth(0)
-        splitter.setSizes([760, 420])
+        splitter.setSizes([640, 640])
         root.addWidget(splitter, 1)
         self._render_analysis(None)
         actions = QHBoxLayout()
@@ -1935,6 +2019,15 @@ class LibraryWidget(QWidget):
         self.reanalyze_selected_button = QPushButton("선택 논문 재요약")
         self.reanalyze_all_button = QPushButton("전체 논문 재요약")
         self.approve_category_button = QPushButton("추천 연구분야 승인 후 재분석")
+        decorate_button(self.open_button, "open")
+        decorate_button(self.selection_ai_button, "ai")
+        decorate_button(self.apply_pdf_button, "save", role="primary")
+        decorate_button(self.discard_pdf_button, "cancel")
+        decorate_button(self.delete_button, "delete")
+        decorate_button(self.permanent_delete_button, "delete", role="destructive")
+        decorate_button(self.reanalyze_selected_button, "refresh")
+        decorate_button(self.reanalyze_all_button, "refresh")
+        decorate_button(self.approve_category_button, "check", role="primary")
         self.open_button.clicked.connect(self._open_selected)
         self.open_with_ai_button.clicked.connect(self._open_selected_with_ai)
         self.selection_ai_button.clicked.connect(

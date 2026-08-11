@@ -94,7 +94,14 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
-        from PyQt5.QtWidgets import QAction, QBoxLayout, QMessageBox
+        from PyQt5.QtWidgets import (
+            QAction,
+            QBoxLayout,
+            QFrame,
+            QMessageBox,
+            QTabWidget,
+            QToolBar,
+        )
         from PyQt5.QtWidgets import QLabel, QLineEdit
 
         from paper_organizer.application.ai_settings import AiSettingsController
@@ -221,10 +228,57 @@ class UiSmokeTests(unittest.TestCase):
             self.assertFalse(
                 bool(model_dialog.windowFlags() & Qt.WindowContextHelpButtonHint)
             )
-            self.assertEqual(window.tabs.count(), 2)
             self.assertEqual(
                 window.windowTitle(), f"Paper Organizer — v{__version__}"
             )
+            self.assertIs(window.centralWidget(), window.library_widget)
+            self.assertTrue(window.menuBar().isHidden())
+            analysis_popup = window.findChild(QFrame, "analysisQueuePopup")
+            self.assertIsNotNone(analysis_popup)
+            self.assertFalse(analysis_popup.isVisible())
+            analysis_tabs = window.findChild(QTabWidget, "analysisQueueTabs")
+            self.assertIsNotNone(analysis_tabs)
+            self.assertEqual(analysis_tabs.count(), 2)
+            self.assertEqual(analysis_tabs.tabText(0), "새 PDF")
+            self.assertEqual(analysis_tabs.tabText(1), "분석 큐")
+            ribbon = window.findChild(QToolBar, "commandRibbon")
+            self.assertIsNotNone(ribbon)
+            self.assertEqual(ribbon.toolButtonStyle(), Qt.ToolButtonTextUnderIcon)
+            ribbon_actions = [
+                action.text()
+                for action in ribbon.actions()
+                if not action.isSeparator()
+            ]
+            self.assertEqual(
+                ribbon_actions,
+                [
+                    "분석 큐",
+                    "새 PDF",
+                    "검색",
+                    "감시 설정",
+                    "AI 설정",
+                    "모델",
+                    "PDF 환원",
+                    "재구축",
+                    "마이그레이션",
+                    "업데이트",
+                    "단축키",
+                    "정보",
+                ],
+            )
+            self.assertTrue(
+                all(
+                    not action.icon().isNull()
+                    for action in ribbon.actions()
+                    if not action.isSeparator()
+                )
+            )
+            window.toggle_analysis_queue()
+            self.app.processEvents()
+            self.assertTrue(analysis_popup.isVisible())
+            window.toggle_analysis_queue()
+            self.app.processEvents()
+            self.assertFalse(analysis_popup.isVisible())
             with (
                 mock.patch.object(window.queue_widget, "refresh") as refresh_queue,
                 mock.patch.object(
@@ -288,26 +342,6 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertTrue(
                 window.collection_widget.form.application_number_edit.isHidden()
-            )
-            self.assertEqual(window.tabs.tabText(0), "라이브러리")
-            self.assertEqual(window.tabs.tabText(1), "새 PDF 및 분석 큐")
-            self.assertIs(window.tabs.currentWidget(), window.library_widget)
-            menu_titles = [
-                action.text() for action in window.menuBar().actions()
-            ]
-            self.assertIn("도구", menu_titles)
-            self.assertNotIn("AI", menu_titles)
-            settings_menu = next(
-                action.menu()
-                for action in window.menuBar().actions()
-                if action.text() == "설정"
-            )
-            settings_categories = [
-                action.text() for action in settings_menu.actions()
-            ]
-            self.assertEqual(
-                settings_categories,
-                ["요약 감시 옵션", "요약 엔진 옵션"],
             )
             checked = [
                 action.text()
@@ -386,13 +420,44 @@ class UiSmokeTests(unittest.TestCase):
                 window.collection_widget.organize_button.text(),
                 "선택 항목 분석 큐로 보내기",
             )
+            self.assertTrue(window.collection_widget.form.isHidden())
+            self.assertEqual(window.collection_widget.edit_button.text(), "색인 수정…")
+            self.assertFalse(window.collection_widget.scan_button.icon().isNull())
+            self.assertEqual(
+                window.collection_widget.scan_button.property("fluentRole"),
+                "primary",
+            )
+            self.assertFalse(
+                window.collection_widget.delete_pdf_button.icon().isNull()
+            )
+            self.assertEqual(
+                window.collection_widget.delete_pdf_button.property("fluentRole"),
+                "destructive",
+            )
+            self.assertFalse(window.queue_widget.run_now_button.icon().isNull())
+            self.assertEqual(
+                window.queue_widget.run_now_button.property("fluentRole"),
+                "primary",
+            )
             self.assertEqual(
                 window.library_widget.save_button.text(),
                 "색인 편집 저장 및 재색인",
             )
+            self.assertFalse(window.library_widget.save_button.icon().isNull())
+            self.assertEqual(
+                window.library_widget.save_button.property("fluentRole"),
+                "primary",
+            )
             self.assertEqual(
                 window.library_widget.delete_button.text(),
                 "선택 항목을 앱 휴지통으로 이동",
+            )
+            self.assertFalse(
+                window.library_widget.permanent_delete_button.icon().isNull()
+            )
+            self.assertEqual(
+                window.library_widget.permanent_delete_button.property("fluentRole"),
+                "destructive",
             )
             self.assertTrue(window.queue_widget.table.acceptDrops())
             self.assertEqual(
@@ -400,7 +465,7 @@ class UiSmokeTests(unittest.TestCase):
                 "제외 목록으로 보내기",
             )
             self.assertIn(
-                "업데이트 확인...",
+                "업데이트",
                 {action.text() for action in window.findChildren(QAction)},
             )
             self.assertIn("Created by SANGKYU SHIN, Ph.D.", splash_labels)

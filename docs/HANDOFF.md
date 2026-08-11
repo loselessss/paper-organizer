@@ -18,7 +18,7 @@
 
 Python 3.12 이상이 필요합니다. sPDF는 submodule이라 `--recurse-submodules` 없이
 clone 했다면 반드시 따로 받아야 합니다. 받지 않으면 `test_spdf_bridge`가 실패합니다.
-현재 고정 버전은 sPDF 1.7.3이며 여러 줄 선택을 사각 영역이 아니라 시작·끝 단어
+현재 고정 버전은 sPDF 1.8.0이며 여러 줄 선택을 사각 영역이 아니라 시작·끝 단어
 사이의 읽기 순서로 전달합니다.
 
 ```bash
