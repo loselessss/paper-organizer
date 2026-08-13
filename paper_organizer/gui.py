@@ -32,6 +32,9 @@ def main() -> int:
     from paper_organizer import __version__
     from paper_organizer.application.ai_settings import AiSettingsController
     from paper_organizer.application.background_analysis import BackgroundAnalysisService
+    from paper_organizer.application.bibliography_lookup import (
+        BibliographyLookupService,
+    )
     from paper_organizer.application.conversational_search import (
         ConversationalSearchController,
     )
@@ -77,7 +80,9 @@ def main() -> int:
     except (OSError, RuntimeError) as exc:
         acceleration_warning = f"GPU 가속 설정을 Windows에 반영하지 못했습니다: {exc}"
     summary = SummaryController(secret_store)
-    workflow = LibraryWorkflowController()
+    workflow = LibraryWorkflowController(
+        bibliography_lookup=BibliographyLookupService()
+    )
     conversational_search = ConversationalSearchController(
         workflow,
         secret_store,

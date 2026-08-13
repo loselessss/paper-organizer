@@ -247,7 +247,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "paper-summary-v10-direct"
+    prompt_version: str = "research-summary-v10-direct"
     allowed_categories: tuple[str, ...] = ()
     context_window: int | None = None
     output_language: str = "ko"

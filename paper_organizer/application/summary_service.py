@@ -62,6 +62,11 @@ FULL_MAX_CHARS = 120_000
 MINIMUM_TEXT_CHARS = 500
 CONTEXT_TOKEN_RESERVE = 3_000
 OCR_MINIMUM_OLLAMA_PARAMETERS_B = 8.0
+RESEARCH_SUMMARY_PROMPT_VERSION = "research-summary-v10"
+REVIEW_SUMMARY_PROMPT_VERSION = "review-summary-v4"
+PATENT_SUMMARY_PROMPT_VERSION = "patent-summary-v1"
+ABSTRACT_SUMMARY_PROMPT_VERSION = "paper-abstract-v1"
+BIBLIOGRAPHY_ONLY_PROMPT_VERSION = "paper-bibliography-only-v1"
 _BIBLIOGRAPHY_MAX_CHARS = 12_000
 _DISTRIBUTION_PLATFORM_NAMES = (
     "researchgate",
@@ -580,7 +585,7 @@ def run_prepared_summary(
         result = SummaryResult(
             provider=prepared.preview.provider,
             model=prepared.preview.model,
-            prompt_version="paper-bibliography-only-v1",
+            prompt_version=BIBLIOGRAPHY_ONLY_PROMPT_VERSION,
             data=SummaryData.from_section_text(""),
         )
     elif hierarchical:
@@ -595,11 +600,11 @@ def run_prepared_summary(
                         document_text=context,
                         max_output_tokens=300,
                         prompt_version=(
-                            "patent-summary-v1-section"
+                            f"{PATENT_SUMMARY_PROMPT_VERSION}-section"
                             if request_options["is_patent"]
-                            else "review-summary-v4-section"
+                            else f"{REVIEW_SUMMARY_PROMPT_VERSION}-section"
                             if prepared.preview.document_type == "review_paper"
-                            else "paper-summary-v10-section"
+                            else f"{RESEARCH_SUMMARY_PROMPT_VERSION}-section"
                         ),
                         stage="section",
                         **partial_options,
@@ -619,11 +624,11 @@ def run_prepared_summary(
             SummaryRequest(
                 document_text=synthesis_text,
                 prompt_version=(
-                    "patent-summary-v1-hierarchical"
+                    f"{PATENT_SUMMARY_PROMPT_VERSION}-hierarchical"
                     if request_options["is_patent"]
-                    else "review-summary-v4-hierarchical"
+                    else f"{REVIEW_SUMMARY_PROMPT_VERSION}-hierarchical"
                     if prepared.preview.document_type == "review_paper"
-                    else "paper-summary-v10-hierarchical"
+                    else f"{RESEARCH_SUMMARY_PROMPT_VERSION}-hierarchical"
                 ),
                 stage="synthesis",
                 **request_options,
@@ -651,13 +656,13 @@ def run_prepared_summary(
             SummaryRequest(
                 document_text=prepared.document_text,
                 prompt_version=(
-                    "paper-abstract-v1"
+                    ABSTRACT_SUMMARY_PROMPT_VERSION
                     if abstract_only
-                    else "patent-summary-v1-direct"
+                    else f"{PATENT_SUMMARY_PROMPT_VERSION}-direct"
                     if request_options["is_patent"]
-                    else "review-summary-v4-direct"
+                    else f"{REVIEW_SUMMARY_PROMPT_VERSION}-direct"
                     if prepared.preview.document_type == "review_paper"
-                    else "paper-summary-v10-direct"
+                    else f"{RESEARCH_SUMMARY_PROMPT_VERSION}-direct"
                 ),
                 stage="abstract" if abstract_only else "direct",
                 **request_options,

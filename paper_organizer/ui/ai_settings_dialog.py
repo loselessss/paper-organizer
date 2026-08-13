@@ -19,7 +19,6 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QPlainTextEdit,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -28,13 +27,21 @@ from PyQt5.QtWidgets import (
 )
 
 from paper_organizer.application.ai_settings import AiSettingsController
-from paper_organizer.core.model_recommendation import (
-    memory_tier_guidance,
-    model_usage_guidance,
-    recommendation_tier_overview,
+from paper_organizer.application.summary_service import (
+    PATENT_SUMMARY_PROMPT_VERSION,
+    RESEARCH_SUMMARY_PROMPT_VERSION,
+    REVIEW_SUMMARY_PROMPT_VERSION,
 )
+from paper_organizer.core.model_recommendation import model_usage_guidance
 from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
+
+
+def _prompt_short_version(prompt_version: str) -> str:
+    marker = "-v"
+    if marker not in prompt_version:
+        return prompt_version
+    return "v" + prompt_version.rsplit(marker, 1)[1]
 
 
 class _HardwareScanWorker(QThread):
@@ -77,7 +84,12 @@ class AiSettingsDialog(QDialog):
         super().__init__(parent)
         suppress_context_help_button(self)
         self._controller = controller
-        self.setWindowTitle("요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1")
+        self.setWindowTitle(
+            "요약 엔진 옵션 · 실험논문 "
+            f"{_prompt_short_version(RESEARCH_SUMMARY_PROMPT_VERSION)} · 리뷰논문 "
+            f"{_prompt_short_version(REVIEW_SUMMARY_PROMPT_VERSION)} · 특허 "
+            f"{_prompt_short_version(PATENT_SUMMARY_PROMPT_VERSION)}"
+        )
         screen = self.screen() or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
         available_width = available.width() if available is not None else 1160
@@ -265,13 +277,6 @@ class AiSettingsDialog(QDialog):
         local_form.addRow("PC / Ollama", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
         local_layout.addLayout(local_form)
-        self.model_candidates = QPlainTextEdit()
-        self.model_candidates.setReadOnly(True)
-        self.model_candidates.setMaximumHeight(145)
-        self.model_candidates.setPlaceholderText(
-            "검사 후 모델별 다운로드 크기, 예상 실행 메모리와 적합도를 표시합니다."
-        )
-        local_layout.addWidget(self.model_candidates)
         local_note = QLabel(
             "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "
             "모델을 저장해도 실행 중인 Ollama 서버는 재시작하지 않습니다. 서버가 "
@@ -621,7 +626,6 @@ class AiSettingsDialog(QDialog):
             f"RAM {hardware.memory_available_gb:g}/{hardware.memory_total_gb:g}GB 사용 가능 · "
             f"{gpu_text} · 모델 디스크 {hardware.model_disk_free_gb:g}GB 여유 · {ollama_text}"
         )
-        memory_guidance = memory_tier_guidance(hardware.memory_total_gb)
         recommendation = assessment.recommendation
         profile_label = {
             "auto": "자동",
@@ -634,44 +638,21 @@ class AiSettingsDialog(QDialog):
         if chosen is None:
             self._recommended_model = ""
             self.recommendation_status.setText(
-                f"{profile_label} 결과 · 현재 안전 여유 기준으로 추천할 "
-                f"로컬 모델이 없습니다. {memory_guidance}"
+                f"{profile_label} 결과 · 추천 가능한 로컬 모델이 없습니다. "
+                "자세한 후보 비교는 Ollama 설치·삭제에서 확인하세요."
             )
         else:
             self._recommended_model = chosen.spec.model_id
-            state = "설치됨" if chosen.installed else f"다운로드 약 {chosen.spec.download_gb:g}GB"
-            explanation = " ".join((*chosen.reasons, *chosen.warnings))
+            state = (
+                "설치됨"
+                if chosen.installed
+                else f"다운로드 약 {chosen.spec.download_gb:g}GB"
+            )
             self.recommendation_status.setText(
                 f"{profile_label} 결과 · {chosen.spec.label} "
-                f"({chosen.rating}, {state}) · "
-                + explanation
-                + f" {memory_guidance} "
-                "추천 결과만 바뀌며 활성 모델은 자동 변경하지 않습니다."
+                f"({chosen.rating}, {state}). "
+                "후보별 용량과 메모리 비교는 Ollama 설치·삭제에서 확인하세요."
             )
-        lines: list[str] = [
-            f"PC 메모리 안내: {memory_guidance}",
-            recommendation_tier_overview(),
-        ]
-        for candidate in recommendation.candidates:
-            marker = (
-                "★ 프로필 추천 · "
-                if chosen is not None
-                and candidate.spec.model_id == chosen.spec.model_id
-                else ""
-            )
-            installed = " · 설치됨" if candidate.installed else ""
-            warning = f" · {' '.join(candidate.warnings)}" if candidate.warnings else ""
-            usage = model_usage_guidance(
-                candidate.spec.model_id,
-                candidate.spec.parameters_b,
-            )
-            lines.append(
-                f"{marker}[{candidate.rating}] {candidate.spec.label} — 다운로드 "
-                f"{candidate.spec.download_gb:g}GB / 예상 실행 메모리 "
-                f"{candidate.spec.runtime_memory_gb:g}GB · {usage.role}, "
-                f"환각 위험 {usage.hallucination_risk}{installed}{warning}"
-            )
-        self.model_candidates.setPlainText("\n".join(lines))
         self._update_residency_guidance()
 
     def _hardware_scan_failed(self, message: str) -> None:

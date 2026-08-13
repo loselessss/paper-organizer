@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -22,27 +23,52 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from paper_organizer.application.lifecycle import LifecycleSettingsController
 from paper_organizer.application.library_workflow import LibraryWorkflowController
-from paper_organizer.core.classifier import TaxonomyError, taxonomy_category_names
+from paper_organizer.core.classifier import (
+    TaxonomyError,
+    taxonomy_category_names,
+    taxonomy_subcategory_names,
+)
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
 
 
 class FolderSettingsDialog(QDialog):
     """Save paths and watch preferences through the workflow controller."""
 
-    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+    def __init__(
+        self,
+        controller: LibraryWorkflowController,
+        parent=None,
+        *,
+        lifecycle: LifecycleSettingsController | None = None,
+    ) -> None:
         super().__init__(parent)
         suppress_context_help_button(self)
         self._controller = controller
+        self._lifecycle = lifecycle
         self.setWindowTitle("요약 감시 옵션")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(920)
 
         root = QVBoxLayout(self)
+        content = QHBoxLayout()
+        content.setSpacing(12)
+        watch_panel = QWidget()
+        watch_panel.setObjectName("watchSettingsPanel")
+        watch_panel.setMinimumWidth(0)
+        watch_root = QVBoxLayout(watch_panel)
+        watch_root.setContentsMargins(0, 0, 0, 0)
+        categories_panel = QWidget()
+        categories_panel.setObjectName("researchCategoriesPanel")
+        categories_panel.setMinimumWidth(500)
+        categories_root = QVBoxLayout(categories_panel)
+        categories_root.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         library_row, self.library_edit = self._path_row(self._browse_library)
 
@@ -50,6 +76,7 @@ class FolderSettingsDialog(QDialog):
         watch_layout = QVBoxLayout(watch_group)
         self.watch_list = QListWidget()
         self.watch_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.watch_list.setMaximumHeight(96)
         watch_layout.addWidget(self.watch_list)
         watch_actions = QHBoxLayout()
         add_watch_button = QPushButton("폴더 추가…")
@@ -60,7 +87,7 @@ class FolderSettingsDialog(QDialog):
         watch_actions.addWidget(remove_watch_button)
         watch_actions.addStretch(1)
         watch_layout.addLayout(watch_actions)
-        root.addWidget(watch_group)
+        watch_root.addWidget(watch_group)
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("저사양/절전", "eco")
         self.profile_combo.addItem("균형", "balanced")
@@ -70,21 +97,20 @@ class FolderSettingsDialog(QDialog):
         self.interval_spin.setSuffix("초")
         self.interval_spin.setToolTip("5초에서 1시간 사이로 설정할 수 있습니다.")
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
-        self.auto_check = QCheckBox("설정한 주기로 가볍게 검색 (안정된 새 PDF만 1회 분석)")
-        self.watch_subdirectories_check = QCheckBox("감시 폴더의 하위 폴더도 포함")
+        self.auto_check = QCheckBox("자동 검색")
+        self.auto_check.setToolTip(
+            "설정한 주기로 가볍게 검색하고 안정된 새 PDF만 1회 분석합니다."
+        )
+        self.watch_subdirectories_check = QCheckBox("하위 폴더 포함")
         self.watch_subdirectories_check.setToolTip(
             "선택한 모든 감시 폴더 아래를 재귀적으로 검색합니다. "
             "PaperPack 라이브러리는 감시 폴더 밖에 있어야 합니다."
         )
-        self.remove_source_check = QCheckBox(
-            "paperpack 검증 완료 후 입력 폴더의 원본 PDF 삭제"
-        )
+        self.remove_source_check = QCheckBox("원본 PDF 삭제")
         self.remove_source_check.setToolTip(
             "기본값은 원본 유지입니다. 삭제 실패 시 새 paperpack을 롤백합니다."
         )
-        self.auto_organize_check = QCheckBox(
-            "학술 논문으로 판정되고 중복이 없으면 승인 없이 자동 보관"
-        )
+        self.auto_organize_check = QCheckBox("논문 자동 보관")
         self.auto_organize_check.setToolTip(
             "중복 후보가 있거나 판정이 불확실한 PDF는 자동 보관하지 않고 "
             "수집 화면에 남겨 사람이 검토합니다."
@@ -96,20 +122,71 @@ class FolderSettingsDialog(QDialog):
         form.addRow("검색 범위", self.watch_subdirectories_check)
         form.addRow("자동 보관", self.auto_organize_check)
         form.addRow("입력 PDF", self.remove_source_check)
-        root.addLayout(form)
+        watch_root.addLayout(form)
+
+        if self._lifecycle is not None:
+            lifecycle_group = QGroupBox("시작/종료")
+            lifecycle_layout = QVBoxLayout(lifecycle_group)
+            self.start_with_windows_check = QCheckBox(
+                "Windows 로그인 시 자동 시작"
+            )
+            self.start_with_windows_check.setToolTip(
+                "현재 사용자 계정에만 적용되며 관리자 권한이 필요하지 않습니다."
+            )
+            lifecycle_layout.addWidget(self.start_with_windows_check)
+            self.background_radio = QRadioButton(
+                "X 버튼: 백그라운드 유지"
+            )
+            self.quit_radio = QRadioButton("X 버튼: 완전 종료")
+            self.close_button_group = QButtonGroup(self)
+            self.close_button_group.addButton(self.background_radio)
+            self.close_button_group.addButton(self.quit_radio)
+            lifecycle_layout.addWidget(self.background_radio)
+            lifecycle_layout.addWidget(self.quit_radio)
+            watch_root.addWidget(lifecycle_group)
+        else:
+            self.start_with_windows_check = None
+            self.background_radio = None
+            self.quit_radio = None
+            self.close_button_group = None
 
         focus_group = QGroupBox("연구분야 관리")
+        focus_group.setObjectName("researchCategoryGroup")
+        focus_group.setMinimumWidth(500)
         focus_layout = QVBoxLayout(focus_group)
         focus_note = QLabel(
-            "분야를 추가·수정·삭제할 수 있습니다. 체크한 분야가 있으면 그 "
-            "분야로만 자동 분류하고, 아무것도 체크하지 않으면 목록 전체를 사용합니다."
+            "체크한 분야 안에서만 자동 분류합니다. 아무것도 체크하지 않으면 "
+            "전체 분야를 사용합니다."
         )
         focus_note.setWordWrap(True)
         focus_layout.addWidget(focus_note)
+        focus_lists = QHBoxLayout()
+        category_column = QWidget()
+        category_column_layout = QVBoxLayout(category_column)
+        category_column_layout.setContentsMargins(0, 0, 0, 0)
+        subcategory_column = QWidget()
+        subcategory_column_layout = QVBoxLayout(subcategory_column)
+        subcategory_column_layout.setContentsMargins(0, 0, 0, 0)
+        self.focus_list_label = QLabel("분야 선택 ↓")
+        self.focus_list_label.setToolTip("분야를 누르면 오른쪽에 세부분야가 표시됩니다.")
+        self.subcategory_list_label = QLabel("세부분야")
         self.focus_list = QListWidget()
         self.focus_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.focus_list.setMaximumHeight(180)
-        focus_layout.addWidget(self.focus_list)
+        self.focus_list.setMinimumHeight(220)
+        self.focus_list.setMinimumWidth(260)
+        self.focus_list.setToolTip("분야를 선택하면 연결된 세부분야를 볼 수 있습니다.")
+        self.subcategory_list = QListWidget()
+        self.subcategory_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.subcategory_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.subcategory_list.setMinimumHeight(220)
+        self.subcategory_list.setMinimumWidth(200)
+        category_column_layout.addWidget(self.focus_list_label)
+        category_column_layout.addWidget(self.focus_list, 1)
+        subcategory_column_layout.addWidget(self.subcategory_list_label)
+        subcategory_column_layout.addWidget(self.subcategory_list, 1)
+        focus_lists.addWidget(category_column, 3)
+        focus_lists.addWidget(subcategory_column, 2)
+        focus_layout.addLayout(focus_lists)
         focus_actions = QHBoxLayout()
         self.add_category_button = QPushButton("분야 추가")
         self.edit_category_button = QPushButton("이름 수정")
@@ -122,10 +199,16 @@ class FolderSettingsDialog(QDialog):
         focus_actions.addWidget(self.remove_category_button)
         focus_actions.addStretch(1)
         focus_layout.addLayout(focus_actions)
+        self.focus_list.currentItemChanged.connect(
+            lambda current, _previous: self._show_subcategories(current)
+        )
         self.focus_list.itemDoubleClicked.connect(
             lambda _item: self._edit_focus_category()
         )
-        root.addWidget(focus_group)
+        categories_root.addWidget(focus_group)
+        content.addWidget(watch_panel, 2)
+        content.addWidget(categories_panel, 3)
+        root.addLayout(content, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("저장")
@@ -160,6 +243,15 @@ class FolderSettingsDialog(QDialog):
         self.watch_subdirectories_check.setChecked(settings.watch_subdirectories)
         self.remove_source_check.setChecked(settings.remove_source_after_import)
         self.auto_organize_check.setChecked(settings.auto_organize_academic)
+        if self._lifecycle is not None:
+            lifecycle_settings = self._lifecycle.settings()
+            self.start_with_windows_check.setChecked(
+                lifecycle_settings.start_with_windows
+            )
+            if lifecycle_settings.close_behavior == "background":
+                self.background_radio.setChecked(True)
+            else:
+                self.quit_radio.setChecked(True)
         self._load_focus_categories(
             settings.focus_categories,
             settings.research_categories,
@@ -181,6 +273,28 @@ class FolderSettingsDialog(QDialog):
             entry.setFlags(entry.flags() | Qt.ItemIsUserCheckable)
             entry.setCheckState(Qt.Checked if name in chosen else Qt.Unchecked)
             self.focus_list.addItem(entry)
+        if self.focus_list.count():
+            self.focus_list.setCurrentRow(0)
+        else:
+            self._show_subcategories(None)
+
+    def _show_subcategories(self, item: QListWidgetItem | None) -> None:
+        self.subcategory_list.clear()
+        name = item.text().strip() if item is not None else ""
+        if not name:
+            self.subcategory_list.addItem("분야를 선택하세요.")
+            return
+        try:
+            subcategories = taxonomy_subcategory_names(name)
+        except TaxonomyError:
+            subcategories = []
+        if not subcategories:
+            disabled = QListWidgetItem("세부분야 없음")
+            disabled.setFlags(Qt.NoItemFlags)
+            self.subcategory_list.addItem(disabled)
+            return
+        for subcategory in subcategories:
+            self.subcategory_list.addItem(subcategory)
 
     def _checked_focus_categories(self) -> list[str]:
         return [
@@ -229,11 +343,16 @@ class FolderSettingsDialog(QDialog):
         entry = QListWidgetItem(name)
         entry.setFlags(entry.flags() | Qt.ItemIsUserCheckable)
         entry.setCheckState(Qt.Checked)
+        self.focus_list.clearSelection()
         self.focus_list.addItem(entry)
         self.focus_list.setCurrentItem(entry)
+        entry.setSelected(True)
+        self._show_subcategories(entry)
 
     def _edit_focus_category(self) -> None:
         selected = self.focus_list.selectedItems()
+        if not selected and self.focus_list.currentItem() is not None:
+            selected = [self.focus_list.currentItem()]
         if len(selected) != 1:
             QMessageBox.information(
                 self, "연구분야 선택", "이름을 수정할 분야 하나를 선택하세요."
@@ -252,6 +371,7 @@ class FolderSettingsDialog(QDialog):
             QMessageBox.warning(self, "중복 연구분야", "이미 같은 분야가 있습니다.")
             return
         item.setText(name)
+        self._show_subcategories(item)
 
     def _remove_focus_categories(self) -> None:
         selected = self.focus_list.selectedItems()
@@ -264,6 +384,11 @@ class FolderSettingsDialog(QDialog):
             return
         for item in selected:
             self.focus_list.takeItem(self.focus_list.row(item))
+        current = self.focus_list.currentItem()
+        if current is None and self.focus_list.count():
+            self.focus_list.setCurrentRow(0)
+            current = self.focus_list.currentItem()
+        self._show_subcategories(current)
 
     def _add_watch_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -337,4 +462,16 @@ class FolderSettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "폴더 설정 실패", str(exc))
             return
+        if self._lifecycle is not None:
+            close_behavior = (
+                "background" if self.background_radio.isChecked() else "quit"
+            )
+            try:
+                self._lifecycle.save_preferences(
+                    start_with_windows=self.start_with_windows_check.isChecked(),
+                    close_behavior=close_behavior,
+                )
+            except Exception as exc:
+                QMessageBox.warning(self, "시작 및 종료 설정 실패", str(exc))
+                return
         self.accept()

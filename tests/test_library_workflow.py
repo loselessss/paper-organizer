@@ -80,6 +80,17 @@ class LibraryWorkflowTests(unittest.TestCase):
         self.assertEqual(first.items, ())
         return controller.scan()
 
+    def test_manual_scan_discovers_stable_pdf_without_second_pass(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+
+            result = controller.scan(require_previous_observation=False)
+
+            self.assertEqual(len(result.items), 1)
+            self.assertEqual(result.pending_stability, 0)
+
     def test_downloads_is_the_default_input_folder(self):
         self.assertEqual(default_input_dir(), Path.home() / "Downloads")
 

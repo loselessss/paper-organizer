@@ -24,6 +24,10 @@ from paper_organizer.application.analysis_queue import (
     AnalysisQueueItem,
     AnalysisQueueStore,
 )
+from paper_organizer.application.bibliography_lookup import (
+    BibliographyLookupService,
+    VerifiedBibliography,
+)
 from paper_organizer.application.legacy_migration import (
     LegacyMigrationPreview,
     LegacyMigrationResult,
@@ -134,6 +138,8 @@ class EditablePaperMetadata:
     subcategory: str = "General"
     tags: list[str] = field(default_factory=list)
     summary: str = ""
+    bibliography_source: str = ""
+    verified_identifier: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,9 +642,12 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
         year = int(raw_year) if raw_year not in (None, "") else None
     except (TypeError, ValueError):
         year = None
+    authors = [str(value) for value in bibliography.get("authors", [])]
+    if document_type == "patent" and len(authors) == 1:
+        authors = _split_korean_person_names(authors[0])
     return EditablePaperMetadata(
         title=str(bibliography.get("title", "")),
-        authors=[str(value) for value in bibliography.get("authors", [])],
+        authors=authors,
         year=year,
         venue=(
             ""
@@ -654,7 +663,65 @@ def _metadata_from_record(record: dict[str, Any]) -> EditablePaperMetadata:
         subcategory=str(classification.get("subcategory") or "General"),
         tags=[str(value) for value in classification.get("tags", [])],
         summary=str(description.get("summary", "")),
+        bibliography_source=str(
+            record.get("provenance", {}).get("bibliography", {}).get("source")
+            if isinstance(record.get("provenance"), dict)
+            and isinstance(record.get("provenance", {}).get("bibliography"), dict)
+            else ""
+        ),
+        verified_identifier=str(
+            record.get("provenance", {})
+            .get("bibliography", {})
+            .get("matched_identifier")
+            if isinstance(record.get("provenance"), dict)
+            and isinstance(record.get("provenance", {}).get("bibliography"), dict)
+            else ""
+        ),
     )
+
+
+def _merge_verified_bibliography(
+    metadata: EditablePaperMetadata,
+    verified: VerifiedBibliography,
+) -> EditablePaperMetadata:
+    """Fill weak PDF metadata from a title-matched external bibliography record."""
+
+    merged = EditablePaperMetadata(
+        title=metadata.title,
+        authors=list(metadata.authors),
+        year=metadata.year,
+        venue=metadata.venue,
+        document_type=metadata.document_type,
+        patent_office=metadata.patent_office,
+        publication_number=metadata.publication_number,
+        application_number=metadata.application_number,
+        assignee=metadata.assignee,
+        category=metadata.category,
+        subcategory=metadata.subcategory,
+        tags=list(metadata.tags),
+        summary=metadata.summary,
+    )
+    if verified.title and (
+        not merged.title.strip()
+        or is_generic_document_heading(merged.title)
+    ):
+        merged.title = verified.title
+    current_authors = [author for author in merged.authors if author.strip()]
+    if len(current_authors) < 2 and len(verified.authors) >= 2:
+        merged.authors = list(verified.authors)
+    if merged.year is None and verified.year is not None:
+        merged.year = verified.year
+    if not merged.venue.strip() and verified.venue.strip():
+        merged.venue = verified.venue
+    if (
+        merged.title != metadata.title
+        or merged.authors != metadata.authors
+        or merged.year != metadata.year
+        or merged.venue != metadata.venue
+    ):
+        merged.bibliography_source = verified.source
+        merged.verified_identifier = verified.matched_identifier
+    return merged
 
 
 def _metadata_for_library_entry(
@@ -1100,7 +1167,7 @@ def _extract_first_page_byline(lines: list[str], title: str = "") -> list[str]:
             return list(dict.fromkeys(values))
 
     initial_name = re.compile(
-        r"(?:^|,\s*|\band\s+)(?:[A-Z]\.\s*)+[A-Z][A-Za-z'’-]+(?:\s|$)"
+        r"(?<![A-Za-z])((?:[A-Z]\.?\s*){1,4}[A-Z][A-Za-z'’-]+)(?![A-Za-z])"
     )
     for line in lines[1:10]:
         folded = line.casefold()
@@ -1108,15 +1175,17 @@ def _extract_first_page_byline(lines: list[str], title: str = "") -> list[str]:
             break
         if any(marker in folded for marker in excluded):
             continue
-        if not initial_name.search(line):
+        matches = list(initial_name.finditer(line))
+        if len(matches) < 2:
             continue
-        values = [
-            value.strip()
-            for value in re.split(r"\s*;\s*|\s+\band\b\s+|,\s*(?=[A-Z]\.)", line)
-            if value.strip()
-        ]
+        values = []
+        for match in matches:
+            value = re.sub(r"[*†‡§¶#]+", " ", match.group(1))
+            value = " ".join(value.split()).strip(" ,;&")
+            if value:
+                values.append(value)
         if values:
-            return values
+            return list(dict.fromkeys(values))
     return []
 
 
@@ -1208,6 +1277,16 @@ _KOREAN_ADDRESS_RE = re.compile(
 )
 
 
+def _split_korean_person_names(value: str) -> list[str]:
+    """Split space-separated Korean personal names without touching organizations."""
+
+    normalized = " ".join(value.split()).strip(" ;,")
+    parts = normalized.split()
+    if len(parts) >= 2 and all(re.fullmatch(r"[가-힣]{2,4}", part) for part in parts):
+        return parts
+    return [normalized] if normalized else []
+
+
 def _korean_inid_parties(
     blocks: dict[str, list[str]],
     codes: tuple[str, ...],
@@ -1215,6 +1294,7 @@ def _korean_inid_parties(
 ) -> list[str]:
     """Read Korean party/name lines while dropping the following addresses."""
 
+    split_person_names = "발명자" in labels
     for code in codes:
         rows = list(blocks.get(code, []))
         if not rows:
@@ -1244,11 +1324,14 @@ def _korean_inid_parties(
                 previous_was_address = True
                 continue
             if not (address_started and previous_was_address):
-                values.extend(
-                    value.strip(" ;,")
-                    for value in re.split(r"\s*;\s*", line)
-                    if value.strip(" ;,")
-                )
+                for value in re.split(r"\s*;\s*", line):
+                    cleaned = value.strip(" ;,")
+                    if not cleaned:
+                        continue
+                    if split_person_names:
+                        values.extend(_split_korean_person_names(cleaned))
+                    else:
+                        values.append(cleaned)
             previous_was_address = address_started
         if values:
             return list(dict.fromkeys(values))
@@ -1523,8 +1606,14 @@ def _best_duplicate(
 class LibraryWorkflowController:
     """Stateful controller used by the low-resource periodic scanner and GUI."""
 
-    def __init__(self, settings_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        settings_path: Path | None = None,
+        *,
+        bibliography_lookup: BibliographyLookupService | None = None,
+    ) -> None:
         self._settings_path = settings_path or default_settings_path()
+        self._bibliography_lookup = bibliography_lookup
         self._trackers: dict[Path, DiscoveryTracker] = {}
         self._cache: dict[Path, tuple[int, int, ReviewItem]] = {}
         self._short_documents: dict[Path, tuple[int, int]] = {}
@@ -1648,7 +1737,12 @@ class LibraryWorkflowController:
         self._library_cache = None
         return settings
 
-    def scan(self, progress: Callable[[str], None] | None = None) -> ReviewScan:
+    def scan(
+        self,
+        progress: Callable[[str], None] | None = None,
+        *,
+        require_previous_observation: bool = True,
+    ) -> ReviewScan:
         settings = self.settings()
         input_dirs = self.configured_input_dirs()
         library_root = self.configured_paths()[1]
@@ -1674,6 +1768,7 @@ class LibraryWorkflowController:
                     input_dir,
                     recursive=settings.watch_subdirectories,
                     minimum_age_seconds=settings.minimum_age_seconds,
+                    require_previous_observation=require_previous_observation,
                 )
             )
         active_candidates: list[Path] = []
@@ -1771,6 +1866,12 @@ class LibraryWorkflowController:
                 metadata = _default_metadata(found.path, page_texts)
                 if status == "patent_likely":
                     metadata = _apply_patent_metadata(metadata, page_texts)
+                elif status == "academic_likely":
+                    metadata = self._verify_bibliography(
+                        metadata,
+                        page_texts,
+                        doi=identity.doi or "",
+                    )
                 item = ReviewItem(
                     path=found.path,
                     identity=identity,
@@ -1847,6 +1948,8 @@ class LibraryWorkflowController:
             year=item.metadata.year,
             venue=item.metadata.venue,
             document_type=item.metadata.document_type,
+            bibliography_source=item.metadata.bibliography_source,
+            verified_identifier=item.metadata.verified_identifier,
             patent_office=item.metadata.patent_office,
             publication_number=item.metadata.publication_number,
             application_number=item.metadata.application_number,
@@ -1880,6 +1983,37 @@ class LibraryWorkflowController:
         elif not metadata.venue:
             metadata.venue = extract_venue(page_texts)
         return metadata
+
+    def _verify_bibliography(
+        self,
+        metadata: EditablePaperMetadata,
+        page_texts: list[str],
+        *,
+        doi: str = "",
+    ) -> EditablePaperMetadata:
+        lookup = self._bibliography_lookup
+        if lookup is None:
+            return metadata
+        if metadata.document_type == "patent":
+            return metadata
+        needs_lookup = (
+            len([author for author in metadata.authors if author.strip()]) < 2
+            or metadata.year is None
+            or not metadata.venue.strip()
+        )
+        if not needs_lookup:
+            return metadata
+        try:
+            verified = lookup.verify(
+                title=metadata.title,
+                doi=doi,
+                page_texts=page_texts,
+            )
+        except Exception:
+            return metadata
+        if verified is None:
+            return metadata
+        return _merge_verified_bibliography(metadata, verified)
 
     def organize(
         self,
@@ -4335,4 +4469,18 @@ def _new_sidecar(
         for path, is_unchanged in unchanged.items():
             if is_unchanged:
                 record["curation"]["field_sources"][path] = "auto:regex"
+    if metadata.bibliography_source.startswith("verified:"):
+        record.setdefault("provenance", {})["bibliography"] = {
+            "source": metadata.bibliography_source,
+            "matched_identifier": metadata.verified_identifier,
+        }
+        verified_fields = {
+            "bibliography.title": bool(metadata.title.strip()),
+            "bibliography.authors": bool(metadata.authors),
+            "bibliography.year": metadata.year is not None,
+            "bibliography.venue": bool(metadata.venue.strip()),
+        }
+        for path, has_value in verified_fields.items():
+            if has_value and record["curation"]["field_sources"].get(path) != "user":
+                record["curation"]["field_sources"][path] = metadata.bibliography_source
     return record

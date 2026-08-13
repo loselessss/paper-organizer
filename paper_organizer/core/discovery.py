@@ -65,6 +65,7 @@ class DiscoveryTracker:
         *,
         recursive: bool = False,
         minimum_age_seconds: int = 30,
+        require_previous_observation: bool = True,
         now: float | None = None,
     ) -> list[StablePdf]:
         current_time = time.time() if now is None else now
@@ -83,7 +84,10 @@ class DiscoveryTracker:
                 continue
             if _has_related_partial_file(path):
                 continue
-            if self._previous.get(path) != observation:
+            if (
+                require_previous_observation
+                and self._previous.get(path) != observation
+            ):
                 continue
             if not has_pdf_signature(path):
                 continue

@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QSystemTrayIcon,
     QToolBar,
+    QToolButton,
 )
 
 from paper_organizer import __version__
@@ -41,13 +42,12 @@ from paper_organizer.application.update_service import (
 from paper_organizer.application.update_schedule import UpdateCheckSchedule
 
 from .ai_settings_dialog import AiSettingsDialog
-from .fluent_style import apply_fluent_theme, decorate_action
+from .fluent_style import apply_fluent_theme, decorate_action, decorate_button
 from .library_workflow_widget import (
     AnalysisQueueWidget,
     CollectionReviewWidget,
     LibraryWidget,
 )
-from .lifecycle_dialog import LifecyclePreferencesDialog
 from .migration_widget import LegacyMigrationDialog
 from .ollama_model_dialog import OllamaModelDialog
 from .pdf_export_dialog import PdfExportDialog
@@ -160,9 +160,23 @@ class PaperOrganizerWindow(QMainWindow):
             self.library_widget.natural_search_requested.connect(
                 self.show_natural_search
             )
+            self.library_widget.pdf_export_requested.connect(self.show_pdf_export)
+            self.library_widget.search_rebuild_requested.connect(
+                self.rebuild_search_index
+            )
+            self.library_widget.legacy_migration_requested.connect(
+                self.show_legacy_migration
+            )
+            self.library_widget.actions_changed.connect(
+                self._sync_library_ribbon_actions
+            )
         if self.library_widget is not None:
             self.setCentralWidget(self.library_widget)
         self._engine_settings_menu = QMenu(self)
+        self._library_ribbon_action_bindings: list[tuple[QAction, object]] = []
+        self._library_ribbon_menu_buttons: list[QToolButton] = []
+        self._paperpack_advanced_action: QAction | None = None
+        self._legacy_migration_action: QAction | None = None
         self._create_ai_menu(self._engine_settings_menu)
         self.menuBar().hide()
         self._create_shortcuts()
@@ -170,22 +184,37 @@ class PaperOrganizerWindow(QMainWindow):
         self._create_command_ribbon()
         self._analysis_status_label = QLabel("")
         self._analysis_progress_bar = QProgressBar()
-        self._analysis_progress_bar.setRange(0, 0)
+        self._analysis_progress_bar.setRange(0, 1)
+        self._analysis_progress_bar.setValue(0)
         self._analysis_progress_bar.setFixedWidth(120)
-        self._analysis_progress_bar.hide()
+        self._analysis_progress_bar.setFixedHeight(14)
+        self._analysis_progress_bar.setTextVisible(False)
+        self._analysis_progress_bar.setVisible(True)
+        self._analysis_progress_bar.setMaximumWidth(0)
         self.statusBar().addPermanentWidget(self._analysis_status_label)
         self.statusBar().addPermanentWidget(self._analysis_progress_bar)
+        self.statusBar().setFixedHeight(
+            max(24, self.statusBar().sizeHint().height())
+        )
         if self.queue_widget is not None:
             self.queue_widget.analysis_progress.connect(self._analysis_progress_changed)
             self.queue_widget.refresh()
         self.statusBar().showMessage("다운로드 폴더의 새 논문을 검색할 준비가 되었습니다.")
+        if self._library_workflow is not None:
+            QTimer.singleShot(0, self._check_legacy_migration_candidates)
         if getattr(sys, "frozen", False):
             QTimer.singleShot(5000, lambda: self.check_for_updates(False))
             self._automatic_update_timer.start()
 
     def _analysis_progress_changed(self, message: str, busy: bool) -> None:
         self._analysis_status_label.setText(message)
-        self._analysis_progress_bar.setVisible(busy)
+        if busy:
+            self._analysis_progress_bar.setRange(0, 0)
+            self._analysis_progress_bar.setMaximumWidth(120)
+        else:
+            self._analysis_progress_bar.setRange(0, 1)
+            self._analysis_progress_bar.setValue(0)
+            self._analysis_progress_bar.setMaximumWidth(0)
 
     def changeEvent(self, event) -> None:
         if event.type() == event.WindowStateChange and self.isMinimized():
@@ -319,34 +348,145 @@ class PaperOrganizerWindow(QMainWindow):
             )
         if self._analysis_queue_popup is not None:
             add_command("분석 큐", "menu", self.toggle_analysis_queue)
-            ribbon.addSeparator()
+
         if self.library_widget is not None:
-            add_command("검색", "search", self.library_widget.search_edit.setFocus)
+            ribbon.addSeparator()
+            self._create_library_ribbon_menus(ribbon)
 
         ribbon.addSeparator()
         if self._library_workflow is not None:
             add_command("감시 설정", "folder", self.show_folder_settings)
         add_command("AI 설정", "settings", self.show_ai_settings)
-        add_command("모델", "download", self.show_ollama_models)
-        if self._lifecycle is not None:
-            add_command("시작/종료", "settings", self.show_lifecycle_settings)
-
-        if self._library_workflow is not None:
-            ribbon.addSeparator()
-            if self._conversational_search is not None:
-                add_command(
-                    "자연어 검색",
-                    "search",
-                    lambda: self.show_natural_search(""),
-                )
-            add_command("PDF 환원", "pdf", self.show_pdf_export)
-            add_command("재구축", "refresh", self.rebuild_search_index)
-            add_command("마이그레이션", "archive", self.show_legacy_migration)
 
         ribbon.addSeparator()
         add_command("업데이트", "download", lambda: self.check_for_updates(True))
         add_command("단축키", "select", self._show_shortcuts)
         add_command("정보", "help", self._show_about)
+        self._sync_library_ribbon_actions()
+
+    def _create_library_ribbon_menus(self, ribbon: QToolBar) -> None:
+        if self.library_widget is None:
+            return
+
+        def add_menu_button(text: str, icon_name: str) -> tuple[QToolButton, QMenu]:
+            button = QToolButton(self)
+            button.setText(text)
+            button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            button.setPopupMode(QToolButton.InstantPopup)
+            decorate_button(button, icon_name)
+            menu = QMenu(button)
+            button.setMenu(menu)
+            ribbon.addWidget(button)
+            self._library_ribbon_menu_buttons.append(button)
+            return button, menu
+
+        def add_button_action(menu: QMenu, button, icon_name: str) -> QAction:
+            action = QAction(button.text(), self)
+            decorate_action(action, icon_name)
+            action.setToolTip(button.toolTip())
+            action.triggered.connect(button.click)
+            menu.addAction(action)
+            self._library_ribbon_action_bindings.append((action, button))
+            return action
+
+        _button, spdf_menu = add_menu_button("sPDF", "open")
+        add_button_action(spdf_menu, self.library_widget.open_button, "open")
+        add_button_action(spdf_menu, self.library_widget.open_with_ai_button, "ai")
+        add_button_action(spdf_menu, self.library_widget.selection_ai_button, "ai")
+
+        _button, translation_menu = add_menu_button("AI 번역", "translate")
+        add_button_action(
+            translation_menu,
+            self.library_widget.translation_button,
+            "translate",
+        )
+        add_button_action(
+            translation_menu,
+            self.library_widget.restore_translation_button,
+            "restore",
+        )
+
+        _button, paperpack_menu = add_menu_button("PaperPack", "archive")
+        add_button_action(paperpack_menu, self.library_widget.apply_pdf_button, "save")
+        add_button_action(
+            paperpack_menu,
+            self.library_widget.discard_pdf_button,
+            "cancel",
+        )
+        paperpack_menu.addSeparator()
+        export_action = paperpack_menu.addAction("PDF 환원…")
+        decorate_action(export_action, "pdf")
+        export_action.triggered.connect(self.show_pdf_export)
+        rebuild_action = paperpack_menu.addAction("검색 색인 재구축")
+        decorate_action(rebuild_action, "refresh")
+        rebuild_action.triggered.connect(self.rebuild_search_index)
+        advanced_menu = paperpack_menu.addMenu("고급")
+        decorate_action(advanced_menu.menuAction(), "settings")
+        migration_action = advanced_menu.addAction("구버전 마이그레이션…")
+        decorate_action(migration_action, "archive")
+        migration_action.triggered.connect(self.show_legacy_migration)
+        migration_action.setVisible(False)
+        advanced_menu.menuAction().setVisible(False)
+        self._paperpack_advanced_action = advanced_menu.menuAction()
+        self._legacy_migration_action = migration_action
+
+        _button, delete_menu = add_menu_button("삭제", "delete")
+        add_button_action(delete_menu, self.library_widget.delete_button, "delete")
+        add_button_action(
+            delete_menu,
+            self.library_widget.permanent_delete_button,
+            "delete",
+        )
+
+        _button, reanalysis_menu = add_menu_button("재요약", "refresh")
+        add_button_action(
+            reanalysis_menu,
+            self.library_widget.reanalyze_selected_button,
+            "refresh",
+        )
+        add_button_action(
+            reanalysis_menu,
+            self.library_widget.reanalyze_all_button,
+            "refresh",
+        )
+
+    def _sync_library_ribbon_actions(self) -> None:
+        for action, button in getattr(self, "_library_ribbon_action_bindings", []):
+            action.setText(button.text())
+            action.setEnabled(button.isEnabled())
+            action.setToolTip(button.toolTip())
+            if action.isCheckable():
+                action.setChecked(button.isChecked())
+        for button in getattr(self, "_library_ribbon_menu_buttons", []):
+            menu = button.menu()
+            if menu is None:
+                continue
+            actions = [action for action in menu.actions() if not action.isSeparator()]
+            button.setEnabled(any(action.isEnabled() for action in actions))
+
+    def _check_legacy_migration_candidates(self) -> None:
+        if self._library_workflow is None:
+            return
+        try:
+            preview = self._library_workflow.legacy_migration_preview()
+        except Exception:
+            return
+        count = len(preview.candidates)
+        if self._legacy_migration_action is not None:
+            self._legacy_migration_action.setVisible(bool(count))
+            self._legacy_migration_action.setText(
+                f"구버전 마이그레이션… ({count})"
+                if count
+                else "구버전 마이그레이션…"
+            )
+        if self._paperpack_advanced_action is not None:
+            self._paperpack_advanced_action.setVisible(bool(count))
+        if count:
+            self.statusBar().showMessage(
+                f"구버전 PaperPack {count}개 확인됨 · "
+                "PaperPack > 고급에서 마이그레이션을 실행할 수 있습니다.",
+                10000,
+            )
 
     def show_new_pdf_review(self) -> None:
         if (
@@ -470,7 +610,12 @@ class PaperOrganizerWindow(QMainWindow):
             "클라우드 AI를 설정합니다.",
         )
         if self._library_workflow is not None:
-            FolderSettingsDialog(self._library_workflow, self).exec_()
+            if FolderSettingsDialog(
+                self._library_workflow,
+                self,
+                lifecycle=self._lifecycle,
+            ).exec_() and self._lifecycle is not None:
+                self._ensure_system_tray()
         QMessageBox.information(
             self,
             "요약 엔진 설정",
@@ -526,7 +671,13 @@ class PaperOrganizerWindow(QMainWindow):
     def show_folder_settings(self) -> None:
         if self._library_workflow is None:
             return
-        if FolderSettingsDialog(self._library_workflow, self).exec_():
+        if FolderSettingsDialog(
+            self._library_workflow,
+            self,
+            lifecycle=self._lifecycle,
+        ).exec_():
+            if self._lifecycle is not None:
+                self._ensure_system_tray()
             if self.collection_widget is not None:
                 self.collection_widget._reload_watch_settings()
             if self.queue_widget is not None:
@@ -541,6 +692,7 @@ class PaperOrganizerWindow(QMainWindow):
         if self.library_widget is not None:
             dialog.library_changed.connect(self.library_widget.refresh)
         dialog.exec_()
+        self._check_legacy_migration_candidates()
 
     def rebuild_search_index(self) -> None:
         """본문이 비어 있던 paperpack을 채운 뒤 전문 검색 색인을 다시 만든다."""
@@ -564,16 +716,6 @@ class PaperOrganizerWindow(QMainWindow):
         QMessageBox.information(self, "검색 색인 재구축", message)
         if self.library_widget is not None:
             self.library_widget.refresh(True)
-
-    def show_lifecycle_settings(self) -> None:
-        if self._lifecycle is None:
-            return
-        dialog = LifecyclePreferencesDialog(
-            self._lifecycle, first_run=False, parent=self
-        )
-        if not dialog.exec_():
-            return
-        self._ensure_system_tray()
 
     def _ensure_system_tray(self) -> None:
         """Keep the tray icon visible for the entire application lifetime."""

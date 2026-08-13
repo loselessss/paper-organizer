@@ -95,12 +95,10 @@ paperpack은 그대로 유지됩니다. 반대로 보관된 `.paperpack`에서 �
 .\.venv\Scripts\paper-organizer-gui.exe
 ```
 
-`vendor/spdf`는 sPDF `main`의 검증된 1.7.1 커밋을 추적하는 submodule입니다.
-이 버전은 드래그 시작·끝 사이를 읽기 순서로 연속 선택하고, 화면상의 줄바꿈은
-공백으로 연결하되 실제 문단 경계만 유지해 선택 번역·요약 입력을 자연스럽게 만듭니다.
-손 도구·선택 도구·페이지 구성·업데이트 기능과 긴 문서 썸네일 개선을 포함하며,
-GUI 브리지는 지연
-로딩하므로 PyQt5가 없는 코어 테스트 환경에서도 패키지를 가져올 수 있습니다.
+`vendor/spdf`는 검증된 sPDF 커밋을 고정하는 submodule입니다. 포함된 sPDF 버전은
+서브모듈이 체크아웃한 태그/커밋과 `pdfeditor/meta.py`를 기준으로 확인합니다.
+GUI 브리지는 sPDF를 지연 로딩하므로 PyQt5가 없는 코어 테스트 환경에서도 패키지를
+가져올 수 있습니다.
 요약 AI는 로컬 Ollama(기본값), OpenAI API, Anthropic Claude API 중에서
 선택할 수 있습니다. Ollama 모델은 설치본에 포함하지 않고 설치 후 선택
 다운로드하며, 클라우드 API는 사용자가 전송에 동의한 요청에만 사용합니다.

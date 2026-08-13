@@ -81,6 +81,26 @@ def taxonomy_category_names(taxonomy: dict[str, Any] | None = None) -> list[str]
     ]
 
 
+def taxonomy_subcategory_names(
+    category_name: str,
+    taxonomy: dict[str, Any] | None = None,
+) -> list[str]:
+    data = taxonomy or load_taxonomy()
+    target = category_name.strip().casefold()
+    if not target:
+        return []
+    for category in data["categories"]:
+        name = str(category.get("name", "")).strip()
+        if name.casefold() != target:
+            continue
+        return [
+            str(subcategory.get("name", "")).strip()
+            for subcategory in category.get("subcategories", [])
+            if str(subcategory.get("name", "")).strip()
+        ]
+    return []
+
+
 def _keyword_hits(keywords: Sequence[str], zones: list[tuple[str, float]]) -> tuple[float, list[str]]:
     score = 0.0
     matched: list[str] = []

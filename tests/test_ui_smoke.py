@@ -3,6 +3,7 @@ import os
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 
@@ -40,6 +41,24 @@ class UiSmokeTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
 
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_fluent_choice_controls_show_dropdown_affordance(self):
+        from paper_organizer.ui.fluent_style import apply_fluent_theme
+
+        apply_fluent_theme(self.app)
+        stylesheet = self.app.styleSheet()
+
+        self.assertIn("QComboBox::down-arrow", stylesheet)
+        self.assertIn("border-top: 5px solid #5f5f5f", stylesheet)
+        self.assertIn("QSpinBox::up-arrow", stylesheet)
+        self.assertIn("border-bottom: 4px solid #6f6f6f", stylesheet)
+        self.assertNotIn(
+            "QComboBox::down-arrow {\n"
+            "            image: none;\n"
+            "            border: 0;\n"
+            "            width: 0;",
+            stylesheet,
+        )
 
     def test_selection_ai_uses_a_separate_dialog(self):
         from PyQt5.QtCore import Qt
@@ -92,6 +111,48 @@ class UiSmokeTests(unittest.TestCase):
             "2. 제1항에 있어서, 상기 담체가 고분자인 조성물.",
         )
 
+    def test_analysis_version_label_recognizes_split_paper_prompt_versions(self):
+        from paper_organizer.ui.library_workflow_widget import (
+            _analysis_version_label,
+        )
+
+        self.assertEqual(
+            _analysis_version_label(
+                {
+                    "analysis": {
+                        "provenance": {
+                            "prompt_version": "review-summary-v4-direct",
+                        }
+                    }
+                }
+            ),
+            "v4",
+        )
+        self.assertEqual(
+            _analysis_version_label(
+                {
+                    "analysis": {
+                        "provenance": {
+                            "prompt_version": "research-summary-v10-direct",
+                        }
+                    }
+                }
+            ),
+            "v10",
+        )
+        self.assertEqual(
+            _analysis_version_label(
+                {
+                    "analysis": {
+                        "provenance": {
+                            "prompt_version": "paper-summary-v9-direct",
+                        }
+                    }
+                }
+            ),
+            "v9",
+        )
+
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
         from PyQt5.QtWidgets import (
@@ -100,11 +161,13 @@ class UiSmokeTests(unittest.TestCase):
             QFrame,
             QMessageBox,
             QToolBar,
+            QToolButton,
         )
-        from PyQt5.QtWidgets import QLabel, QLineEdit
+        from PyQt5.QtWidgets import QLabel, QLineEdit, QPlainTextEdit, QWidget
 
         from paper_organizer.application.ai_settings import AiSettingsController
         from paper_organizer import __version__
+        from paper_organizer.application.lifecycle import LifecycleSettingsController
         from paper_organizer.application.library_workflow import (
             EditablePaperMetadata,
             LibraryWorkflowController,
@@ -123,6 +186,10 @@ class UiSmokeTests(unittest.TestCase):
             store = MemorySecretStore()
             ai_controller = AiSettingsController(store, path)
             workflow_controller = LibraryWorkflowController(path)
+            lifecycle_controller = LifecycleSettingsController(
+                path,
+                MemoryLoginStartup(),
+            )
             with mock.patch.object(
                 ai_controller,
                 "installed_ollama_models",
@@ -130,7 +197,11 @@ class UiSmokeTests(unittest.TestCase):
             ):
                 dialog = AiSettingsDialog(ai_controller)
             model_dialog = OllamaModelDialog(ai_controller)
-            window = PaperOrganizerWindow(ai_controller, workflow_controller)
+            window = PaperOrganizerWindow(
+                ai_controller,
+                workflow_controller,
+                lifecycle=lifecycle_controller,
+            )
             splash = create_splash()
 
             self.assertEqual(dialog.key_edit.echoMode(), QLineEdit.Password)
@@ -139,7 +210,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(
                 dialog.windowTitle(),
-                "요약 엔진 옵션 · 논문 프롬프트 v9 · 특허 v1",
+                "요약 엔진 옵션 · 실험논문 v10 · 리뷰논문 v4 · 특허 v1",
             )
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)
@@ -175,6 +246,11 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(
                 dialog.local_model_group.title(),
                 "모델 선택·Ollama 설치 및 삭제",
+            )
+            self.assertFalse(hasattr(dialog, "model_candidates"))
+            self.assertEqual(
+                dialog.local_model_group.findChildren(QPlainTextEdit),
+                [],
             )
             self.assertLessEqual(dialog.minimumWidth(), 620)
             self.assertLessEqual(window.minimumSizeHint().width(), 1400)
@@ -245,30 +321,74 @@ class UiSmokeTests(unittest.TestCase):
             ribbon_actions = [
                 action.text()
                 for action in ribbon.actions()
-                if not action.isSeparator()
+                if not action.isSeparator() and action.text()
             ]
             self.assertEqual(
                 ribbon_actions,
                 [
                     "새 PDF",
                     "분석 큐",
-                    "검색",
                     "감시 설정",
                     "AI 설정",
-                    "모델",
-                    "PDF 환원",
-                    "재구축",
-                    "마이그레이션",
                     "업데이트",
                     "단축키",
                     "정보",
                 ],
             )
+            ribbon_menus = [
+                button.text()
+                for button in ribbon.findChildren(QToolButton)
+                if button.menu() is not None
+            ]
+            self.assertEqual(
+                ribbon_menus,
+                ["sPDF", "AI 번역", "PaperPack", "삭제", "재요약"],
+            )
+            reanalysis_menu = next(
+                button.menu()
+                for button in ribbon.findChildren(QToolButton)
+                if button.text() == "재요약"
+            )
+            self.assertEqual(
+                [
+                    action.text()
+                    for action in reanalysis_menu.actions()
+                    if not action.isSeparator()
+                ],
+                ["선택 재요약", "전체 재요약"],
+            )
+            paperpack_menu = next(
+                button.menu()
+                for button in ribbon.findChildren(QToolButton)
+                if button.text() == "PaperPack"
+            )
+            paperpack_visible_actions = [
+                action.text()
+                for action in paperpack_menu.actions()
+                if action.isVisible() and not action.isSeparator()
+            ]
+            self.assertEqual(
+                paperpack_visible_actions,
+                ["적용", "폐기", "PDF 환원…", "검색 색인 재구축"],
+            )
+            with mock.patch.object(
+                workflow_controller,
+                "legacy_migration_preview",
+                return_value=SimpleNamespace(candidates=(object(), object())),
+            ):
+                window._check_legacy_migration_candidates()
+            self.assertIn("구버전 PaperPack 2개", window.statusBar().currentMessage())
+            paperpack_visible_actions = [
+                action.text()
+                for action in paperpack_menu.actions()
+                if action.isVisible() and not action.isSeparator()
+            ]
+            self.assertIn("고급", paperpack_visible_actions)
             self.assertTrue(
                 all(
                     not action.icon().isNull()
                     for action in ribbon.actions()
-                    if not action.isSeparator()
+                    if not action.isSeparator() and action.text()
                 )
             )
             self.assertIs(new_pdf_popup.parent(), window)
@@ -277,8 +397,21 @@ class UiSmokeTests(unittest.TestCase):
             self.assertFalse(bool(analysis_popup.windowFlags() & Qt.Tool))
             window.show()
             self.app.processEvents()
+            stable_size = window.size()
+            window._analysis_progress_changed("분석 큐 대기 1 · 실패 0", True)
+            self.app.processEvents()
+            self.assertEqual(window.size(), stable_size)
+            self.assertEqual(window._analysis_progress_bar.minimum(), 0)
+            self.assertEqual(window._analysis_progress_bar.maximum(), 0)
+            window._analysis_progress_changed("분석 큐 대기 0 · 실패 0", False)
+            self.app.processEvents()
+            self.assertEqual(window.size(), stable_size)
+            self.assertEqual(window._analysis_progress_bar.minimum(), 0)
+            self.assertEqual(window._analysis_progress_bar.maximum(), 1)
+            self.assertEqual(window._analysis_progress_bar.maximumWidth(), 0)
             window.toggle_analysis_queue()
             self.app.processEvents()
+            self.assertEqual(window.size(), stable_size)
             self.assertTrue(analysis_popup.isVisible())
             self.assertFalse(new_pdf_popup.isVisible())
             self.assertLessEqual(
@@ -293,6 +426,7 @@ class UiSmokeTests(unittest.TestCase):
             ) as scan_now:
                 window.show_new_pdf_review()
                 self.app.processEvents()
+                self.assertEqual(window.size(), stable_size)
                 self.assertTrue(new_pdf_popup.isVisible())
                 self.assertFalse(analysis_popup.isVisible())
                 scan_now.assert_not_called()
@@ -353,6 +487,7 @@ class UiSmokeTests(unittest.TestCase):
                 first_run_watch.assert_called_once_with(
                     workflow_controller,
                     window,
+                    lifecycle=lifecycle_controller,
                 )
                 first_run_engine.assert_called_once_with(
                     ai_controller,
@@ -395,6 +530,15 @@ class UiSmokeTests(unittest.TestCase):
                     & Qt.WindowContextHelpButtonHint
                 )
             )
+            content_layout = folder_dialog.layout().itemAt(0).layout()
+            self.assertEqual(content_layout.stretch(0), 2)
+            self.assertEqual(content_layout.stretch(1), 3)
+            research_panel = folder_dialog.findChild(
+                QWidget,
+                "researchCategoriesPanel",
+            )
+            self.assertIsNotNone(research_panel)
+            self.assertGreaterEqual(research_panel.minimumWidth(), 500)
             self.assertEqual(folder_dialog.watch_list.count(), 1)
             self.assertTrue(
                 folder_dialog.watch_list.item(0).text().endswith("Downloads")
@@ -402,7 +546,25 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(folder_dialog.interval_spin.value(), 300)
             self.assertFalse(folder_dialog.watch_subdirectories_check.isChecked())
             self.assertFalse(folder_dialog.remove_source_check.isChecked())
+            self.assertEqual(folder_dialog.focus_list_label.text(), "분야 선택 ↓")
+            self.assertEqual(folder_dialog.subcategory_list_label.text(), "세부분야")
+            self.assertGreaterEqual(folder_dialog.focus_list.minimumWidth(), 260)
+            self.assertGreaterEqual(
+                folder_dialog.subcategory_list.minimumWidth(),
+                200,
+            )
             initial_categories = folder_dialog.focus_list.count()
+            bioengineering_items = folder_dialog.focus_list.findItems(
+                "생물공학",
+                Qt.MatchExactly,
+            )
+            self.assertEqual(len(bioengineering_items), 1)
+            folder_dialog.focus_list.setCurrentItem(bioengineering_items[0])
+            subcategories = [
+                folder_dialog.subcategory_list.item(row).text()
+                for row in range(folder_dialog.subcategory_list.count())
+            ]
+            self.assertIn("단백질공학", subcategories)
             with mock.patch(
                 "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
                 return_value=("사용자 정의 분야", True),
@@ -414,6 +576,10 @@ class UiSmokeTests(unittest.TestCase):
             )
             custom_item = folder_dialog.focus_list.currentItem()
             self.assertEqual(custom_item.text(), "사용자 정의 분야")
+            self.assertEqual(
+                folder_dialog.subcategory_list.item(0).text(),
+                "세부분야 없음",
+            )
             with mock.patch(
                 "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
                 return_value=("수정된 연구분야", True),
@@ -1206,6 +1372,27 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(routed, [str(paperpack)])
             widget.close()
 
+    def test_analysis_queue_idle_worker_does_not_emit_busy_progress(self):
+        from paper_organizer.ui.library_workflow_widget import AnalysisQueueWidget
+
+        class FakeController:
+            def analysis_queue(self):
+                return []
+
+        widget = AnalysisQueueWidget(FakeController())
+        events = []
+        widget.analysis_progress.connect(lambda message, busy: events.append(busy))
+
+        widget._analysis_running = True
+        widget._current_analysis_title = ""
+        widget._emit_progress()
+        self.assertEqual(events[-1], False)
+
+        widget._current_analysis_title = "Queued paper"
+        widget._emit_progress()
+        self.assertEqual(events[-1], True)
+        widget.close()
+
     def test_first_run_requires_an_explicit_close_choice(self):
         from PyQt5.QtWidgets import QDialog
 
@@ -1235,11 +1422,58 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(controller.settings().first_run_completed)
             self.assertEqual(controller.settings().close_behavior, "background")
 
+    def test_lifecycle_settings_live_in_folder_settings_dialog(self):
+        from PyQt5.QtWidgets import QDialog
+
+        from paper_organizer.application.lifecycle import LifecycleSettingsController
+        from paper_organizer.application.library_workflow import LibraryWorkflowController
+        from paper_organizer.ui.folder_settings_dialog import FolderSettingsDialog
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            watch = root / "watch"
+            library = root / "library"
+            watch.mkdir()
+            workflow_controller = LibraryWorkflowController(settings_path)
+            workflow_controller.save_paths(
+                watch,
+                library,
+                auto_enabled=True,
+                resource_profile="eco",
+                scan_interval_seconds=300,
+                watch_folders=[watch],
+            )
+            startup = MemoryLoginStartup()
+            lifecycle_controller = LifecycleSettingsController(
+                settings_path,
+                startup,
+            )
+            dialog = FolderSettingsDialog(
+                workflow_controller,
+                lifecycle=lifecycle_controller,
+            )
+
+            self.assertIsNotNone(dialog.start_with_windows_check)
+            self.assertFalse(dialog.start_with_windows_check.isChecked())
+            self.assertTrue(dialog.quit_radio.isChecked())
+            dialog.start_with_windows_check.setChecked(True)
+            dialog.background_radio.setChecked(True)
+            dialog._save()
+
+            self.assertEqual(dialog.result(), QDialog.Accepted)
+            self.assertTrue(startup.enabled)
+            self.assertTrue(lifecycle_controller.settings().start_with_windows)
+            self.assertEqual(
+                lifecycle_controller.settings().close_behavior,
+                "background",
+            )
+            dialog.close()
+
     def test_selecting_same_library_path_renders_analysis_immediately(self):
         from PyQt5.QtCore import QItemSelectionModel
         from PyQt5.QtWidgets import (
             QAbstractItemView,
-            QHBoxLayout,
             QMenu,
             QMessageBox,
             QWidget,
@@ -1361,6 +1595,14 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(widget.permanent_delete_button.text(), "완전 삭제")
             self.assertEqual(widget.reanalyze_selected_button.text(), "선택 재요약")
             self.assertEqual(widget.reanalyze_all_button.text(), "전체 재요약")
+            self.assertEqual(widget.paperpack_manage_button.text(), "PaperPack 관리")
+            self.assertEqual(
+                [
+                    action.text()
+                    for action in widget.paperpack_manage_button.menu().actions()
+                ],
+                ["PDF 환원…", "검색 색인 재구축", "구버전 PaperPack 마이그레이션"],
+            )
             self.assertEqual(widget.library_title_label.text(), "라이브러리")
             self.assertEqual(widget.library_count_label.text(), "문서 2개")
             self.assertNotIn("라이브러리 문서", widget.status_label.text())
@@ -1373,12 +1615,17 @@ class UiSmokeTests(unittest.TestCase):
                 widget.permanent_delete_button,
                 widget.reanalyze_selected_button,
                 widget.reanalyze_all_button,
+                widget.paperpack_manage_button,
+            }
+            index_actions = {
+                widget.save_button,
                 widget.approve_category_button,
             }
-            action_rows = []
+            index_action_rows = []
+            root_action_rows = []
             for index in range(widget.layout().count()):
                 row_layout = widget.layout().itemAt(index).layout()
-                if not isinstance(row_layout, QHBoxLayout):
+                if row_layout is None:
                     continue
                 row_buttons = {
                     row_layout.itemAt(column).widget()
@@ -1386,8 +1633,12 @@ class UiSmokeTests(unittest.TestCase):
                     if row_layout.itemAt(column).widget() is not None
                 }
                 if row_buttons & action_buttons:
-                    action_rows.append(row_buttons & action_buttons)
-            self.assertEqual(action_rows, [action_buttons])
+                    root_action_rows.append(row_buttons & action_buttons)
+                if row_buttons & index_actions:
+                    index_action_rows.append(row_buttons & index_actions)
+            self.assertEqual(root_action_rows, [])
+            self.assertEqual(index_action_rows, [])
+            self.assertEqual(widget.approve_category_button.text(), "분야 없음")
             self.assertEqual(
                 widget.open_with_ai_button.text(),
                 "sPDF + AI",
@@ -1482,7 +1733,12 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("선택 영역 창 다시 열기", context_actions)
             self.assertIn("편집본을 PaperPack에 적용", context_actions)
             self.assertIn("편집본 폐기", context_actions)
+            self.assertIn("AI 추천 연구분야 없음", context_actions)
             self.assertIn("전체 논문 재요약", context_actions)
+            self.assertLess(
+                context_actions.index("AI 추천 연구분야 없음"),
+                context_actions.index("선택 논문 재요약"),
+            )
             self.assertTrue(
                 all(
                     not action.icon().isNull()

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
-from PyQt5.QtWidgets import QAction, QApplication, QStyleFactory, QToolButton
+from PyQt5.QtWidgets import (
+    QAction,
+    QApplication,
+    QStyleFactory,
+    QToolButton,
+)
 
 
 _THEME_PROPERTY = "paperOrganizerFluentThemeApplied"
@@ -83,6 +88,10 @@ def apply_fluent_theme(app: QApplication | None) -> None:
 
         QMainWindow, QDialog {
             background: #f7f7f7;
+        }
+
+        QLabel {
+            background: transparent;
         }
 
         QMenuBar {
@@ -190,7 +199,7 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             subcontrol-origin: margin;
             subcontrol-position: top left;
             color: #5f5f5f;
-            background: #f7f7f7;
+            background: transparent;
             padding: 0 4px;
             left: 8px;
             font-weight: 600;
@@ -238,6 +247,14 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             padding: 5px;
         }
 
+        QComboBox {
+            padding-right: 34px;
+        }
+
+        QSpinBox, QDoubleSpinBox {
+            padding-right: 22px;
+        }
+
         QTextBrowser, QTextEdit, QPlainTextEdit {
             selection-background-color: #e4e4e4;
         }
@@ -249,15 +266,83 @@ def apply_fluent_theme(app: QApplication | None) -> None:
         }
 
         QComboBox::drop-down {
-            width: 26px;
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 28px;
             border: 0;
+            background: transparent;
+        }
+
+        QComboBox::drop-down:hover {
+            background: #f3f3f3;
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
         }
 
         QComboBox::down-arrow {
             image: none;
             border: 0;
-            width: 0;
-            height: 0;
+            width: 8px;
+            height: 6px;
+            margin-right: 8px;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid #5f5f5f;
+        }
+
+        QComboBox::down-arrow:disabled {
+            border-top-color: #a6a6a6;
+        }
+
+        QSpinBox::up-button, QDoubleSpinBox::up-button,
+        QSpinBox::down-button, QDoubleSpinBox::down-button {
+            subcontrol-origin: border;
+            width: 18px;
+            border: 0;
+            background: transparent;
+        }
+
+        QSpinBox::up-button, QDoubleSpinBox::up-button {
+            subcontrol-position: top right;
+        }
+
+        QSpinBox::down-button, QDoubleSpinBox::down-button {
+            subcontrol-position: bottom right;
+        }
+
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+            background: #f3f3f3;
+        }
+
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+            image: none;
+            border: 0;
+            width: 6px;
+            height: 4px;
+            margin-bottom: 1px;
+            border-left: 3px solid transparent;
+            border-right: 3px solid transparent;
+            border-bottom: 4px solid #6f6f6f;
+        }
+
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+            image: none;
+            border: 0;
+            width: 6px;
+            height: 4px;
+            margin-top: 1px;
+            border-left: 3px solid transparent;
+            border-right: 3px solid transparent;
+            border-top: 4px solid #6f6f6f;
+        }
+
+        QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
+            border-bottom-color: #a6a6a6;
+        }
+
+        QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
+            border-top-color: #a6a6a6;
         }
 
         QHeaderView::section {

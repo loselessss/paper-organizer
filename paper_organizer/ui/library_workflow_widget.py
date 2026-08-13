@@ -35,12 +35,14 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QMenu,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -147,7 +149,12 @@ def _analysis_version_label(record: dict) -> str:
     marker = next(
         (
             value
-            for value in ("paper-summary-v", "patent-summary-v")
+            for value in (
+                "research-summary-v",
+                "review-summary-v",
+                "paper-summary-v",
+                "patent-summary-v",
+            )
             if value in prompt_version
         ),
         "",
@@ -427,13 +434,25 @@ class _ScanWorker(QThread):
     failed = pyqtSignal(str)
     progress = pyqtSignal(str)
 
-    def __init__(self, controller: LibraryWorkflowController, parent=None) -> None:
+    def __init__(
+        self,
+        controller: LibraryWorkflowController,
+        parent=None,
+        *,
+        require_previous_observation: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._controller = controller
+        self._require_previous_observation = require_previous_observation
 
     def run(self) -> None:
         try:
-            self.completed.emit(self._controller.scan(progress=self.progress.emit))
+            self.completed.emit(
+                self._controller.scan(
+                    progress=self.progress.emit,
+                    require_previous_observation=self._require_previous_observation,
+                )
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -805,10 +824,15 @@ class CollectionReviewWidget(QWidget):
     def scan_now(self, schedule_followup: bool = True) -> None:
         if self.is_busy():
             return
-        self._schedule_followup = schedule_followup
+        manual_request = schedule_followup
+        self._schedule_followup = False
         self.scan_button.setEnabled(False)
         self.status_label.setText("PDF 안정성과 본문 지문을 확인하고 있습니다…")
-        worker = _ScanWorker(self._controller, self)
+        worker = _ScanWorker(
+            self._controller,
+            self,
+            require_previous_observation=not manual_request,
+        )
         worker.completed.connect(self._scan_ready)
         worker.failed.connect(self._scan_failed)
         worker.progress.connect(self.status_label.setText)
@@ -1386,7 +1410,7 @@ class AnalysisQueueWidget(QWidget):
         )
         analyzing = sum(1 for item in self._items if item.status == "analyzing")
         failed = sum(1 for item in self._items if item.status == "failed")
-        busy = self._analysis_running or analyzing > 0
+        busy = bool(self._current_analysis_title) or analyzing > 0
         counts = f"대기 {waiting} · 실패 {failed}"
         if busy and self._current_analysis_title:
             message = f"분석 중: {self._current_analysis_title} ({counts})"
@@ -1861,6 +1885,10 @@ class LibraryWidget(QWidget):
     reanalysis_queued = pyqtSignal(int)
     translation_queued = pyqtSignal(int)
     natural_search_requested = pyqtSignal(str)
+    pdf_export_requested = pyqtSignal()
+    search_rebuild_requested = pyqtSignal()
+    legacy_migration_requested = pyqtSignal()
+    actions_changed = pyqtSignal()
 
     def __init__(
         self,
@@ -1959,11 +1987,28 @@ class LibraryWidget(QWidget):
         detail_layout.addWidget(self.form)
         self.type_suggestion_label = QLabel()
         self.type_suggestion_label.setWordWrap(True)
+        self.type_suggestion_label.setFixedHeight(
+            self.type_suggestion_label.fontMetrics().lineSpacing() * 2 + 6
+        )
         detail_layout.addWidget(self.type_suggestion_label)
-        edit_actions = QHBoxLayout()
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
+        self.save_button.setToolTip("현재 색인 편집 내용을 저장하고 통합 색인을 다시 만듭니다.")
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        self.approve_category_button = QPushButton("분야 승인")
+        self.approve_category_button.setToolTip("AI 추천 연구분야를 승인하고 다시 분석합니다.")
+        save_row.addWidget(self.approve_category_button)
+        save_row.addWidget(self.save_button)
+        detail_layout.addLayout(save_row)
         self.open_with_ai_button = QPushButton("sPDF + AI")
         self.open_with_ai_button.setToolTip("AI 번역/요약 창과 함께 sPDF를 엽니다.")
+        self.open_button = QPushButton("sPDF")
+        self.open_button.setToolTip("선택한 논문을 sPDF로 엽니다.")
+        self.selection_ai_button = QPushButton("선택 AI")
+        self.selection_ai_button.setToolTip(
+            "sPDF에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
+            "닫은 창을 다시 열 때 사용하세요."
+        )
         self.translation_button = QPushButton("AI 번역")
         self.translation_button.setCheckable(True)
         self.translation_button.setToolTip(
@@ -1974,53 +2019,6 @@ class LibraryWidget(QWidget):
         self.restore_translation_button.setEnabled(False)
         self.restore_translation_button.setToolTip(
             "PaperPack에 한 건만 보관한 직전 AI 번역으로 되돌립니다."
-        )
-        decorate_button(self.save_button, "save", role="primary")
-        decorate_button(self.open_with_ai_button, "ai")
-        decorate_button(self.translation_button, "translate")
-        decorate_button(self.restore_translation_button, "restore")
-        self.translation_button.toggled.connect(self._translation_toggled)
-        self.restore_translation_button.clicked.connect(
-            self._restore_previous_translation
-        )
-        self.save_button.clicked.connect(self._save_selected)
-        self.save_button.setEnabled(False)
-        edit_actions.addStretch(1)
-        edit_actions.addWidget(self.open_with_ai_button)
-        edit_actions.addWidget(self.restore_translation_button)
-        edit_actions.addWidget(self.translation_button)
-        edit_actions.addWidget(self.save_button)
-        detail_layout.addLayout(edit_actions)
-        analysis_group = QGroupBox("AI 분석 내용")
-        analysis_layout = QVBoxLayout(analysis_group)
-        self.analysis_view = QTextBrowser()
-        self.analysis_view.setOpenExternalLinks(False)
-        self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
-        analysis_layout.addWidget(self.analysis_view)
-        detail_layout.addWidget(analysis_group, 1)
-
-        splitter = QSplitter(Qt.Horizontal)
-        self.library_splitter = splitter
-        splitter.addWidget(self.table)
-        splitter.addWidget(detail_panel)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        splitter.setChildrenCollapsible(True)
-        splitter.setCollapsible(0, True)
-        splitter.setCollapsible(1, True)
-        self.table.setMinimumWidth(0)
-        detail_panel.setMinimumWidth(0)
-        splitter.setSizes([640, 640])
-        root.addWidget(splitter, 1)
-        self._render_analysis(None)
-        actions = QHBoxLayout()
-        actions.setSpacing(6)
-        self.open_button = QPushButton("sPDF")
-        self.open_button.setToolTip("선택한 논문을 sPDF로 엽니다.")
-        self.selection_ai_button = QPushButton("선택 AI")
-        self.selection_ai_button.setToolTip(
-            "sPDF에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
-            "닫은 창을 다시 열 때 사용하세요."
         )
         self.apply_pdf_button = QPushButton("적용")
         self.apply_pdf_button.setToolTip("sPDF 편집본을 PaperPack에 적용합니다.")
@@ -2034,10 +2032,28 @@ class LibraryWidget(QWidget):
         self.reanalyze_selected_button.setToolTip("선택한 논문을 다시 요약합니다.")
         self.reanalyze_all_button = QPushButton("전체 재요약")
         self.reanalyze_all_button.setToolTip("현재 라이브러리의 모든 논문을 다시 요약합니다.")
-        self.approve_category_button = QPushButton("분야 승인")
-        self.approve_category_button.setToolTip("AI 추천 연구분야를 승인하고 다시 분석합니다.")
+        self.paperpack_manage_button = QToolButton()
+        self.paperpack_manage_button.setText("PaperPack 관리")
+        self.paperpack_manage_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.paperpack_manage_button.setPopupMode(QToolButton.InstantPopup)
+        self.paperpack_manage_button.setToolTip("PDF 환원, 검색 색인 재구축, 구버전 마이그레이션")
+        manage_menu = QMenu(self.paperpack_manage_button)
+        pdf_export_action = manage_menu.addAction("PDF 환원…")
+        decorate_action(pdf_export_action, "pdf")
+        pdf_export_action.triggered.connect(self.pdf_export_requested.emit)
+        rebuild_action = manage_menu.addAction("검색 색인 재구축")
+        decorate_action(rebuild_action, "refresh")
+        rebuild_action.triggered.connect(self.search_rebuild_requested.emit)
+        migration_action = manage_menu.addAction("구버전 PaperPack 마이그레이션")
+        decorate_action(migration_action, "archive")
+        migration_action.triggered.connect(self.legacy_migration_requested.emit)
+        self.paperpack_manage_button.setMenu(manage_menu)
+        decorate_button(self.save_button, "save", role="primary")
         decorate_button(self.open_button, "open")
+        decorate_button(self.open_with_ai_button, "ai")
         decorate_button(self.selection_ai_button, "ai")
+        decorate_button(self.translation_button, "translate")
+        decorate_button(self.restore_translation_button, "restore")
         decorate_button(self.apply_pdf_button, "save", role="primary")
         decorate_button(self.discard_pdf_button, "cancel")
         decorate_button(self.delete_button, "delete")
@@ -2045,6 +2061,13 @@ class LibraryWidget(QWidget):
         decorate_button(self.reanalyze_selected_button, "refresh")
         decorate_button(self.reanalyze_all_button, "refresh")
         decorate_button(self.approve_category_button, "check", role="primary")
+        decorate_button(self.paperpack_manage_button, "archive")
+        self.translation_button.toggled.connect(self._translation_toggled)
+        self.restore_translation_button.clicked.connect(
+            self._restore_previous_translation
+        )
+        self.save_button.clicked.connect(self._save_selected)
+        self.save_button.setEnabled(False)
         self.open_button.clicked.connect(self._open_selected)
         self.open_with_ai_button.clicked.connect(self._open_selected_with_ai)
         self.selection_ai_button.clicked.connect(
@@ -2069,29 +2092,35 @@ class LibraryWidget(QWidget):
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
         self.approve_category_button.setEnabled(False)
-        actions.addWidget(self.open_button)
-        actions.addWidget(self.selection_ai_button)
-        actions.addWidget(self.apply_pdf_button)
-        actions.addWidget(self.discard_pdf_button)
-        actions.addWidget(self.delete_button)
-        actions.addWidget(self.permanent_delete_button)
-        actions.addWidget(self.reanalyze_selected_button)
-        actions.addWidget(self.reanalyze_all_button)
-        actions.addWidget(self.approve_category_button)
-        actions.addStretch(1)
-        root.addLayout(actions)
-        for button in (
-            self.open_button,
-            self.selection_ai_button,
-            self.apply_pdf_button,
-            self.discard_pdf_button,
-            self.delete_button,
-            self.permanent_delete_button,
-            self.reanalyze_selected_button,
-            self.reanalyze_all_button,
-            self.approve_category_button,
-        ):
-            button.setMaximumWidth(118)
+        analysis_group = QGroupBox("AI 분석 내용")
+        analysis_layout = QVBoxLayout(analysis_group)
+        self.analysis_view = QTextBrowser()
+        self.analysis_view.setOpenExternalLinks(False)
+        self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.analysis_view.setMinimumHeight(80)
+        analysis_layout.addWidget(self.analysis_view)
+        detail_layout.addWidget(analysis_group, 1)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.library_splitter = splitter
+        splitter.addWidget(self.table)
+        detail_scroll = QScrollArea()
+        detail_scroll.setWidgetResizable(True)
+        detail_scroll.setMinimumWidth(0)
+        detail_scroll.setMinimumHeight(0)
+        detail_scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        detail_scroll.setWidget(detail_panel)
+        splitter.addWidget(detail_scroll)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setChildrenCollapsible(True)
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, True)
+        self.table.setMinimumWidth(0)
+        detail_panel.setMinimumWidth(0)
+        splitter.setSizes([640, 640])
+        root.addWidget(splitter, 1)
+        self._render_analysis(None)
         self.refresh()
 
     def _search_text_changed(self, text: str) -> None:
@@ -2403,6 +2432,7 @@ class LibraryWidget(QWidget):
         self._update_translation_button(entry)
         self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entries)
+        self.actions_changed.emit()
 
     def _update_translation_button(self, entry: LibraryEntry | None) -> None:
         queued = bool(
@@ -2433,6 +2463,7 @@ class LibraryWidget(QWidget):
             self.translation_button.setText("AI 번역 보기")
         else:
             self.translation_button.setText("AI 번역")
+        self.actions_changed.emit()
 
     def _translation_toggled(self, checked: bool) -> None:
         entry = self._selected()
@@ -2465,6 +2496,7 @@ class LibraryWidget(QWidget):
             return
         self._update_translation_button(entry)
         self._render_analysis(entry)
+        self.actions_changed.emit()
 
     def _restore_previous_translation(self) -> None:
         entry = self._selected()
@@ -2885,6 +2917,7 @@ class LibraryWidget(QWidget):
                 has_working_copy = True
                 break
         self.discard_pdf_button.setEnabled(has_working_copy)
+        self.actions_changed.emit()
 
     def _save_selected(self) -> None:
         entry = self._selected()
@@ -2935,15 +2968,6 @@ class LibraryWidget(QWidget):
         decorate_action(discard_pdf_action, "cancel")
         discard_pdf_action.setEnabled(self.discard_pdf_button.isEnabled())
         discard_pdf_action.triggered.connect(self._discard_pdf_edit)
-        menu.addSeparator()
-        reanalyze_action = menu.addAction("선택 논문 재요약")
-        decorate_action(reanalyze_action, "refresh")
-        reanalyze_action.setEnabled(self.reanalyze_selected_button.isEnabled())
-        reanalyze_action.triggered.connect(self._reanalyze_selected)
-        reanalyze_all_action = menu.addAction("전체 논문 재요약")
-        decorate_action(reanalyze_all_action, "refresh")
-        reanalyze_all_action.setEnabled(self.reanalyze_all_button.isEnabled())
-        reanalyze_all_action.triggered.connect(self._reanalyze_all)
         if len(entries) == 1:
             suggestion = str(
                 entries[0].record.get("analysis", {}).get("suggested_category")
@@ -2957,6 +2981,15 @@ class LibraryWidget(QWidget):
             decorate_action(approve_action, "check")
             approve_action.setEnabled(bool(suggestion))
             approve_action.triggered.connect(self._approve_category)
+        menu.addSeparator()
+        reanalyze_action = menu.addAction("선택 논문 재요약")
+        decorate_action(reanalyze_action, "refresh")
+        reanalyze_action.setEnabled(self.reanalyze_selected_button.isEnabled())
+        reanalyze_action.triggered.connect(self._reanalyze_selected)
+        reanalyze_all_action = menu.addAction("전체 논문 재요약")
+        decorate_action(reanalyze_all_action, "refresh")
+        reanalyze_all_action.setEnabled(self.reanalyze_all_button.isEnabled())
+        reanalyze_all_action.triggered.connect(self._reanalyze_all)
         menu.addSeparator()
         delete_action = menu.addAction("선택 항목을 앱 휴지통으로 이동…")
         decorate_action(delete_action, "delete")

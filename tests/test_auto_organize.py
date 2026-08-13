@@ -6,10 +6,12 @@ from pathlib import Path
 
 import fitz
 
+from paper_organizer.application.bibliography_lookup import VerifiedBibliography
 from paper_organizer.application.library_workflow import (
     EditablePaperMetadata,
     LibraryWorkflowController,
     _apply_patent_metadata,
+    _metadata_from_record,
 )
 from paper_organizer.core.paperpack import load_paperpack_metadata
 from paper_organizer.infra.settings import load_settings, save_settings
@@ -31,6 +33,16 @@ def protein_pages() -> list[str]:
         "Results The engineered enzyme retained activity at elevated temperature.\n"
         "References 1. Smith et al. protein engineering review.",
     ]
+
+
+class FakeBibliographyLookup:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def verify(self, *, title, doi="", page_texts=()):
+        self.calls.append((title, doi, tuple(page_texts)))
+        return self.result
 
 
 def write_pdf(path: Path, pages: list[str]) -> None:
@@ -215,12 +227,61 @@ class AutoOrganizeTests(unittest.TestCase):
         self.assertNotIn("국제특허분류", metadata.title)
         self.assertNotIn("요약", metadata.title)
 
-    def _controller(self, root: Path, *, auto_organize: bool = True):
+    def test_korean_patent_space_separated_inventors_are_split(self):
+        metadata = _apply_patent_metadata(
+            EditablePaperMetadata(title="fallback"),
+            [
+                "(19) 대한민국특허청(KR)\n"
+                "(11) 공개번호 10-2016-0110806\n"
+                "(54) 발명의 명칭\n"
+                "FFPE 조직에서 핵산의 분리 방법\n"
+                "(71) 출원인\n"
+                "재단법인 아산사회복지재단\n"
+                "울산대학교 산학협력단\n"
+                "(72) 발명자\n"
+                "장세진 천성민 김태임 이정신 최은경\n"
+                "(21) 출원번호 10-2015-0034697\n"
+                "(43) 공개일자 2016년09월22일\n"
+            ],
+        )
+
+        self.assertEqual(metadata.title, "FFPE 조직에서 핵산의 분리 방법")
+        self.assertEqual(
+            metadata.authors,
+            ["장세진", "천성민", "김태임", "이정신", "최은경"],
+        )
+
+    def test_saved_korean_patent_author_string_is_split_for_display(self):
+        metadata = _metadata_from_record(
+            {
+                "document": {"type": "patent"},
+                "bibliography": {
+                    "title": "FFPE 조직에서 핵산의 분리 방법",
+                    "authors": ["장세진 천성민 김태임 이정신 최은경"],
+                },
+            }
+        )
+
+        self.assertEqual(
+            metadata.authors,
+            ["장세진", "천성민", "김태임", "이정신", "최은경"],
+        )
+
+    def _controller(
+        self,
+        root: Path,
+        *,
+        auto_organize: bool = True,
+        bibliography_lookup=None,
+    ):
         input_dir = root / "downloads"
         library = root / "library"
         input_dir.mkdir()
         settings_path = root / "settings.json"
-        controller = LibraryWorkflowController(settings_path)
+        controller = LibraryWorkflowController(
+            settings_path,
+            bibliography_lookup=bibliography_lookup,
+        )
         controller.save_paths(
             input_dir,
             library,
@@ -270,6 +331,46 @@ class AutoOrganizeTests(unittest.TestCase):
             self.assertEqual(result.auto_organized, ())
             self.assertEqual(list((library / "papers").rglob("*.paperpack")), [])
             self.assertEqual(controller.analysis_queue()[0].status, "pending_review")
+
+    def test_external_bibliography_verification_fills_weak_authors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lookup = FakeBibliographyLookup(
+                VerifiedBibliography(
+                    title="Directed evolution of a thermostable enzyme scaffold",
+                    authors=("Mina Vale", "Theo Karst"),
+                    year=2019,
+                    venue="Journal of Molecular Biology",
+                    doi="10.1016/j.jmb.2019.01.001",
+                    source="verified:crossref",
+                    score=0.98,
+                    matched_identifier="doi:10.1016/j.jmb.2019.01.001",
+                )
+            )
+            controller, input_dir, _library = self._controller(
+                root,
+                auto_organize=False,
+                bibliography_lookup=lookup,
+            )
+            write_pdf(input_dir / "paper.pdf", protein_pages())
+
+            controller.scan()
+            item = controller.scan().items[0]
+
+            self.assertEqual(item.metadata.authors, ["Mina Vale", "Theo Karst"])
+            self.assertEqual(item.metadata.year, 2019)
+            self.assertEqual(item.metadata.venue, "Journal of Molecular Biology")
+            organized = controller.organize(item, controller.suggest_metadata(item))
+            record = load_paperpack_metadata(organized.pdf_path)
+            self.assertEqual(
+                record["curation"]["field_sources"]["bibliography.authors"],
+                "verified:crossref",
+            )
+            self.assertEqual(
+                record["provenance"]["bibliography"]["matched_identifier"],
+                "doi:10.1016/j.jmb.2019.01.001",
+            )
+            self.assertTrue(lookup.calls)
 
     def test_duplicate_candidates_stay_for_human_review(self):
         with tempfile.TemporaryDirectory() as temp:

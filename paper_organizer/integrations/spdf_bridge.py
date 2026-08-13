@@ -101,7 +101,7 @@ def open_pdf(
     _ensure_import_path()
     try:
         from PyQt5.QtWidgets import QApplication
-        from pdfeditor.app import AppWindow
+        from pdfeditor.app import new_window
     except ImportError as exc:
         raise SpdfUnavailable("sPDF를 열려면 PyQt5 런타임이 필요합니다.") from exc
     if QApplication.instance() is None:
@@ -121,7 +121,7 @@ def open_pdf(
             _attach_selection(tab, document_id, selection_callback)
             return window
 
-    window = AppWindow()
+    window = new_window()
     window.destroyed.connect(lambda: _forget_window(window))
     tab = window.open_in_tab(str(pdf_path))
     _attach_selection(tab, document_id, selection_callback)

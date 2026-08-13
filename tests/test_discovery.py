@@ -23,6 +23,17 @@ class DiscoveryTests(unittest.TestCase):
             stable = tracker.scan(root)
             self.assertEqual([item.path for item in stable], [pdf])
 
+    def test_manual_scan_can_accept_first_stable_observation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf = root / "paper.pdf"
+            self._old_file(pdf, b"%PDF-1.7\nplaceholder")
+            tracker = DiscoveryTracker()
+
+            stable = tracker.scan(root, require_previous_observation=False)
+
+            self.assertEqual([item.path for item in stable], [pdf])
+
     def test_ignores_partial_and_fake_pdfs(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
