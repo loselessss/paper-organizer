@@ -120,7 +120,10 @@ SYSTEM_INSTRUCTIONS = (
     "Use only the supplied document text. Keep Introduction, Materials and Methods, "
     "Results, and Discussion claims distinct. Treat REGEX-VALIDATED CANDIDATES as "
     "candidates that must still agree with the paper. Write summary as three to five "
-    "short paragraphs separated by blank lines, not as one wall of text. "
+    "short, bullet-ready points separated by blank lines, not as one wall of text. "
+    "Each summary point should be one concise sentence or sentence-like fragment "
+    "that can be displayed as a bullet. Do not include bullet characters, numbering, "
+    "or markdown in the summary string. "
     "Preserve technical names accurately. "
     "If evidence is missing, use an empty string or empty list instead of guessing. "
     "Do not summarize or analyze reference, bibliography, or works-cited entries, "
@@ -247,7 +250,7 @@ class SummaryRequest:
     document_text: str
     cloud_consent: bool = False
     max_output_tokens: int = 2_000
-    prompt_version: str = "research-summary-v10-direct"
+    prompt_version: str = "research-summary-v11-direct"
     allowed_categories: tuple[str, ...] = ()
     context_window: int | None = None
     output_language: str = "ko"
@@ -602,7 +605,8 @@ def system_instructions(request: SummaryRequest) -> str:
             "conservatively as one or two concise paragraphs without adding evidence, "
             "background, methods, results, limitations, or implications absent from it. "
             "Preserve every stated number, unit, comparison, negation, organism, material, "
-            "and named method exactly. Put the rewritten Abstract only in summary. Return "
+            "and named method exactly. Put the rewritten Abstract only in summary as "
+            "one or two short bullet-ready points without bullet characters. Return "
             "empty research_question, methods, keywords, and meta_tags; classification "
             "fields may still describe the Abstract's topic."
         )
@@ -622,7 +626,7 @@ def system_instructions(request: SummaryRequest) -> str:
                 "an explicitly stated search or selection method; otherwise list the concrete "
                 "literature domains surveyed without calling the review systematic, and make "
                 "clear that this is literature synthesis rather than a new controlled experiment. "
-                "In summary, write at least three evidence-dense sentences so separately stated "
+                "In summary, write at least three evidence-dense bullet-ready points so separately stated "
                 "major conclusions are not merged away. "
                 "Preserve named systems, organisms or populations, mechanisms, strategies, "
                 "process sequence, synergistic or integrated relationships, target applications, "
@@ -644,7 +648,7 @@ def system_instructions(request: SummaryRequest) -> str:
                 "and the essential experimental design, subjects or materials, treatments, "
                 "controls, conditions, and measurements in methods. Limit background to at "
                 "most one sentence. In summary, state the central approach briefly and then "
-                "write at least three evidence-dense result sentences before interpretation. "
+                "write at least three evidence-dense result points before interpretation. "
                 "Preserve every distinct primary endpoint and comparison separately, including "
                 "exact values, units, fold or percentage changes, time points, controls, "
                 "baselines, negative results, and whether evidence is in vitro, ex vivo, animal, "

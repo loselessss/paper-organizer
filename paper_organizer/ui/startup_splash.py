@@ -13,6 +13,7 @@ from paper_organizer.application.library_workflow import LibraryWorkflowControll
 
 
 CREATOR = "SANGKYU SHIN, Ph.D."
+UI_FONT_STACK = "'Malgun Gothic', 'Segoe UI'"
 
 
 class StartupLoader(QThread):
@@ -58,13 +59,13 @@ def create_splash() -> QSplashScreen:
     title = QLabel("Paper Organizer", panel)
     title.setGeometry(34, 18, 520, 48)
     title.setStyleSheet(
-        "color: white; background: transparent; font-family: 'Segoe UI'; "
+        f"color: white; background: transparent; font-family: {UI_FONT_STACK}; "
         "font-size: 25pt; font-weight: 700;"
     )
     version = QLabel(f"Version {__version__}", panel)
     version.setGeometry(36, 72, 300, 25)
     version.setStyleSheet(
-        "color: #bcefff; background: transparent; font-family: 'Segoe UI'; font-size: 11pt;"
+        f"color: #bcefff; background: transparent; font-family: {UI_FONT_STACK}; font-size: 11pt;"
     )
     creator = QLabel(f"Created by {CREATOR}", splash)
     creator.setObjectName("splashCreatorLabel")
@@ -74,7 +75,7 @@ def create_splash() -> QSplashScreen:
         "color: rgba(216, 228, 243, 190); "
         "background-color: rgba(4, 16, 37, 105); "
         "border-radius: 4px; padding: 1px 6px; "
-        "font-family: 'Segoe UI'; font-size: 8pt;"
+        f"font-family: {UI_FONT_STACK}; font-size: 8pt;"
     )
     splash.showMessage(
         "PaperPack과 기존 색인을 읽는 중…",

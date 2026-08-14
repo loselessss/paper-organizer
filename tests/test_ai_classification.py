@@ -176,7 +176,7 @@ class SystemInstructionTests(unittest.TestCase):
         self.assertIn("final pass over evidence summaries from a review paper", instructions)
         self.assertIn("Put the objective and scope in research_question", instructions)
         self.assertIn("without calling the review systematic", instructions)
-        self.assertIn("at least three evidence-dense sentences", instructions)
+        self.assertIn("at least three evidence-dense bullet-ready points", instructions)
         self.assertIn("synergistic or integrated relationships", instructions)
         self.assertIn("rather than a new controlled experiment", instructions)
         self.assertIn("evidence gaps in summary", instructions)
@@ -208,7 +208,7 @@ class SystemInstructionTests(unittest.TestCase):
 
         self.assertIn("tested question in research_question", instructions)
         self.assertIn("Limit background to at most one sentence", instructions)
-        self.assertIn("at least three evidence-dense result sentences", instructions)
+        self.assertIn("at least three evidence-dense result points", instructions)
         self.assertIn("every distinct primary endpoint", instructions)
         self.assertIn("experimental limitations in summary", instructions)
 

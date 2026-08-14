@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
+from PyQt5.QtGui import (
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
@@ -44,7 +51,6 @@ _GLYPHS = {
     "upload": "\ue898",
 }
 
-
 def apply_fluent_theme(app: QApplication | None) -> None:
     """Apply a calm Fluent 2 inspired theme to the Qt application."""
 
@@ -55,7 +61,8 @@ def apply_fluent_theme(app: QApplication | None) -> None:
     if "fusion" in available_styles:
         app.setStyle(QStyleFactory.create(available_styles["fusion"]))
 
-    font = QFont("Segoe UI", 9)
+    ui_font_family = "Malgun Gothic"
+    font = QFont(ui_font_family, 9)
     font.setStyleStrategy(QFont.PreferAntialias)
     app.setFont(font)
 
@@ -80,6 +87,7 @@ def apply_fluent_theme(app: QApplication | None) -> None:
     app.setStyleSheet(
         """
         QWidget {
+            font-family: "__UI_FONT_FAMILY__", "Segoe UI";
             color: #1f1f1f;
             background: #f7f7f7;
             selection-background-color: #e4e4e4;
@@ -132,7 +140,7 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             border: 0;
             border-bottom: 1px solid #e5e5e5;
             spacing: 4px;
-            padding: 6px 8px;
+            padding: 4px 8px;
         }
 
         QToolBar#commandRibbon::separator {
@@ -145,9 +153,10 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             background: transparent;
             border: 1px solid transparent;
             border-radius: 6px;
-            padding: 5px 9px;
+            padding: 4px 9px 5px 9px;
             min-width: 64px;
-            min-height: 42px;
+            min-height: 44px;
+            font-size: 8.5pt;
         }
 
         QToolBar#commandRibbon QToolButton:hover {
@@ -270,7 +279,12 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             alternate-background-color: #fafafa;
         }
 
-        QTableWidget::item, QListWidget::item {
+        QTableWidget::item {
+            border-radius: 0;
+            padding: 0;
+        }
+
+        QListWidget::item {
             border-radius: 4px;
             padding: 4px;
         }
@@ -396,6 +410,7 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             border-color: #e78f87;
         }
         """
+        .replace("__UI_FONT_FAMILY__", ui_font_family)
     )
     app.setProperty(_THEME_PROPERTY, True)
 

@@ -39,6 +39,9 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -238,12 +241,12 @@ def _analysis_html(sections: list[str] | str) -> str:
     body = "".join(sections) if isinstance(sections, list) else sections
     return (
         "<style>"
-        "body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; "
-        "font-size: 10pt; color: #1f1f1f; line-height: 1.38; }"
-        "h3 { font-size: 11pt; margin: 12px 0 5px; font-weight: 700; }"
-        "p { margin: 4px 0 7px; }"
-        "ul { margin: 4px 0 9px 20px; padding: 0; }"
-        "li { margin: 2px 0; }"
+        "body { font-family: 'Malgun Gothic', 'Segoe UI', sans-serif; "
+        "font-size: 10pt; color: #1f1f1f; line-height: 1.38; margin: 0; }"
+        "h3 { font-size: 11pt; margin: 12px 0 5px; font-weight: 600; }"
+        "p { margin: 3px 0 6px; }"
+        "p.bullet { margin: 2px 0 3px 0; }"
+        "p.meta { margin: 0; }"
         ".muted { color: #777; }"
         ".empty { color: #777; }"
         ".warning { color: #875f00; }"
@@ -264,6 +267,19 @@ def _format_library_date(value: str) -> str:
         return parsed.strftime("%Y-%m-%d")
     except ValueError:
         return text
+
+
+def _format_analysis_time(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return text.split(".", 1)[0]
 
 
 def _analysis_failed(record: dict) -> bool:
@@ -663,10 +679,16 @@ class MetadataForm(QGroupBox):
         if not title:
             self.setFlat(True)
             self.setStyleSheet(
-                "QGroupBox { border: 0; margin-top: 0; padding-top: 0; }"
+                "QGroupBox {"
+                " background: transparent;"
+                " border: 0;"
+                " margin-top: 0;"
+                " padding-top: 0;"
+                "}"
             )
         form = QFormLayout(self)
         self._form_layout = form
+        self._analysis_rows: list[tuple[QLabel, QTextBrowser]] = []
         form.setContentsMargins(
             0 if compact else 4 if not title else 12,
             0 if not title else 12,
@@ -674,6 +696,7 @@ class MetadataForm(QGroupBox):
             4,
         )
         form.setVerticalSpacing(4 if not title else 6)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.title_edit = QLineEdit()
         self.authors_edit = QLineEdit()
         self.authors_edit.setPlaceholderText("쉼표로 구분")
@@ -710,15 +733,18 @@ class MetadataForm(QGroupBox):
         self.publication_number_label = QLabel("출원/등록번호")
         self.application_number_label = QLabel("출원번호")
         self.assignee_label = QLabel("출원인/권리자")
+        self._venue_row_visible = True
+        self._patent_rows_visible = False
+        self._patent_rows = (
+            (self.patent_office_label, self.patent_office_edit),
+            (self.publication_number_label, self.publication_number_edit),
+            (self.assignee_label, self.assignee_edit),
+        )
         form.addRow("제목", self.title_edit)
         form.addRow("문서 유형", self.document_type_combo)
         form.addRow(self.authors_label, self.authors_edit)
         form.addRow("연도", self.year_edit)
         form.addRow(self.venue_label, self.venue_edit)
-        form.addRow(self.patent_office_label, self.patent_office_edit)
-        form.addRow(self.publication_number_label, self.publication_number_edit)
-        form.addRow(self.application_number_label, self.application_number_edit)
-        form.addRow(self.assignee_label, self.assignee_edit)
         if compact:
             category_row = QWidget()
             category_layout = QHBoxLayout(category_row)
@@ -726,11 +752,78 @@ class MetadataForm(QGroupBox):
             category_layout.setSpacing(6)
             category_layout.addWidget(self.category_edit, 1)
             category_layout.addWidget(self.subcategory_edit, 1)
-            form.addRow("분야/세부분야", category_row)
+            self.category_label = QLabel("분야/세부분야")
+            self.category_row = category_row
+            form.addRow(self.category_label, self.category_row)
         else:
-            form.addRow("분야", self.category_edit)
-            form.addRow("세부분야", self.subcategory_edit)
-            form.addRow("태그", self.tags_edit)
+            self.category_label = QLabel("분야")
+            self.subcategory_label = QLabel("세부분야")
+            self.tags_label = QLabel("태그")
+            self.category_row = self.category_edit
+            form.addRow(self.category_label, self.category_edit)
+            form.addRow(self.subcategory_label, self.subcategory_edit)
+            form.addRow(self.tags_label, self.tags_edit)
+
+    def set_analysis_rows(self, rows: list[tuple[str, str]]) -> None:
+        self.clear_analysis_rows()
+        for label_text, body in rows:
+            label = QLabel(label_text)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            label_top_margin = 6 if label_text == "분석 정보" else 9
+            label.setContentsMargins(0, label_top_margin, 0, 0)
+            label.setStyleSheet("QLabel { background: transparent; color: #1f1f1f; }")
+            browser = QTextBrowser()
+            browser.setOpenExternalLinks(False)
+            browser.setLineWrapMode(QTextEdit.WidgetWidth)
+            browser.document().setDocumentMargin(3 if label_text == "분석 정보" else 8)
+            browser.setHtml(_analysis_html(body))
+            browser.setFixedHeight(self._analysis_row_height(label_text, body))
+            browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            if label_text == "분석 정보":
+                browser.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                padding = 2
+            else:
+                padding = 4
+            browser.setStyleSheet(
+                "QTextBrowser {"
+                " background-color: #ffffff;"
+                " border: 1px solid #d8dde6;"
+                " border-radius: 5px;"
+                f" padding: {padding}px;"
+                "}"
+            )
+            self._form_layout.addRow(label, browser)
+            self._analysis_rows.append((label, browser))
+
+    def clear_analysis_rows(self) -> None:
+        for label, browser in reversed(self._analysis_rows):
+            try:
+                self._form_layout.removeRow(label)
+            except (AttributeError, RuntimeError, TypeError):
+                label.hide()
+                browser.hide()
+                label.setParent(None)
+                browser.setParent(None)
+                label.deleteLater()
+                browser.deleteLater()
+        self._analysis_rows = []
+
+    def _analysis_row_height(self, label: str, body: str) -> int:
+        if label == "분석 정보":
+            return 30
+        if label in {"추천 연구분야", "AI 메타태그", "키워드"}:
+            return 70
+        text = re.sub(r"<[^>]+>", " ", body)
+        text = html.unescape(re.sub(r"\s+", " ", text)).strip()
+        bullet_count = body.count("class='bullet'")
+        estimated_lines = max(2, bullet_count + (len(text) // 92))
+        if label in {"한계", "근거 한계·연구 공백", "명시된 제약"}:
+            return min(190, max(116, 34 + estimated_lines * 21))
+        if label in {"핵심 기여", "통합 결론", "발명의 핵심", "AI 요약"}:
+            return min(210, max(128, 34 + estimated_lines * 21))
+        return min(170, max(82, 34 + estimated_lines * 21))
 
     def set_metadata(self, metadata: EditablePaperMetadata | None) -> None:
         value = metadata or EditablePaperMetadata()
@@ -771,18 +864,70 @@ class MetadataForm(QGroupBox):
                 self.document_type_combo.setCurrentIndex(index)
                 self.document_type_combo.blockSignals(False)
         self.authors_label.setText("발명자" if patent else "저자")
-        self._set_form_row_visible(self.venue_label, self.venue_edit, not patent)
-        for label, editor in (
-            (self.patent_office_label, self.patent_office_edit),
-            (self.publication_number_label, self.publication_number_edit),
-            (self.assignee_label, self.assignee_edit),
-        ):
-            self._set_form_row_visible(label, editor, patent)
-        self._set_form_row_visible(
-            self.application_number_label,
-            self.application_number_edit,
-            False,
+        self._set_optional_row_visible(
+            self.venue_label,
+            self.venue_edit,
+            not patent,
+            "_venue_row_visible",
         )
+        if self._patent_rows_visible != patent:
+            if patent:
+                for label, editor in self._patent_rows:
+                    self._insert_before_category(label, editor)
+            else:
+                for label, editor in reversed(self._patent_rows):
+                    self._take_form_row(label, editor)
+            self._patent_rows_visible = patent
+
+    def _form_row_index(self, label: QLabel) -> int:
+        try:
+            row, _role = self._form_layout.getWidgetPosition(label)
+            return row
+        except (AttributeError, TypeError, RuntimeError):
+            return -1
+
+    def _insert_before_category(self, label: QLabel, editor: QWidget) -> None:
+        label.setMinimumHeight(0)
+        editor.setMinimumHeight(0)
+        label.setMaximumHeight(16777215)
+        editor.setMaximumHeight(16777215)
+        label.show()
+        editor.show()
+        row = self._form_row_index(self.category_label)
+        if row >= 0:
+            self._form_layout.insertRow(row, label, editor)
+        else:
+            self._form_layout.addRow(label, editor)
+
+    def _take_form_row(self, label: QLabel, editor: QWidget) -> None:
+        if self._form_row_index(label) < 0:
+            return
+        try:
+            self._form_layout.takeRow(label)
+        except (AttributeError, TypeError):
+            try:
+                self._form_layout.takeRow(self._form_row_index(label))
+            except (AttributeError, TypeError):
+                self._form_layout.removeRow(label)
+        label.hide()
+        editor.hide()
+        label.setParent(self)
+        editor.setParent(self)
+
+    def _set_optional_row_visible(
+        self,
+        label: QLabel,
+        editor: QWidget,
+        visible: bool,
+        state_attr: str,
+    ) -> None:
+        if getattr(self, state_attr) == visible:
+            return
+        if visible:
+            self._insert_before_category(label, editor)
+        else:
+            self._take_form_row(label, editor)
+        setattr(self, state_attr, visible)
 
     def _set_form_row_visible(
         self,
@@ -790,6 +935,8 @@ class MetadataForm(QGroupBox):
         editor: QWidget,
         visible: bool,
     ) -> None:
+        label.setMinimumHeight(0)
+        editor.setMinimumHeight(0)
         label.setMaximumHeight(16777215 if visible else 0)
         editor.setMaximumHeight(16777215 if visible else 0)
         if hasattr(self._form_layout, "setRowVisible"):
@@ -868,11 +1015,17 @@ class CollectionReviewWidget(QWidget):
         self.scan_button = QPushButton("새 PDF 검색")
         self.scan_button.clicked.connect(lambda: self.scan_now(True))
         decorate_button(self.scan_button, "search", role="primary")
+        self.force_stop_scan_button = QPushButton("강제 종료")
+        self.force_stop_scan_button.setToolTip("멈춘 새 PDF 검색 워커를 강제로 종료합니다.")
+        self.force_stop_scan_button.setVisible(False)
+        self.force_stop_scan_button.clicked.connect(self._force_stop_scan)
+        decorate_button(self.force_stop_scan_button, "cancel", role="destructive")
         self.status_label = QLabel()
         self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.status_label.setWordWrap(True)
         action_row.addWidget(self.scan_button)
+        action_row.addWidget(self.force_stop_scan_button)
         action_row.addWidget(self.status_label, 1)
         root.addLayout(action_row)
 
@@ -968,7 +1121,7 @@ class CollectionReviewWidget(QWidget):
             return
         manual_request = schedule_followup
         self._schedule_followup = False
-        self.scan_button.setEnabled(False)
+        self._set_scan_busy(True)
         self.status_label.setText("PDF 안정성과 본문 지문을 확인하고 있습니다…")
         worker = _ScanWorker(
             self._controller,
@@ -977,12 +1130,27 @@ class CollectionReviewWidget(QWidget):
         )
         worker.completed.connect(self._scan_ready)
         worker.failed.connect(self._scan_failed)
-        worker.progress.connect(self.status_label.setText)
+        worker.progress.connect(self._scan_progress)
         worker.finished.connect(self._scan_finished)
         self._worker = worker
         worker.start()
 
+    def _set_scan_busy(self, busy: bool) -> None:
+        self.scan_button.setEnabled(not busy)
+        self.force_stop_scan_button.setVisible(busy)
+        self.force_stop_scan_button.setEnabled(busy)
+
+    def _is_current_scan_sender(self) -> bool:
+        return self.sender() is self._worker
+
+    def _scan_progress(self, message: str) -> None:
+        if not self._is_current_scan_sender():
+            return
+        self.status_label.setText(message)
+
     def _scan_ready(self, result: ReviewScan) -> None:
+        if not self._is_current_scan_sender():
+            return
         self._items = list(result.items)
         self._metadata_overrides = {
             key: value
@@ -1022,15 +1190,53 @@ class CollectionReviewWidget(QWidget):
         self.queue_changed.emit()
 
     def _scan_failed(self, message: str) -> None:
+        if not self._is_current_scan_sender():
+            return
         self.status_label.setText(f"검색 실패: {message}")
         QMessageBox.warning(self, "PDF 검색 실패", message)
 
     def _scan_finished(self) -> None:
-        worker = self._worker
+        worker = self.sender()
+        if worker is not self._worker:
+            if worker is not None:
+                worker.deleteLater()
+            return
         self._worker = None
         if worker:
             worker.deleteLater()
-        self.scan_button.setEnabled(True)
+        self._set_scan_busy(False)
+
+    def _force_stop_scan(self) -> None:
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        self._schedule_followup = False
+        self.force_stop_scan_button.setEnabled(False)
+        self.status_label.setText("새 PDF 검색을 강제 종료하는 중입니다…")
+        for signal, slot in (
+            (worker.completed, self._scan_ready),
+            (worker.failed, self._scan_failed),
+            (worker.progress, self._scan_progress),
+            (worker.finished, self._scan_finished),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
+        worker.requestInterruption()
+        worker.quit()
+        if not worker.wait(150):
+            worker.terminate()
+            worker.wait(1500)
+        if worker.isRunning():
+            worker.finished.connect(self._scan_finished)
+            self.force_stop_scan_button.setEnabled(True)
+            self.status_label.setText("강제 종료 요청을 보냈습니다. 워커 정리를 기다리고 있습니다…")
+            return
+        self._worker = None
+        worker.deleteLater()
+        self._set_scan_busy(False)
+        self.status_label.setText("새 PDF 검색을 강제 종료했습니다.")
 
     def _selected(self) -> ReviewItem | None:
         row = self.table.currentRow()
@@ -1392,6 +1598,40 @@ class _SortableQueueItem(QTableWidgetItem):
         if left is not None and right is not None:
             return left < right
         return super().__lt__(other)
+
+
+class _ElidedTableTextDelegate(QStyledItemDelegate):
+    """Paint table text once to avoid Qt stylesheet elide overdraw artifacts."""
+
+    def paint(self, painter, option, index) -> None:
+        item_option = QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        text = item_option.text
+        item_option.text = ""
+        widget = item_option.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, item_option, painter, widget)
+        rect = style.subElementRect(
+            QStyle.SE_ItemViewItemText,
+            item_option,
+            widget,
+        ).adjusted(5, 0, -5, 0)
+        if rect.width() <= 0:
+            return
+        elided = item_option.fontMetrics.elidedText(
+            text,
+            item_option.textElideMode,
+            rect.width(),
+        )
+        painter.save()
+        painter.setFont(item_option.font)
+        painter.setPen(item_option.palette.color(item_option.palette.Text))
+        painter.drawText(
+            rect,
+            int(item_option.displayAlignment) | Qt.AlignVCenter,
+            elided,
+        )
+        painter.restore()
 
 
 class AnalysisQueueWidget(QWidget):
@@ -2092,11 +2332,11 @@ class LibraryWidget(QWidget):
         self.search_result_bar.setFrameShape(QFrame.StyledPanel)
         self.search_result_bar.setStyleSheet(
             "QFrame#librarySearchResultBar {"
-            " background-color: #eef6ff;"
-            " border: 1px solid #b8d7f2;"
+            " background-color: #f7f7f7;"
+            " border: 1px solid #e0e0e0;"
             " border-radius: 4px;"
             "}"
-            "QLabel { color: #173f68; }"
+            "QLabel { color: #5f5f5f; }"
         )
         search_result_layout = QHBoxLayout(self.search_result_bar)
         search_result_layout.setContentsMargins(9, 5, 9, 5)
@@ -2112,6 +2352,8 @@ class LibraryWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setItemDelegate(_ElidedTableTextDelegate(self.table))
+        self.table.setTextElideMode(Qt.ElideRight)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.Interactive)
@@ -2151,8 +2393,9 @@ class LibraryWidget(QWidget):
         self.type_suggestion_label.setVisible(False)
         detail_layout.addWidget(self.type_suggestion_label)
         self.form = MetadataForm("", compact=True)
+        self.form.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.form.set_metadata(None)
-        detail_layout.addWidget(self.form)
+        detail_layout.addWidget(self.form, 1)
         self.open_with_ai_button = QPushButton("PDF + AI")
         self.open_with_ai_button.setToolTip("AI 번역/요약 창과 함께 PDF를 엽니다.")
         self.open_button = QPushButton("PDF 열기")
@@ -2245,19 +2488,7 @@ class LibraryWidget(QWidget):
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
         self.analysis_view = QTextBrowser()
-        self.analysis_view.setOpenExternalLinks(False)
-        self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
-        self.analysis_view.setMinimumHeight(80)
-        self.analysis_view.document().setDocumentMargin(8)
-        self.analysis_view.setStyleSheet(
-            "QTextBrowser {"
-            " background-color: #ffffff;"
-            " border: 1px solid #d8dde6;"
-            " border-radius: 5px;"
-            " padding: 4px;"
-            "}"
-        )
-        detail_layout.addWidget(self.analysis_view, 1)
+        self.analysis_view.setVisible(False)
 
         splitter = QSplitter(Qt.Horizontal)
         self.library_splitter = splitter
@@ -2281,6 +2512,13 @@ class LibraryWidget(QWidget):
         self._apply_library_column_preferences()
         self._render_analysis(None)
         self.refresh()
+
+    def _set_analysis_rows(self, rows: list[tuple[str, str]]) -> None:
+        aggregate = []
+        for label, body in rows:
+            aggregate.append(f"<h3>{html.escape(label)}</h3>{body}")
+        self.analysis_view.setHtml(_analysis_html(aggregate))
+        self.form.set_analysis_rows(rows)
 
     def _search_text_changed(self, text: str) -> None:
         if not text.strip():
@@ -2770,11 +3008,14 @@ class LibraryWidget(QWidget):
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
         if entry is None:
-            self.analysis_view.setHtml(
-                _analysis_html(
-                    "<p class='empty'>왼쪽 목록에서 문서를 선택하면 "
-                    "AI 요약이 표시됩니다.</p>"
-                )
+            self._set_analysis_rows(
+                [
+                    (
+                        "AI 요약",
+                        "<p class='empty'>왼쪽 목록에서 문서를 선택하면 "
+                        "AI 요약이 표시됩니다.</p>",
+                    )
+                ]
             )
             return
         path = str(entry.sidecar_path.resolve())
@@ -2790,23 +3031,53 @@ class LibraryWidget(QWidget):
                 else "<p style='color:#777'>AI 번역</p>"
             )
             translated = html.escape(translation.text).replace("\n", "<br>")
-            self.analysis_view.setHtml(
-                _analysis_html(
-                    provenance
-                    + "<div style='white-space:pre-wrap; line-height:1.45'>"
-                    + translated
-                    + "</div>"
-                )
+            self._set_analysis_rows(
+                [
+                    (
+                        "AI 번역",
+                        provenance
+                        + "<div style='white-space:pre-wrap; line-height:1.45'>"
+                        + translated
+                        + "</div>",
+                    )
+                ]
             )
             return
         description = entry.record.get("description", {})
         analysis = entry.record.get("analysis", {})
         esc = lambda value: html.escape(str(value or ""))
-        bullets = lambda values: (
-            "<ul>" + "".join(f"<li>{esc(item)}</li>" for item in values) + "</ul>"
-            if values
-            else "<p style='color:#999'>없음</p>"
-        )
+
+        def bullets(values) -> str:
+            cleaned = [
+                re.sub(r"^\s*(?:[-*•·‣▪◦]+|\d+[.)])\s*", "", str(item)).strip()
+                for item in values
+            ]
+            cleaned = [item for item in cleaned if item]
+            if not cleaned:
+                return "<p style='color:#999'>없음</p>"
+            return "".join(
+                f"<p class='bullet'>•&nbsp;{esc(item)}</p>"
+                for item in cleaned
+            )
+
+        def summary_points(value: object) -> list[str]:
+            text = str(value or "").strip()
+            if not text:
+                return []
+            paragraphs = [
+                re.sub(r"\s+", " ", paragraph).strip()
+                for paragraph in re.split(r"\n\s*\n+", text)
+                if paragraph.strip()
+            ]
+            if len(paragraphs) > 1:
+                return paragraphs
+            sentences = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?。！？])\s+", paragraphs[0])
+                if part.strip()
+            ]
+            return sentences if len(sentences) > 1 else paragraphs
+
         sections: list[str] = []
         workflow_status = str(
             entry.record.get("workflow", {}).get("analysis_status") or ""
@@ -2972,24 +3243,23 @@ class LibraryWidget(QWidget):
                 sections.append(
                     "<p style='color:#999'>표시할 수 있는 정규식 추출 결과가 없습니다.</p>"
                 )
-            self.analysis_view.setHtml(_analysis_html(sections))
+            self._set_analysis_rows([("분석 상태", "".join(sections))])
             return
         summary = description.get("summary") or ""
         if not summary and not analysis:
-            self.analysis_view.setHtml(
-                _analysis_html(
-                    "<p class='empty'>아직 AI 분석 결과가 없습니다. "
-                    "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>"
-                )
+            self._set_analysis_rows(
+                [
+                    (
+                        "AI 요약",
+                        "<p class='empty'>아직 AI 분석 결과가 없습니다. "
+                        "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>",
+                    )
+                ]
             )
             return
+        rows: list[tuple[str, str]] = []
         if summary:
-            summary_paragraphs = "".join(
-                f"<p>{esc(paragraph)}</p>"
-                for paragraph in str(summary).split("\n\n")
-                if paragraph.strip()
-            )
-            sections.append(f"<h3>AI 요약</h3>{summary_paragraphs}")
+            rows.append(("AI 요약", bullets(summary_points(summary))))
         question = description.get("research_question") or ""
         if question:
             question_label = (
@@ -2999,7 +3269,7 @@ class LibraryWidget(QWidget):
                 if entry.metadata.document_type == "review_paper"
                 else "연구 질문"
             )
-            sections.append(f"<h3>{question_label}</h3><p>{esc(question)}</p>")
+            rows.append((question_label, f"<p>{esc(question)}</p>"))
         field_labels = (
             (
                 ("구현·실시예", "methods"),
@@ -3025,28 +3295,30 @@ class LibraryWidget(QWidget):
         for label, key in field_labels:
             values = [str(item) for item in description.get(key) or []]
             if values:
-                sections.append(f"<h3>{label}</h3>{bullets(values)}")
+                rows.append((label, bullets(values)))
         patent_claims = str(analysis.get("patent_claims") or "").strip()
         if entry.metadata.document_type == "patent" and patent_claims:
             displayed_claims = _format_claims_for_display(patent_claims)
-            sections.append(
-                "<h3>청구항 원문</h3>"
-                "<div style='white-space:pre-wrap; overflow-wrap:anywhere; "
-                "line-height:1.5; font-family:monospace'>"
-                f"{esc(displayed_claims)}"
-                "</div>"
+            rows.append(
+                (
+                    "청구항 원문",
+                    "<div style='white-space:pre-wrap; overflow-wrap:anywhere; "
+                    "line-height:1.5; font-family:monospace'>"
+                    f"{esc(displayed_claims)}"
+                    "</div>",
+                )
             )
         classification = entry.record.get("classification", {})
         ai_tags = [str(value) for value in classification.get("ai_tags") or []]
         if ai_tags:
-            sections.append(
-                f"<h3>AI 메타태그</h3><p>{esc(' · '.join(ai_tags))}</p>"
-            )
+            rows.append(("AI 메타태그", f"<p>{esc(' · '.join(ai_tags))}</p>"))
         suggestion = str(analysis.get("suggested_category") or "").strip()
         if suggestion:
-            sections.append(
-                "<h3>추천 연구분야</h3>"
-                f"<p><b>{esc(suggestion)}</b> — 연구분야 설정에 자동 반영됩니다.</p>"
+            rows.append(
+                (
+                    "추천 연구분야",
+                    f"<p>{esc(suggestion)} — 연구분야 설정에 자동 반영됩니다.</p>",
+                )
             )
         provenance = analysis.get("provenance") or entry.record.get(
             "provenance", {}
@@ -3067,13 +3339,16 @@ class LibraryWidget(QWidget):
             version_text = (
                 f" · {esc(' · '.join(version_bits))}" if version_bits else ""
             )
-            sections.append(
-                "<p style='color:#777'>"
-                f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
-                f"{version_text}"
-                f" · {esc(analysis.get('completed_at', ''))}</p>"
+            rows.append(
+                (
+                    "분석 정보",
+                    "<p class='meta muted'>"
+                    f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
+                    f"{version_text}"
+                    f" · {esc(_format_analysis_time(analysis.get('completed_at', '')))}</p>",
+                )
             )
-        self.analysis_view.setHtml(_analysis_html(sections))
+        self._set_analysis_rows(rows)
 
     def _reanalyze_selected(self) -> None:
         entries = self._selected_entries()

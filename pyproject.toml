@@ -32,4 +32,10 @@ paper-organizer-gui = "paper_organizer.gui:main"
 include = ["paper_organizer*"]
 
 [tool.setuptools.package-data]
-paper_organizer = ["assets/*.png", "assets/*.ico", "models/*.json"]
+paper_organizer = [
+  "assets/*.png",
+  "assets/*.ico",
+  "assets/fonts/*.otf",
+  "assets/fonts/*.txt",
+  "models/*.json",
+]

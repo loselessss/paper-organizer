@@ -119,24 +119,24 @@ class UiSmokeTests(unittest.TestCase):
                 {
                     "analysis": {
                         "provenance": {
-                            "prompt_version": "review-summary-v4-direct",
+                            "prompt_version": "review-summary-v5-direct",
                         }
                     }
                 }
             ),
-            "v4",
+            "v5",
         )
         self.assertEqual(
             _analysis_version_label(
                 {
                     "analysis": {
                         "provenance": {
-                            "prompt_version": "research-summary-v10-direct",
+                            "prompt_version": "research-summary-v11-direct",
                         }
                     }
                 }
             ),
-            "v10",
+            "v11",
         )
         self.assertEqual(
             _analysis_version_label(
@@ -209,7 +209,7 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(
                 dialog.windowTitle(),
-                "요약 엔진 옵션 · 실험논문 v10 · 리뷰논문 v4 · 특허 v1",
+                "요약 엔진 옵션 · 실험논문 v11 · 리뷰논문 v5 · 특허 v2",
             )
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)

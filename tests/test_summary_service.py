@@ -245,7 +245,7 @@ class SummaryServiceTests(unittest.TestCase):
 
         self.assertEqual(review.preview.document_type, "review_paper")
         self.assertEqual(review.preview.document_type_source, "ai:ollama")
-        self.assertEqual(review.result.prompt_version, "review-summary-v4-direct")
+        self.assertEqual(review.result.prompt_version, "review-summary-v5-direct")
         self.assertEqual(
             review_client.calls[0]["payload"]["format"]["required"],
             ["document_type"],
@@ -266,7 +266,7 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertEqual(research.preview.document_type_source, "ai:ollama")
         self.assertEqual(
             research.result.prompt_version,
-            "research-summary-v10-direct",
+            "research-summary-v11-direct",
         )
         self.assertIn(
             "primary research paper",
