@@ -94,6 +94,28 @@ class LibraryWorkflowTests(unittest.TestCase):
     def test_downloads_is_the_default_input_folder(self):
         self.assertEqual(default_input_dir(), Path.home() / "Downloads")
 
+    def test_save_paths_persists_research_subcategories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "downloads"
+            library = root / "library"
+            input_dir.mkdir()
+            controller = LibraryWorkflowController(root / "settings.json")
+
+            settings = controller.save_paths(
+                input_dir,
+                library,
+                auto_enabled=False,
+                research_categories=["생명과학"],
+                research_subcategories={"생명과학": ["생화학", "세포생물학"]},
+                focus_categories=["생명과학"],
+            )
+
+            self.assertEqual(
+                settings.research_subcategories,
+                {"생명과학": ["생화학", "세포생물학"]},
+            )
+
     def test_one_or_two_page_pdfs_are_not_discovered_as_papers(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -428,7 +450,9 @@ class LibraryWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(updated.metadata.title, "After")
             self.assertEqual(updated.metadata.venue, "Cell")
-            self.assertEqual(controller.list_library("dmem")[0].metadata.title, "After")
+            self.assertEqual(updated.metadata.tags, ["medium", "DMEM"])
+            self.assertEqual(controller.list_library("dmem"), [])
+            self.assertEqual(controller.list_library("edited")[0].metadata.title, "After")
             self.assertEqual(inspect_paperpack(updated.sidecar_path).revision, 2)
             saved = load_paperpack_metadata(updated.sidecar_path)
             self.assertEqual(saved["curation"]["revision"], 2)

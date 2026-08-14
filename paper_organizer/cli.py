@@ -19,6 +19,7 @@ from paper_organizer.core.paperpack import (
     load_paperpack_metadata,
     verify_paperpack,
 )
+from paper_organizer.core.search_audit import audit_search_normalization
 
 
 def _identity(path: Path) -> int:
@@ -178,6 +179,53 @@ def _paperpack_restore_migration(library: Path, operation_id: str) -> int:
     return 0
 
 
+def _audit_search_normalization(
+    library: Path,
+    *,
+    queries: list[str],
+    sample_limit: int,
+) -> int:
+    audit = audit_search_normalization(
+        library,
+        queries=tuple(queries),
+        sample_limit=sample_limit,
+    )
+    print(
+        "검색 정규화 진단: "
+        f"PaperPack {audit.paperpacks}개 · 페이지 {audit.pages}개 · "
+        f"정규화 변경 페이지 {audit.changed_pages}개"
+    )
+    print(
+        f"제거한 페이지/숫자 표식 줄 {audit.removed_marker_lines}개 · "
+        f"하이픈 줄바꿈 연결 {audit.soft_hyphen_joins}개"
+    )
+    print(
+        f"비교 질의 {len(audit.queries)}개 · "
+        f"감소 {len(audit.drops)}개 · 증가 {len(audit.gains)}개"
+    )
+    if audit.removed_token_sample:
+        print("정규화 후 사라진 토큰 샘플: " + ", ".join(audit.removed_token_sample))
+    for problem in audit.problems:
+        print(f"확인 필요: {problem}")
+    if audit.drops:
+        print("검색 결과 감소 후보:")
+        for item in audit.drops[:10]:
+            examples = "; ".join(item.examples) if item.examples else "예시 없음"
+            print(
+                f"- {item.query}: {item.raw_hits} -> {item.normalized_hits} "
+                f"({examples})"
+            )
+    if audit.gains:
+        print("검색 결과 증가 후보:")
+        for item in audit.gains[:10]:
+            examples = "; ".join(item.examples) if item.examples else "예시 없음"
+            print(
+                f"- {item.query}: {item.raw_hits} -> {item.normalized_hits} "
+                f"({examples})"
+            )
+    return 2 if audit.drops or audit.problems else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="paper-organizer")
     parser.add_argument("--version", action="version", version=__version__)
@@ -190,6 +238,24 @@ def build_parser() -> argparse.ArgumentParser:
         "reindex", help="paperpack/legacy sidecar로 인덱스를 재구축합니다"
     )
     reindex.add_argument("library", type=Path)
+
+    audit_search = subparsers.add_parser(
+        "audit-search-normalization",
+        help="검색용 텍스트 정규화 전후의 검색 결과 변화를 진단합니다",
+    )
+    audit_search.add_argument("library", type=Path)
+    audit_search.add_argument(
+        "--query",
+        action="append",
+        default=[],
+        help="직접 비교할 검색어입니다. 여러 번 지정할 수 있습니다",
+    )
+    audit_search.add_argument(
+        "--sample-limit",
+        type=int,
+        default=80,
+        help="--query가 없을 때 자동 샘플링할 검색어 수입니다",
+    )
 
     paperpack = subparsers.add_parser("paperpack", help=".paperpack 파일을 관리합니다")
     paperpack_commands = paperpack.add_subparsers(
@@ -261,6 +327,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _identity(args.pdf)
     if args.command == "reindex":
         return _reindex(args.library)
+    if args.command == "audit-search-normalization":
+        return _audit_search_normalization(
+            args.library,
+            queries=args.query,
+            sample_limit=args.sample_limit,
+        )
     if args.command == "paperpack":
         if args.paperpack_command == "create":
             return _paperpack_create(

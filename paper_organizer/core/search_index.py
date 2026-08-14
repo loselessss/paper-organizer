@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -27,6 +28,13 @@ from paper_organizer.core.patent import patent_index_numbers
 
 SEARCH_INDEX_SCHEMA_VERSION = 3
 _SNIPPET_TOKENS = 12
+_PAGE_MARKER_RE = re.compile(
+    r"(?im)^\s*(?:\[?\s*(?:PDF\s+)?PAGE\s+\d+\s*\]?|\d+|\d+\s*/\s*\d+|-\s*\d+\s*-)\s*$"
+)
+_SOFT_HYPHEN_LINEBREAK_RE = re.compile(
+    r"(?<=[A-Za-z])-\s*\r?\n\s*(?=[A-Za-z])"
+)
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 class SearchIndexError(RuntimeError):
@@ -69,7 +77,6 @@ def _metadata_match_locations(row: sqlite3.Row, query: str) -> tuple[str, ...]:
                 "patent_number",
                 "category",
                 "subcategory",
-                "tags",
             ),
         ),
         )
@@ -183,6 +190,15 @@ def _text_list(value: Any) -> str:
     return str(value or "").strip()
 
 
+def normalize_search_text(text: str) -> str:
+    """Flatten page text for the disposable FTS cache."""
+
+    value = str(text or "").replace("\u00ad", "")
+    value = _SOFT_HYPHEN_LINEBREAK_RE.sub("", value)
+    value = _PAGE_MARKER_RE.sub(" ", value)
+    return _WHITESPACE_RE.sub(" ", value).strip()
+
+
 def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tuple:
     identity = record.get("identity", {})
     bibliography = record.get("bibliography", {})
@@ -203,17 +219,19 @@ def _work_row(record: dict[str, Any], relative_path: str, indexed_at: str) -> tu
         ),
         str(classification.get("category") or ""),
         str(classification.get("subcategory") or ""),
-        ", ".join(
-            value
-            for value in (
-                _text_list(classification.get("tags")),
-                _text_list(classification.get("ai_tags")),
-            )
-            if value
-        ),
-        str(description.get("summary") or ""),
+        "",
+        normalize_search_text(str(description.get("summary") or "")),
         indexed_at,
     )
+
+
+def _normalized_pages(pages: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    rows: list[tuple[int, str]] = []
+    for number, text in pages:
+        normalized = normalize_search_text(text)
+        if normalized:
+            rows.append((number, normalized))
+    return rows
 
 
 def _upsert_paperpack(
@@ -237,7 +255,7 @@ def _upsert_paperpack(
     if pages:
         connection.executemany(
             "INSERT INTO pages(file_id, page, text) VALUES (?, ?, ?)",
-            [(file_id, number, text) for number, text in pages],
+            [(file_id, number, text) for number, text in _normalized_pages(pages)],
         )
     return file_id
 
@@ -417,7 +435,7 @@ def search_metadata(
             WHERE lower(
                 title || ' ' || authors || ' ' || year || ' ' || venue || ' ' ||
                 patent_number || ' ' || category || ' ' || subcategory || ' ' ||
-                tags || ' ' || summary
+                summary
             ) LIKE ?
             ORDER BY title
             LIMIT ?

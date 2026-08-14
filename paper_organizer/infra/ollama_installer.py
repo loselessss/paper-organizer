@@ -37,6 +37,16 @@ def _is_accessible_file(path: Path) -> bool:
         return False
 
 
+def _is_ollama_app_execution_alias(path: Path) -> bool:
+    """Return whether a path is the WindowsApps stub that opens App Installer."""
+
+    return (
+        path.name.casefold() == "ollama.exe"
+        and path.parent.name.casefold() == "windowsapps"
+        and path.parent.parent.name.casefold() == "microsoft"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class OllamaRuntimeState:
     installed: bool
@@ -72,7 +82,7 @@ def find_ollama_executable() -> str:
     """Return the ollama executable path, including the default install dir."""
 
     found = shutil.which("ollama")
-    if found:
+    if found and not _is_ollama_app_execution_alias(Path(found)):
         return found
     candidates = [
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",

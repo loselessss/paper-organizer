@@ -205,16 +205,21 @@ class AiSettingsDialog(QDialog):
         form.addRow("월간 참고 예산(강제 차단 아님)", self.budget_spin)
         self.engine_columns.addWidget(self.provider_group, 1)
 
-        self.local_model_group = QGroupBox("모델 선택·Ollama 설치 및 삭제")
+        self.local_model_group = QGroupBox("추천·Ollama 설치·모델 선택")
         local_layout = QVBoxLayout(self.local_model_group)
         local_form = QFormLayout()
-        self.manage_models_button = QPushButton("Ollama 설치·삭제…")
+        self.local_model_form = local_form
+        self.manage_models_button = QPushButton("Ollama 모델 설치·관리…")
+        management_row = QWidget()
+        management_layout = QHBoxLayout(management_row)
+        management_layout.setContentsMargins(0, 0, 0, 0)
+        management_layout.addWidget(self.model_refresh_button)
+        management_layout.addWidget(self.manage_models_button)
+        management_layout.addStretch(1)
         model_row = QWidget()
         model_layout = QHBoxLayout(model_row)
         model_layout.setContentsMargins(0, 0, 0, 0)
         model_layout.addWidget(self.model_combo, 1)
-        model_layout.addWidget(self.model_refresh_button)
-        model_layout.addWidget(self.manage_models_button)
         self.model_profile_combo = QComboBox()
         self.model_profile_combo.addItem("자동 (설치 모델 우선)", "auto")
         self.model_profile_combo.addItem("속도 우선", "speed")
@@ -258,6 +263,10 @@ class AiSettingsDialog(QDialog):
             "background: #eef6ff; border: 1px solid #aec9e8; "
             "border-radius: 4px; padding: 7px; color: #173f68;"
         )
+        local_form.addRow("추천 프로필", profile_row)
+        local_form.addRow("PC / Ollama", self.hardware_status)
+        local_form.addRow("추천", self.recommendation_status)
+        local_form.addRow("Ollama 모델", management_row)
         local_form.addRow("백그라운드 모델", model_row)
         local_form.addRow("수동 요약 모델", self.manual_model_combo)
         translation_guidance = QLabel(
@@ -273,9 +282,6 @@ class AiSettingsDialog(QDialog):
         local_form.addRow("상주 설명", self.residency_guidance)
         local_form.addRow("GPU 가속", self.force_igpu_check)
         local_form.addRow("", self.igpu_guidance)
-        local_form.addRow("추천 프로필", profile_row)
-        local_form.addRow("PC / Ollama", self.hardware_status)
-        local_form.addRow("추천", self.recommendation_status)
         local_layout.addLayout(local_form)
         local_note = QLabel(
             "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "

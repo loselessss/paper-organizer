@@ -32,6 +32,7 @@ class AppSettings:
     auto_enabled: bool = False
     auto_organize_academic: bool = True
     research_categories: list[str] = field(default_factory=list)
+    research_subcategories: dict[str, list[str]] = field(default_factory=dict)
     focus_categories: list[str] = field(default_factory=list)
     resource_profile: str = "eco"
     background_analysis_enabled: bool = True
@@ -62,6 +63,8 @@ class AppSettings:
     cloud_monthly_budget_usd: float = 0.0
     last_update_check_at: str = ""
     skipped_update_version: str = ""
+    library_column_order: list[str] = field(default_factory=list)
+    library_hidden_columns: list[str] = field(default_factory=list)
     minimum_age_seconds: int = 30
     scan_interval_seconds: int = 300
 
@@ -117,6 +120,37 @@ class AppSettings:
             {name.strip().casefold() for name in self.research_categories}
         ):
             raise ValueError("focus_categories must be selected research categories")
+        if (
+            not isinstance(self.research_subcategories, dict)
+            or any(
+                not isinstance(category, str)
+                or not category.strip()
+                or len(category.strip()) > 80
+                or "," in category
+                or not isinstance(subcategories, list)
+                or any(
+                    not isinstance(name, str)
+                    or not name.strip()
+                    or len(name.strip()) > 80
+                    or "," in name
+                    for name in subcategories
+                )
+                or len({name.strip().casefold() for name in subcategories})
+                != len(subcategories)
+                for category, subcategories in self.research_subcategories.items()
+            )
+        ):
+            raise ValueError(
+                "research_subcategories must map category names to unique names without commas"
+            )
+        if self.research_categories and not {
+            name.strip().casefold() for name in self.research_subcategories
+        }.issubset(
+            {name.strip().casefold() for name in self.research_categories}
+        ):
+            raise ValueError(
+                "research_subcategories keys must be selected research categories"
+            )
         if self.model_profile not in {"auto", "speed", "balanced", "quality", "manual"}:
             raise ValueError("Unsupported model_profile")
         if not isinstance(self.background_model, str):
@@ -191,6 +225,16 @@ class AppSettings:
             raise ValueError("last_update_check_at must be a string")
         if not isinstance(self.skipped_update_version, str):
             raise ValueError("skipped_update_version must be a string")
+        for name, value in (
+            ("library_column_order", self.library_column_order),
+            ("library_hidden_columns", self.library_hidden_columns),
+        ):
+            if (
+                not isinstance(value, list)
+                or any(not isinstance(column, str) or not column.strip() for column in value)
+                or len({column.strip() for column in value}) != len(value)
+            ):
+                raise ValueError(f"{name} must contain unique non-empty column ids")
         if self.cloud_request_profile not in {
             "conservative",
             "standard",

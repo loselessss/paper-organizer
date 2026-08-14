@@ -476,7 +476,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             self.assertEqual(workflow.item.attempt_count, 0)
             self.assertIn("가용 메모리 부족", workflow.item.last_error)
             self.assertIn("현재 1.2GB", workflow.item.last_error)
-            self.assertIn("최소 7.0GB", workflow.item.last_error)
+            self.assertIn("최소 6.5GB", workflow.item.last_error)
 
             available[0] = 32.0
             completed = service.run_next()
@@ -486,7 +486,43 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertEqual(workflow.item.last_error, "")
         self.assertEqual(summary.modes, [SummaryMode.QUICK])
 
-    def test_loaded_model_only_requires_the_system_memory_reserve(self):
+    def test_loaded_model_waits_below_the_system_memory_reserve(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings_path = root / "settings.json"
+            save_settings(
+                AppSettings(
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                    resource_profile="eco",
+                ),
+                settings_path,
+            )
+            ollama = FakeOllama()
+            ollama.status = replace(
+                ollama.status,
+                running_models=(
+                    RunningOllamaModel("qwen3:4b", "100% GPU", 5.0, 5.0),
+                ),
+            )
+            workflow = FakeWorkflow(root / "paper.paperpack")
+            service = BackgroundAnalysisService(
+                workflow,
+                FakeSummary(execution(root / "paper.pdf")),
+                MemorySecrets(),
+                settings_path,
+                ollama=ollama,
+                memory_available_gb=lambda: 0.3,
+            )
+
+            event = service.run_next()
+
+        self.assertEqual(event.state, "waiting")
+        self.assertIn("실행 중인 qwen3:4b", event.message)
+        self.assertIn("시스템 여유 0.5GB", event.message)
+        self.assertFalse(workflow.claimed)
+
+    def test_loaded_model_runs_with_half_gb_system_memory_reserve(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             settings_path = root / "settings.json"
@@ -517,10 +553,8 @@ class BackgroundAnalysisTests(unittest.TestCase):
 
             event = service.run_next()
 
-        self.assertEqual(event.state, "waiting")
-        self.assertIn("실행 중인 qwen3:4b", event.message)
-        self.assertIn("시스템 여유 1.0GB", event.message)
-        self.assertFalse(workflow.claimed)
+        self.assertEqual(event.state, "completed")
+        self.assertTrue(workflow.claimed)
 
     def test_eight_gb_pc_keeps_local_analysis_pending(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -551,7 +585,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
         self.assertIn("OpenAI·Claude API", event.message)
         self.assertFalse(workflow.claimed)
 
-    def test_sixteen_gb_pc_runs_when_model_plus_one_gb_is_available(self):
+    def test_sixteen_gb_pc_runs_when_model_plus_half_gb_is_available(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             settings_path = root / "settings.json"

@@ -286,7 +286,7 @@ class LocalAiTests(unittest.TestCase):
 
     def test_memory_tier_guidance_explains_8_16_and_24_gb_policies(self):
         self.assertIn("지원하지 않습니다", memory_tier_guidance(8))
-        self.assertIn("시스템 여유 1GB", memory_tier_guidance(16))
+        self.assertIn("시스템 여유 0.5GB", memory_tier_guidance(16))
         self.assertIn("Qwen3 1.7B", memory_tier_guidance(16))
         self.assertIn("모델 크기를 제한하지 않고", memory_tier_guidance(24))
 

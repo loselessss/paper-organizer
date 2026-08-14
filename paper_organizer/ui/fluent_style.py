@@ -239,20 +239,12 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             color: #8a8a8a;
         }
 
-        QLineEdit, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox,
-        QSpinBox, QDoubleSpinBox, QListWidget, QTableWidget, QTreeWidget {
+        QLineEdit, QTextEdit, QTextBrowser, QPlainTextEdit,
+        QListWidget, QTableWidget, QTreeWidget {
             background: #ffffff;
             border: 1px solid #d1d1d1;
             border-radius: 6px;
             padding: 5px;
-        }
-
-        QComboBox {
-            padding-right: 34px;
-        }
-
-        QSpinBox, QDoubleSpinBox {
-            padding-right: 22px;
         }
 
         QTextBrowser, QTextEdit, QPlainTextEdit {
@@ -260,89 +252,8 @@ def apply_fluent_theme(app: QApplication | None) -> None:
         }
 
         QLineEdit:focus, QTextEdit:focus, QTextBrowser:focus, QPlainTextEdit:focus,
-        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
         QListWidget:focus, QTableWidget:focus, QTreeWidget:focus {
             border: 1px solid #777777;
-        }
-
-        QComboBox::drop-down {
-            subcontrol-origin: padding;
-            subcontrol-position: top right;
-            width: 28px;
-            border: 0;
-            background: transparent;
-        }
-
-        QComboBox::drop-down:hover {
-            background: #f3f3f3;
-            border-top-right-radius: 6px;
-            border-bottom-right-radius: 6px;
-        }
-
-        QComboBox::down-arrow {
-            image: none;
-            border: 0;
-            width: 8px;
-            height: 6px;
-            margin-right: 8px;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #5f5f5f;
-        }
-
-        QComboBox::down-arrow:disabled {
-            border-top-color: #a6a6a6;
-        }
-
-        QSpinBox::up-button, QDoubleSpinBox::up-button,
-        QSpinBox::down-button, QDoubleSpinBox::down-button {
-            subcontrol-origin: border;
-            width: 18px;
-            border: 0;
-            background: transparent;
-        }
-
-        QSpinBox::up-button, QDoubleSpinBox::up-button {
-            subcontrol-position: top right;
-        }
-
-        QSpinBox::down-button, QDoubleSpinBox::down-button {
-            subcontrol-position: bottom right;
-        }
-
-        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-            background: #f3f3f3;
-        }
-
-        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-            image: none;
-            border: 0;
-            width: 6px;
-            height: 4px;
-            margin-bottom: 1px;
-            border-left: 3px solid transparent;
-            border-right: 3px solid transparent;
-            border-bottom: 4px solid #6f6f6f;
-        }
-
-        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-            image: none;
-            border: 0;
-            width: 6px;
-            height: 4px;
-            margin-top: 1px;
-            border-left: 3px solid transparent;
-            border-right: 3px solid transparent;
-            border-top: 4px solid #6f6f6f;
-        }
-
-        QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
-            border-bottom-color: #a6a6a6;
-        }
-
-        QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
-            border-top-color: #a6a6a6;
         }
 
         QHeaderView::section {

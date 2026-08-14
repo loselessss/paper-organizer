@@ -6,10 +6,10 @@ from dataclasses import replace
 from threading import Event
 import time
 
-from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -163,17 +163,18 @@ class OllamaModelDialog(QDialog):
         root.addWidget(self.runtime_status)
 
         runtime_row = QHBoxLayout()
-        self.setup_runtime_button = QPushButton("Ollama 설치 및 실행")
+        self.setup_runtime_button = QPushButton("Ollama 실행")
         self.setup_runtime_button.setToolTip(
-            "Ollama가 없으면 winget으로 설치하고, 설치되어 있으면 실행만 합니다."
+            "이미 설치된 Ollama 서버를 창 없이 실행합니다. 설치가 필요하면 공식 다운로드를 사용하세요."
         )
         self.setup_runtime_button.clicked.connect(self._setup_runtime)
         self.setup_runtime_button.setVisible(False)
         runtime_row.addWidget(self.setup_runtime_button)
-        self.open_download_button = QPushButton("Ollama 공식 다운로드")
-        self.open_download_button.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(OLLAMA_DOWNLOAD_URL))
+        self.open_download_button = QPushButton("다운로드 주소 복사")
+        self.open_download_button.setToolTip(
+            "Windows App Installer가 자동으로 뜨지 않도록 다운로드 페이지 주소만 복사합니다."
         )
+        self.open_download_button.clicked.connect(self._copy_download_url)
         runtime_row.addWidget(self.open_download_button)
         runtime_row.addStretch(1)
         root.addLayout(runtime_row)
@@ -202,10 +203,13 @@ class OllamaModelDialog(QDialog):
             "설치 여부와 관계없이 모델을 한 표에서 선택합니다. "
             "설치된 행은 바로 삭제할 수 있습니다."
         )
+        self.model_table.setMinimumHeight(260)
         root.addWidget(self.model_table, 1)
 
         self.model_detail = QLabel("모델을 선택하세요.")
         self.model_detail.setWordWrap(True)
+        detail_lines = self.model_detail.fontMetrics().lineSpacing() * 4 + 8
+        self.model_detail.setMaximumHeight(detail_lines)
         root.addWidget(self.model_detail)
 
         progress_panel = QFrame()
@@ -396,36 +400,26 @@ class OllamaModelDialog(QDialog):
         QTimer.singleShot(0, self.refresh)
 
     def _setup_runtime(self) -> None:
-        """Ask before installing, then install or start Ollama in a worker."""
+        """Start an installed Ollama runtime without invoking App Installer."""
 
         state = inspect_runtime()
-        allow_install = False
         if not state.installed:
-            if not state.can_install_with_winget:
-                QMessageBox.information(
-                    self,
-                    "Ollama 설치 필요",
-                    "이 PC에서는 winget을 쓸 수 없어 자동 설치할 수 없습니다.\n"
-                    f"{OLLAMA_DOWNLOAD_URL} 에서 설치 프로그램을 내려받아 설치한 뒤 "
-                    "새로고침하세요.",
-                )
-                return
-            if QMessageBox.question(
+            QMessageBox.information(
                 self,
-                "Ollama 설치",
+                "Ollama 설치 필요",
                 "로컬 AI를 쓰려면 Ollama 런타임이 필요합니다.\n"
-                "winget으로 Ollama를 설치할까요? 모델은 이 단계에서 받지 않습니다.",
-            ) != QMessageBox.Yes:
-                return
-            allow_install = True
+                "Windows App Installer가 자동으로 뜨는 일을 피하려고 앱 안에서는 "
+                "설치 페이지도 직접 열지 않습니다. 다운로드 주소를 복사했으니 "
+                "브라우저 주소창에 붙여넣어 설치한 뒤 새로고침하세요.",
+            )
+            self._copy_download_url()
+            return
         self.setup_runtime_button.setEnabled(False)
-        self.runtime_status.setText(
-            "Ollama를 설치하고 실행하는 중…" if allow_install else "Ollama를 실행하는 중…"
-        )
+        self.runtime_status.setText("Ollama를 실행하는 중…")
         self._runtime_elapsed_seconds = 0
-        self._runtime_installing = allow_install
+        self._runtime_installing = False
         self._runtime_timer.start()
-        worker = _RuntimeSetupWorker(allow_install, self)
+        worker = _RuntimeSetupWorker(False, self)
         worker.completed.connect(self._runtime_setup_finished)
         worker.finished.connect(worker.deleteLater)
         self._runtime_worker = worker
@@ -448,6 +442,12 @@ class OllamaModelDialog(QDialog):
         else:
             QMessageBox.warning(self, "Ollama 준비 실패", result.message)
 
+    def _copy_download_url(self) -> None:
+        QApplication.clipboard().setText(OLLAMA_DOWNLOAD_URL)
+        self.runtime_status.setText(
+            f"Ollama 다운로드 주소를 복사했습니다: {OLLAMA_DOWNLOAD_URL}"
+        )
+
     def _runtime_tick(self) -> None:
         self._runtime_elapsed_seconds += 1
         elapsed = self._runtime_elapsed_seconds
@@ -465,6 +465,7 @@ class OllamaModelDialog(QDialog):
 
     def _apply_snapshot(self, snapshot) -> None:
         self._snapshot = snapshot
+        state = inspect_runtime()
         if snapshot.reachable:
             self.runtime_status.setText(
                 f"Ollama {snapshot.version} · 모델 저장 위치 {snapshot.disk_path} · "
@@ -472,11 +473,17 @@ class OllamaModelDialog(QDialog):
             )
         else:
             detail = f" ({snapshot.error})" if snapshot.error else ""
-            self.runtime_status.setText(
-                "Ollama에 연결할 수 없습니다. 아래 버튼으로 설치·실행할 수 있습니다."
-                + detail
+            prompt = (
+                "Ollama가 설치되어 있지만 실행 중이 아닙니다. 아래 버튼으로 실행할 수 있습니다."
+                if state.installed
+                else "Ollama에 연결할 수 없습니다. 공식 다운로드로 설치한 뒤 새로고침하세요."
             )
-        self.setup_runtime_button.setVisible(not snapshot.reachable)
+            self.runtime_status.setText(
+                prompt + detail
+            )
+        self.setup_runtime_button.setVisible(
+            not snapshot.reachable and state.installed
+        )
         current = self._selected_entry()
         selected = self._preferred_model or (
             current.model_id if current is not None else ""
@@ -859,12 +866,12 @@ def _entry_usage_text(entry) -> str:
 
 
 def _entry_detail_text(entry) -> str:
-    usage = _entry_usage_text(entry)
-    return (
-        f"{usage}\n{entry.benchmark_summary}"
-        if entry.benchmark_summary
-        else usage
-    )
+    usage_lines = [
+        line.strip()
+        for line in _entry_usage_text(entry).splitlines()
+        if line.strip()
+    ]
+    return "\n".join(usage_lines[:2])
 
 
 def _entry_table_text(entry) -> str:

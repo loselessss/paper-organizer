@@ -53,6 +53,7 @@ class FolderSettingsDialog(QDialog):
         suppress_context_help_button(self)
         self._controller = controller
         self._lifecycle = lifecycle
+        self._subcategory_overrides: dict[str, list[str]] = {}
         self.setWindowTitle("요약 감시 옵션")
         self.setMinimumWidth(920)
 
@@ -176,29 +177,38 @@ class FolderSettingsDialog(QDialog):
         self.focus_list.setMinimumWidth(260)
         self.focus_list.setToolTip("분야를 선택하면 연결된 세부분야를 볼 수 있습니다.")
         self.subcategory_list = QListWidget()
-        self.subcategory_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.subcategory_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.subcategory_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.subcategory_list.setMinimumHeight(220)
         self.subcategory_list.setMinimumWidth(200)
         category_column_layout.addWidget(self.focus_list_label)
         category_column_layout.addWidget(self.focus_list, 1)
-        subcategory_column_layout.addWidget(self.subcategory_list_label)
-        subcategory_column_layout.addWidget(self.subcategory_list, 1)
-        focus_lists.addWidget(category_column, 3)
-        focus_lists.addWidget(subcategory_column, 2)
-        focus_layout.addLayout(focus_lists)
-        focus_actions = QHBoxLayout()
+        category_actions = QHBoxLayout()
         self.add_category_button = QPushButton("분야 추가")
         self.edit_category_button = QPushButton("이름 수정")
         self.remove_category_button = QPushButton("선택 삭제")
         self.add_category_button.clicked.connect(self._add_focus_category)
         self.edit_category_button.clicked.connect(self._edit_focus_category)
         self.remove_category_button.clicked.connect(self._remove_focus_categories)
-        focus_actions.addWidget(self.add_category_button)
-        focus_actions.addWidget(self.edit_category_button)
-        focus_actions.addWidget(self.remove_category_button)
-        focus_actions.addStretch(1)
-        focus_layout.addLayout(focus_actions)
+        category_actions.addWidget(self.add_category_button)
+        category_actions.addWidget(self.edit_category_button)
+        category_actions.addWidget(self.remove_category_button)
+        category_actions.addStretch(1)
+        category_column_layout.addLayout(category_actions)
+        subcategory_column_layout.addWidget(self.subcategory_list_label)
+        subcategory_column_layout.addWidget(self.subcategory_list, 1)
+        subcategory_actions = QHBoxLayout()
+        self.add_subcategory_button = QPushButton("세부분야 추가")
+        self.remove_subcategory_button = QPushButton("선택 삭제")
+        self.add_subcategory_button.clicked.connect(self._add_subcategory)
+        self.remove_subcategory_button.clicked.connect(self._remove_subcategories)
+        subcategory_actions.addWidget(self.add_subcategory_button)
+        subcategory_actions.addWidget(self.remove_subcategory_button)
+        subcategory_actions.addStretch(1)
+        subcategory_column_layout.addLayout(subcategory_actions)
+        focus_lists.addWidget(category_column, 3)
+        focus_lists.addWidget(subcategory_column, 2)
+        focus_layout.addLayout(focus_lists)
         self.focus_list.currentItemChanged.connect(
             lambda current, _previous: self._show_subcategories(current)
         )
@@ -255,11 +265,20 @@ class FolderSettingsDialog(QDialog):
         self._load_focus_categories(
             settings.focus_categories,
             settings.research_categories,
+            settings.research_subcategories,
         )
 
     def _load_focus_categories(
-        self, selected: list[str], configured: list[str]
+        self,
+        selected: list[str],
+        configured: list[str],
+        subcategory_overrides: dict[str, list[str]],
     ) -> None:
+        self._subcategory_overrides = {
+            category.strip(): self._normalized_names(subcategories)
+            for category, subcategories in subcategory_overrides.items()
+            if category.strip()
+        }
         names = list(configured)
         if not names:
             try:
@@ -281,13 +300,12 @@ class FolderSettingsDialog(QDialog):
     def _show_subcategories(self, item: QListWidgetItem | None) -> None:
         self.subcategory_list.clear()
         name = item.text().strip() if item is not None else ""
+        self.add_subcategory_button.setEnabled(bool(name))
+        self.remove_subcategory_button.setEnabled(bool(name))
         if not name:
             self.subcategory_list.addItem("분야를 선택하세요.")
             return
-        try:
-            subcategories = taxonomy_subcategory_names(name)
-        except TaxonomyError:
-            subcategories = []
+        subcategories = self._subcategories_for_category(name)
         if not subcategories:
             disabled = QListWidgetItem("세부분야 없음")
             disabled.setFlags(Qt.NoItemFlags)
@@ -295,6 +313,38 @@ class FolderSettingsDialog(QDialog):
             return
         for subcategory in subcategories:
             self.subcategory_list.addItem(subcategory)
+
+    def _bundled_subcategories(self, category: str) -> list[str]:
+        try:
+            return taxonomy_subcategory_names(category)
+        except TaxonomyError:
+            return []
+
+    def _subcategories_for_category(self, category: str) -> list[str]:
+        if category in self._subcategory_overrides:
+            return list(self._subcategory_overrides[category])
+        return self._bundled_subcategories(category)
+
+    def _set_subcategories_for_category(
+        self, category: str, subcategories: list[str]
+    ) -> None:
+        normalized = self._normalized_names(subcategories)
+        if normalized == self._bundled_subcategories(category):
+            self._subcategory_overrides.pop(category, None)
+        else:
+            self._subcategory_overrides[category] = normalized
+
+    def _normalized_names(self, values: list[str]) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            name = " ".join(str(value).split())
+            key = name.casefold()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+        return names
 
     def _checked_focus_categories(self) -> list[str]:
         return [
@@ -308,6 +358,14 @@ class FolderSettingsDialog(QDialog):
             self.focus_list.item(row).text().strip()
             for row in range(self.focus_list.count())
         ]
+
+    def _research_subcategories(self) -> dict[str, list[str]]:
+        categories = set(self._research_categories())
+        return {
+            category: subcategories
+            for category, subcategories in self._subcategory_overrides.items()
+            if category in categories
+        }
 
     def _category_name(self, title: str, value: str = "") -> str | None:
         name, accepted = QInputDialog.getText(
@@ -331,6 +389,28 @@ class FolderSettingsDialog(QDialog):
             return None
         return normalized
 
+    def _subcategory_name(self, title: str, value: str = "") -> str | None:
+        name, accepted = QInputDialog.getText(
+            self,
+            title,
+            "세부분야 이름",
+            text=value,
+        )
+        if not accepted:
+            return None
+        normalized = " ".join(name.split())
+        if not normalized:
+            QMessageBox.warning(self, "세부분야 이름 필요", "이름을 입력하세요.")
+            return None
+        if len(normalized) > 80 or "," in normalized:
+            QMessageBox.warning(
+                self,
+                "세부분야 이름 확인",
+                "이름은 80자 이하로 입력하고 쉼표는 사용하지 마세요.",
+            )
+            return None
+        return normalized
+
     def _add_focus_category(self) -> None:
         name = self._category_name("연구분야 추가")
         if name is None:
@@ -347,6 +427,7 @@ class FolderSettingsDialog(QDialog):
         self.focus_list.addItem(entry)
         self.focus_list.setCurrentItem(entry)
         entry.setSelected(True)
+        self._set_subcategories_for_category(name, [])
         self._show_subcategories(entry)
 
     def _edit_focus_category(self) -> None:
@@ -370,7 +451,11 @@ class FolderSettingsDialog(QDialog):
         if name.casefold() in others:
             QMessageBox.warning(self, "중복 연구분야", "이미 같은 분야가 있습니다.")
             return
+        old_name = item.text()
+        current_subcategories = self._subcategories_for_category(old_name)
+        self._subcategory_overrides.pop(old_name, None)
         item.setText(name)
+        self._set_subcategories_for_category(name, current_subcategories)
         self._show_subcategories(item)
 
     def _remove_focus_categories(self) -> None:
@@ -383,11 +468,48 @@ class FolderSettingsDialog(QDialog):
             )
             return
         for item in selected:
+            self._subcategory_overrides.pop(item.text().strip(), None)
             self.focus_list.takeItem(self.focus_list.row(item))
         current = self.focus_list.currentItem()
         if current is None and self.focus_list.count():
             self.focus_list.setCurrentRow(0)
             current = self.focus_list.currentItem()
+        self._show_subcategories(current)
+
+    def _add_subcategory(self) -> None:
+        current = self.focus_list.currentItem()
+        if current is None:
+            return
+        category = current.text().strip()
+        name = self._subcategory_name("세부분야 추가")
+        if name is None:
+            return
+        subcategories = self._subcategories_for_category(category)
+        if name.casefold() in {value.casefold() for value in subcategories}:
+            QMessageBox.warning(self, "중복 세부분야", "이미 같은 세부분야가 있습니다.")
+            return
+        self._set_subcategories_for_category(category, [*subcategories, name])
+        self._show_subcategories(current)
+        matches = self.subcategory_list.findItems(name, Qt.MatchExactly)
+        if matches:
+            self.subcategory_list.setCurrentItem(matches[0])
+            matches[0].setSelected(True)
+
+    def _remove_subcategories(self) -> None:
+        current = self.focus_list.currentItem()
+        if current is None:
+            return
+        selected = self.subcategory_list.selectedItems()
+        if not selected:
+            return
+        category = current.text().strip()
+        removed = {item.text().casefold() for item in selected}
+        remaining = [
+            value
+            for value in self._subcategories_for_category(category)
+            if value.casefold() not in removed
+        ]
+        self._set_subcategories_for_category(category, remaining)
         self._show_subcategories(current)
 
     def _add_watch_folder(self) -> None:
@@ -455,6 +577,7 @@ class FolderSettingsDialog(QDialog):
                 remove_source_after_import=self.remove_source_check.isChecked(),
                 auto_organize_academic=self.auto_organize_check.isChecked(),
                 research_categories=self._research_categories(),
+                research_subcategories=self._research_subcategories(),
                 focus_categories=self._checked_focus_categories(),
                 watch_folders=watch_folders,
                 watch_subdirectories=self.watch_subdirectories_check.isChecked(),

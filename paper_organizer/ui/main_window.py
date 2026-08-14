@@ -389,7 +389,7 @@ class PaperOrganizerWindow(QMainWindow):
             self._library_ribbon_action_bindings.append((action, button))
             return action
 
-        _button, spdf_menu = add_menu_button("sPDF", "open")
+        _button, spdf_menu = add_menu_button("PDF 열기", "open")
         add_button_action(spdf_menu, self.library_widget.open_button, "open")
         add_button_action(spdf_menu, self.library_widget.open_with_ai_button, "ai")
         add_button_action(spdf_menu, self.library_widget.selection_ai_button, "ai")

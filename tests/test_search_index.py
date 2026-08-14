@@ -11,6 +11,7 @@ from paper_organizer.application.library_workflow import LibraryWorkflowControll
 from paper_organizer.core.search_index import (
     fts5_available,
     indexed_file_ids,
+    normalize_search_text,
     rebuild_search_index,
     search,
     search_index_path,
@@ -69,6 +70,28 @@ def write_pdf(path: Path, pages: list[str]) -> None:
     os.utime(path, (old, old))
 
 
+class SearchTextNormalizationTests(unittest.TestCase):
+    def test_search_text_is_flattened_without_page_markers(self):
+        text = (
+            "[PDF PAGE 12]\n"
+            "Heat shock increases poly-\n"
+            "peptide binding.\n"
+            "\t2\t\n"
+            "12 / 20\n"
+            "The next line stays searchable."
+        )
+
+        normalized = normalize_search_text(text)
+
+        self.assertEqual(
+            normalized,
+            "Heat shock increases polypeptide binding. "
+            "The next line stays searchable.",
+        )
+        self.assertNotIn("\n", normalized)
+        self.assertNotIn("PDF PAGE", normalized)
+
+
 @unittest.skipUnless(fts5_available(), "SQLite FTS5 is unavailable")
 class SearchIndexTests(unittest.TestCase):
     def _library(self, root: Path) -> tuple[LibraryWorkflowController, Path]:
@@ -123,6 +146,13 @@ class SearchIndexTests(unittest.TestCase):
 
             self.assertTrue(search_index_path(library).is_file())
             self.assertEqual(len(indexed_file_ids(library)), 2)
+            connection = sqlite3.connect(search_index_path(library))
+            indexed_text = connection.execute(
+                "SELECT text FROM pages WHERE text LIKE '%jmb.2019%' LIMIT 1"
+            ).fetchone()[0]
+            connection.close()
+            self.assertNotIn("\n", indexed_text)
+            self.assertIn("doi:10.1016/j.jmb.2019.01.001 Introduction", indexed_text)
 
             hits = search(library, "halophilic")
             self.assertEqual(len(hits), 1)
@@ -165,6 +195,20 @@ class SearchIndexTests(unittest.TestCase):
             self.assertEqual(len(hits), 1)
             self.assertEqual(hits[0].venue, "Journal of Molecular Biology")
 
+    def test_metadata_fallback_search_ignores_manual_and_ai_tags(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _controller, library = self._library(root)
+            paperpack = next(iter(iter_paperpacks(library)))
+            record = load_paperpack_metadata(paperpack)
+            record.setdefault("classification", {})["tags"] = ["onlytagtoken"]
+            record.setdefault("classification", {})["ai_tags"] = ["onlyaitagtoken"]
+            update_paperpack(paperpack, record, changed_by="test")
+            rebuild_search_index(library)
+
+            self.assertEqual(search_metadata(library, "onlytagtoken"), [])
+            self.assertEqual(search_metadata(library, "onlyaitagtoken"), [])
+
     def test_patent_index_searches_registration_and_application_numbers(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -195,6 +239,9 @@ class SearchIndexTests(unittest.TestCase):
             self.assertIn("thermostable", entries[0].metadata.title.casefold())
             self.assertEqual(entries[0].search_locations, ("body",))
             self.assertEqual(entries[0].search_page, 2)
+            self.assertIn("Catalytic efficiency", entries[0].search_snippet)
+            self.assertIn("Halophilic variants retained activity", entries[0].search_snippet)
+            self.assertIn("References follow", entries[0].search_snippet)
 
             title_entries = controller.search_library("transformer architecture")
             self.assertEqual(len(title_entries), 1)

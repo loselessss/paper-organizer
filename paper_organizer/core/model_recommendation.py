@@ -16,6 +16,7 @@ from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
 VALID_MODEL_PROFILES = {"auto", "speed", "balanced", "quality", "manual"}
 BACKGROUND_RECOMMENDED_MODEL = "qwen3:1.7b"
 LOCAL_AI_MINIMUM_TOTAL_RAM_GB = 12.0
+LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,7 +485,8 @@ def _assess(
     elif (
         hardware.memory_total_gb >= spec.recommended_ram_gb
         and hardware.memory_available_gb >= min(
-            spec.runtime_memory_gb + 1.0, hardware.memory_total_gb * 0.75
+            spec.runtime_memory_gb + LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB,
+            hardware.memory_total_gb * 0.75,
         )
     ):
         rating = "권장"
@@ -492,7 +494,10 @@ def _assess(
     else:
         rating = "사용 가능"
         warnings.append("현재 가용 RAM에 따라 CPU 처리 속도가 느리거나 스왑이 생길 수 있습니다.")
-    if hardware.memory_available_gb < spec.runtime_memory_gb + 1.0:
+    if (
+        hardware.memory_available_gb
+        < spec.runtime_memory_gb + LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB
+    ):
         warnings.append(
             f"현재 가용 RAM {hardware.memory_available_gb:g}GB에서는 실행을 보류하고 "
             "다른 작업이 끝난 뒤 다시 확인해야 합니다."
@@ -521,7 +526,7 @@ def memory_tier_guidance(total_ram_gb: float) -> str:
         )
     if total_ram_gb < 24:
         return (
-            "16GB급 RAM: 모델 실행 예상량 외에 시스템 여유 1GB를 남깁니다. "
+            "16GB급 RAM: 모델 실행 예상량 외에 시스템 여유 0.5GB를 남깁니다. "
             "백그라운드 분석은 검증된 Qwen3 1.7B를 권장합니다. "
             "Qwen3.5 2B는 우선 다운로드해 비교할 수 있습니다."
         )

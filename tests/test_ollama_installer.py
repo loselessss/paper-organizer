@@ -9,6 +9,7 @@ from paper_organizer.infra.ollama_installer import (
     OLLAMA_DOWNLOAD_URL,
     WINGET_PACKAGE_ID,
     ensure_runtime,
+    find_ollama_executable,
     find_ollama_app_executable,
     find_winget_executable,
     inspect_runtime,
@@ -63,6 +64,27 @@ class InspectRuntimeTests(unittest.TestCase):
         self.assertFalse(state.installed)
         self.assertFalse(state.running)
         self.assertIn("설치되어 있지 않습니다", state.message)
+
+
+class FindOllamaExecutableTests(unittest.TestCase):
+    def test_path_lookup_wins_when_available(self):
+        with mock.patch(
+            "paper_organizer.infra.ollama_installer.shutil.which",
+            return_value="C:/Programs/Ollama/ollama.exe",
+        ):
+            self.assertEqual(find_ollama_executable(), "C:/Programs/Ollama/ollama.exe")
+
+    def test_windowsapps_alias_is_not_treated_as_installed_ollama(self):
+        with tempfile.TemporaryDirectory() as temp:
+            local = Path(temp)
+            alias = local / "Microsoft" / "WindowsApps" / "ollama.exe"
+            alias.parent.mkdir(parents=True)
+            alias.write_bytes(b"")
+            with mock.patch(
+                "paper_organizer.infra.ollama_installer.shutil.which",
+                return_value=str(alias),
+            ), mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                self.assertEqual(find_ollama_executable(), "")
 
 
 class FindWingetTests(unittest.TestCase):

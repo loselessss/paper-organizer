@@ -176,8 +176,6 @@ def build_library_index(
                 bibliography.get("venue", ""),
                 classification.get("category", ""),
                 classification.get("subcategory", ""),
-                classification.get("tags", []),
-                classification.get("ai_tags", []),
                 description.get("keywords", []),
                 description.get("summary", ""),
                 experimental,

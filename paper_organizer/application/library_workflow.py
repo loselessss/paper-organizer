@@ -87,6 +87,7 @@ from paper_organizer.core.patent import patent_index_numbers
 from paper_organizer.core.search_index import (
     SearchHit,
     SearchIndexError,
+    normalize_search_text,
     rebuild_search_index,
     remove_search_entry,
     search as search_full_text,
@@ -247,7 +248,6 @@ def _entry_metadata_search_locations(
                     metadata.venue,
                     metadata.category,
                     metadata.subcategory,
-                    *metadata.tags,
                 )
             ),
         ),
@@ -257,6 +257,61 @@ def _entry_metadata_search_locations(
         for label, value in fields
         if all(token in value.casefold() for token in tokens)
     )
+
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
+
+
+def _search_context_snippet(text: str, query: str) -> str:
+    """Return one or two sentences around the first query token match."""
+
+    normalized_query = " ".join(query.casefold().split())
+    tokens = tuple(token for token in normalized_query.split() if token)
+    text = normalize_search_text(text)
+    if not text or not tokens:
+        return ""
+    sentences = [
+        " ".join(sentence.split())
+        for sentence in _SENTENCE_BOUNDARY_RE.split(text)
+        if sentence.strip()
+    ]
+    if not sentences:
+        return ""
+    match_index = next(
+        (
+            index
+            for index, sentence in enumerate(sentences)
+            if any(token in sentence.casefold() for token in tokens)
+        ),
+        -1,
+    )
+    if match_index < 0:
+        return ""
+    start = max(0, match_index - 1)
+    end = min(len(sentences), match_index + 2)
+    snippet = " ".join(sentences[start:end])
+    if len(snippet) > 900:
+        return snippet[:897].rstrip() + "..."
+    return snippet
+
+
+def _paperpack_search_context(
+    paperpack: Path, page: int, query: str, fallback: str
+) -> str:
+    if page <= 0:
+        return fallback
+    try:
+        page_text = next(
+            (
+                text
+                for number, text in content_pages(load_paperpack_content(paperpack))
+                if number == page
+            ),
+            "",
+        )
+    except (OSError, PaperPackError, TypeError, ValueError):
+        return fallback
+    return _search_context_snippet(page_text, query) or fallback
 
 
 @dataclass(frozen=True, slots=True)
@@ -1649,6 +1704,7 @@ class LibraryWorkflowController:
         remove_source_after_import: bool | None = None,
         auto_organize_academic: bool | None = None,
         research_categories: list[str] | None = None,
+        research_subcategories: dict[str, list[str]] | None = None,
         focus_categories: list[str] | None = None,
         watch_folders: list[Path] | None = None,
         watch_subdirectories: bool | None = None,
@@ -1729,12 +1785,40 @@ class LibraryWorkflowController:
             settings.research_categories = [
                 name.strip() for name in research_categories if name.strip()
             ]
+        if research_subcategories is not None:
+            settings.research_subcategories = {
+                category.strip(): [
+                    subcategory.strip()
+                    for subcategory in subcategories
+                    if subcategory.strip()
+                ]
+                for category, subcategories in research_subcategories.items()
+                if category.strip()
+            }
         if focus_categories is not None:
             settings.focus_categories = [
                 name.strip() for name in focus_categories if name.strip()
             ]
         save_settings(settings, self._settings_path)
         self._library_cache = None
+        return settings
+
+    def save_library_column_preferences(
+        self,
+        *,
+        order: list[str] | None = None,
+        hidden: list[str] | None = None,
+    ) -> AppSettings:
+        settings = self.settings()
+        if order is not None:
+            settings.library_column_order = [
+                column.strip() for column in order if column.strip()
+            ]
+        if hidden is not None:
+            settings.library_hidden_columns = [
+                column.strip() for column in hidden if column.strip()
+            ]
+        save_settings(settings, self._settings_path)
         return settings
 
     def scan(
@@ -2620,11 +2704,17 @@ class LibraryWorkflowController:
         return True
 
     def approve_category_suggestion(self, entry: LibraryEntry) -> str:
-        """Save an AI-proposed category only after explicit user approval."""
+        """Add an AI-proposed category to settings."""
 
         suggestion = str(
             entry.record.get("analysis", {}).get("suggested_category") or ""
         ).strip()
+        return self.add_suggested_category(suggestion)
+
+    def add_suggested_category(self, suggestion: str) -> str:
+        """Add a valid AI-proposed category to settings if it is new."""
+
+        suggestion = suggestion.strip()
         if not suggestion:
             raise LibraryWorkflowError("승인할 추천 연구분야가 없습니다.")
         if len(suggestion) > 80 or "," in suggestion:
@@ -2723,6 +2813,12 @@ class LibraryWorkflowController:
         ):
             analysis_result["patent_claims"] = execution.patent_claims_text
         record["analysis"] = analysis_result
+        if suggested_category:
+            try:
+                self.add_suggested_category(suggested_category)
+                analysis_result["suggested_category_applied"] = True
+            except LibraryWorkflowError as exc:
+                analysis_result["suggested_category_error"] = str(exc)
         description = record.setdefault("description", {})
         classification = record.setdefault("classification", {})
         classification["ai_tags"] = ai_tags
@@ -3610,13 +3706,6 @@ class LibraryWorkflowController:
                     metadata.assignee,
                     metadata.category,
                     metadata.subcategory,
-                    *metadata.tags,
-                    *[
-                        str(value)
-                        for value in entry.record.get("classification", {}).get(
-                            "ai_tags", []
-                        )
-                    ],
                     metadata.summary,
                     json.dumps(
                         entry.record.get("experimental_details", {}),
@@ -4094,12 +4183,18 @@ class LibraryWorkflowController:
                 continue
             entry = by_path.get(path)
             if entry is not None:
+                snippet = _paperpack_search_context(
+                    path,
+                    hit.page,
+                    normalized,
+                    hit.snippet,
+                )
                 entries.append(
                     replace(
                         entry,
                         search_locations=hit.match_locations,
                         search_page=hit.page,
-                        search_snippet=hit.snippet,
+                        search_snippet=snippet,
                     )
                 )
         return entries or self.list_library(normalized)

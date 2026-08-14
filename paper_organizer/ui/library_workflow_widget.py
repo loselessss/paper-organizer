@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHeaderView,
@@ -77,6 +78,73 @@ from paper_organizer.ui.fluent_style import decorate_action, decorate_button
 
 
 _REVIEW_DRAG_MIME = "application/x-paper-organizer-review-items"
+_SEARCH_LOCATION_LABELS = {
+    "title": "제목",
+    "summary": "요약",
+    "metadata": "서지",
+    "body": "본문",
+}
+_LIBRARY_COLUMNS = (
+    ("title", "제목"),
+    ("authors", "저자/발명자"),
+    ("year", "연도"),
+    ("category", "분야"),
+    ("analysis_version", "분석 버전"),
+    ("translation_status", "번역 상태"),
+    ("created_at", "등록일"),
+    ("analysis_at", "분석일"),
+    ("search_location", "검색 위치"),
+)
+_LIBRARY_COLUMN_IDS = tuple(column_id for column_id, _label in _LIBRARY_COLUMNS)
+_LIBRARY_COLUMN_LABELS = {
+    column_id: label for column_id, label in _LIBRARY_COLUMNS
+}
+
+
+def _search_location_text(entry: LibraryEntry) -> str:
+    labels: list[str] = []
+    for location in entry.search_locations:
+        if location == "body" and entry.search_page:
+            label = f"본문 {entry.search_page}쪽"
+        else:
+            label = _SEARCH_LOCATION_LABELS.get(location, location)
+        if label not in labels:
+            labels.append(label)
+    if entry.search_snippet and "문맥 있음" not in labels:
+        labels.append("문맥 있음")
+    return " · ".join(labels)
+
+
+def _search_tooltip_text(entry: LibraryEntry) -> str:
+    location = _search_location_text(entry)
+    parts = []
+    if location:
+        parts.append(f"검색 위치: {location}")
+    if entry.search_snippet:
+        parts.append(entry.search_snippet)
+    return "\n\n".join(parts)
+
+
+def _search_result_summary(query: str, entries: list[LibraryEntry]) -> str:
+    counts: dict[str, int] = {}
+    snippets = 0
+    for entry in entries:
+        if entry.search_snippet:
+            snippets += 1
+        for location in entry.search_locations:
+            label = _SEARCH_LOCATION_LABELS.get(location, location)
+            counts[label] = counts.get(label, 0) + 1
+    count_text = " · ".join(
+        f"{label} {count}" for label, count in counts.items() if count
+    )
+    parts = [f"검색 '{query}'", f"결과 {len(entries)}개"]
+    if count_text:
+        parts.append(count_text)
+    if snippets:
+        parts.append(f"문맥 {snippets}개")
+    return " · ".join(parts)
+
+
 _CLAIM_BOUNDARY_RE = re.compile(
     r"^(?:"
     r"(?:【|\[)?\s*청구항\s*\d+\s*(?:】|\])?"
@@ -164,6 +232,25 @@ def _analysis_version_label(record: dict) -> str:
     suffix = prompt_version.split(marker, 1)[1]
     number = suffix.split("-", 1)[0]
     return f"v{number}" if number.isdigit() else ""
+
+
+def _analysis_html(sections: list[str] | str) -> str:
+    body = "".join(sections) if isinstance(sections, list) else sections
+    return (
+        "<style>"
+        "body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; "
+        "font-size: 10pt; color: #1f1f1f; line-height: 1.38; }"
+        "h3 { font-size: 11pt; margin: 12px 0 5px; font-weight: 700; }"
+        "p { margin: 4px 0 7px; }"
+        "ul { margin: 4px 0 9px 20px; padding: 0; }"
+        "li { margin: 2px 0; }"
+        ".muted { color: #777; }"
+        ".empty { color: #777; }"
+        ".warning { color: #875f00; }"
+        ".error { color: #a33; }"
+        "</style>"
+        + body
+    )
 
 
 def _format_library_date(value: str) -> str:
@@ -569,9 +656,19 @@ class _BackgroundAnalysisWorker(QThread):
 
 
 class MetadataForm(QGroupBox):
-    def __init__(self, title: str, parent=None) -> None:
+    def __init__(self, title: str, parent=None, *, compact: bool = False) -> None:
         super().__init__(title, parent)
+        self._compact = compact
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        if not title:
+            self.setFlat(True)
+            self.setStyleSheet(
+                "QGroupBox { border: 0; margin-top: 0; padding-top: 0; }"
+            )
         form = QFormLayout(self)
+        self._form_layout = form
+        form.setContentsMargins(4 if not title else 12, 0 if not title else 12, 4, 4)
+        form.setVerticalSpacing(4 if not title else 6)
         self.title_edit = QLineEdit()
         self.authors_edit = QLineEdit()
         self.authors_edit.setPlaceholderText("쉼표로 구분")
@@ -587,6 +684,7 @@ class MetadataForm(QGroupBox):
         self.subcategory_edit = QLineEdit("General")
         self.tags_edit = QLineEdit()
         self.tags_edit.setPlaceholderText("쉼표로 구분")
+        self._tags: list[str] = []
         self._summary = ""
         self._document_type = "paper"
         self.document_type_combo = QComboBox()
@@ -616,9 +714,18 @@ class MetadataForm(QGroupBox):
         form.addRow(self.publication_number_label, self.publication_number_edit)
         form.addRow(self.application_number_label, self.application_number_edit)
         form.addRow(self.assignee_label, self.assignee_edit)
-        form.addRow("분야", self.category_edit)
-        form.addRow("세부분야", self.subcategory_edit)
-        form.addRow("태그", self.tags_edit)
+        if compact:
+            category_row = QWidget()
+            category_layout = QHBoxLayout(category_row)
+            category_layout.setContentsMargins(0, 0, 0, 0)
+            category_layout.setSpacing(6)
+            category_layout.addWidget(self.category_edit, 1)
+            category_layout.addWidget(self.subcategory_edit, 1)
+            form.addRow("분야/세부분야", category_row)
+        else:
+            form.addRow("분야", self.category_edit)
+            form.addRow("세부분야", self.subcategory_edit)
+            form.addRow("태그", self.tags_edit)
 
     def set_metadata(self, metadata: EditablePaperMetadata | None) -> None:
         value = metadata or EditablePaperMetadata()
@@ -640,6 +747,7 @@ class MetadataForm(QGroupBox):
         self.category_edit.setText(value.category)
         self.subcategory_edit.setText(value.subcategory)
         self.tags_edit.setText(", ".join(value.tags))
+        self._tags = list(value.tags)
         self._summary = value.summary
         self._set_document_type(value.document_type)
         self.setEnabled(metadata is not None)
@@ -658,17 +766,42 @@ class MetadataForm(QGroupBox):
                 self.document_type_combo.setCurrentIndex(index)
                 self.document_type_combo.blockSignals(False)
         self.authors_label.setText("발명자" if patent else "저자")
-        self.venue_label.setVisible(not patent)
-        self.venue_edit.setVisible(not patent)
+        self._set_form_row_visible(self.venue_label, self.venue_edit, not patent)
         for label, editor in (
             (self.patent_office_label, self.patent_office_edit),
             (self.publication_number_label, self.publication_number_edit),
             (self.assignee_label, self.assignee_edit),
         ):
-            label.setVisible(patent)
-            editor.setVisible(patent)
-        self.application_number_label.setVisible(False)
-        self.application_number_edit.setVisible(False)
+            self._set_form_row_visible(label, editor, patent)
+        self._set_form_row_visible(
+            self.application_number_label,
+            self.application_number_edit,
+            False,
+        )
+
+    def _set_form_row_visible(
+        self,
+        label: QLabel,
+        editor: QWidget,
+        visible: bool,
+    ) -> None:
+        label.setMaximumHeight(16777215 if visible else 0)
+        editor.setMaximumHeight(16777215 if visible else 0)
+        if hasattr(self._form_layout, "setRowVisible"):
+            try:
+                row, _role = self._form_layout.getWidgetPosition(label)
+                if row >= 0:
+                    self._form_layout.setRowVisible(row, visible)
+                    return
+            except (AttributeError, TypeError):
+                pass
+            try:
+                self._form_layout.setRowVisible(label, visible)
+                return
+            except TypeError:
+                pass
+        label.setVisible(visible)
+        editor.setVisible(visible)
 
     def metadata(self) -> EditablePaperMetadata:
         year_text = self.year_edit.text().strip()
@@ -699,7 +832,11 @@ class MetadataForm(QGroupBox):
             assignee=self.assignee_edit.text().strip(),
             category=self.category_edit.text().strip() or "Uncategorized",
             subcategory=self.subcategory_edit.text().strip() or "General",
-            tags=split_values(self.tags_edit.text()),
+            tags=(
+                self._tags
+                if self._compact
+                else split_values(self.tags_edit.text())
+            ),
             summary=self._summary,
         )
 
@@ -764,7 +901,7 @@ class CollectionReviewWidget(QWidget):
 
         review_actions = QGridLayout()
         self.select_all_button = QPushButton("전체 선택")
-        self.open_button = QPushButton("sPDF로 열기")
+        self.open_button = QPushButton("PDF 열기")
         self.edit_button = QPushButton("색인 수정…")
         self.organize_button = QPushButton("선택 항목 분석 큐로 보내기")
         self.trash_button = QPushButton("제외 목록으로 보내기")
@@ -978,7 +1115,7 @@ class CollectionReviewWidget(QWidget):
         try:
             open_pdf(item.path, self)
         except Exception as exc:
-            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+            QMessageBox.warning(self, "PDF 열기 실패", str(exc))
 
     def _show_context_menu(self, position) -> None:
         index = self.table.indexAt(position)
@@ -989,7 +1126,7 @@ class CollectionReviewWidget(QWidget):
         if not items:
             return
         menu = QMenu(self)
-        open_action = menu.addAction("새 PDF를 sPDF로 열기")
+        open_action = menu.addAction("새 PDF 열기")
         open_action.triggered.connect(self._open_selected)
         if len(items) == 1 and items[0].duplicate is not None:
             duplicate = items[0].duplicate
@@ -1945,19 +2082,27 @@ class LibraryWidget(QWidget):
         search_row.addWidget(refresh_button)
         search_row.addWidget(self.status_label, 1)
         root.addLayout(search_row)
+        self.search_result_bar = QFrame()
+        self.search_result_bar.setObjectName("librarySearchResultBar")
+        self.search_result_bar.setFrameShape(QFrame.StyledPanel)
+        self.search_result_bar.setStyleSheet(
+            "QFrame#librarySearchResultBar {"
+            " background-color: #eef6ff;"
+            " border: 1px solid #b8d7f2;"
+            " border-radius: 4px;"
+            "}"
+            "QLabel { color: #173f68; }"
+        )
+        search_result_layout = QHBoxLayout(self.search_result_bar)
+        search_result_layout.setContentsMargins(9, 5, 9, 5)
+        self.search_result_label = QLabel("")
+        self.search_result_label.setWordWrap(True)
+        search_result_layout.addWidget(self.search_result_label, 1)
+        self.search_result_bar.setVisible(False)
+        root.addWidget(self.search_result_bar)
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            [
-                "제목",
-                "저자/발명자",
-                "연도",
-                "분야",
-                "분석 버전",
-                "번역 상태",
-                "등록일",
-                "분석일",
-                "검색 위치",
-            ]
+            [label for _column_id, label in _LIBRARY_COLUMNS]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -1965,11 +2110,16 @@ class LibraryWidget(QWidget):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setSectionsMovable(True)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._show_column_menu)
+        header.sectionMoved.connect(self._library_column_moved)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         self.table.setColumnWidth(0, 260)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.setColumnWidth(2, 72)
-        self.table.setColumnWidth(8, 115)
+        self.table.setColumnWidth(8, 165)
+        self._applying_column_layout = False
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.itemSelectionChanged.connect(self._selection_changed)
@@ -1982,28 +2132,26 @@ class LibraryWidget(QWidget):
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.form = MetadataForm("선택한 논문의 PaperPack 색인 편집")
-        self.form.set_metadata(None)
-        detail_layout.addWidget(self.form)
-        self.type_suggestion_label = QLabel()
-        self.type_suggestion_label.setWordWrap(True)
-        self.type_suggestion_label.setFixedHeight(
-            self.type_suggestion_label.fontMetrics().lineSpacing() * 2 + 6
-        )
-        detail_layout.addWidget(self.type_suggestion_label)
+        detail_layout.setSpacing(4)
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
         self.save_button.setToolTip("현재 색인 편집 내용을 저장하고 통합 색인을 다시 만듭니다.")
         save_row = QHBoxLayout()
+        save_row.setContentsMargins(0, 0, 0, 0)
+        save_row.setSpacing(6)
         save_row.addStretch(1)
-        self.approve_category_button = QPushButton("분야 승인")
-        self.approve_category_button.setToolTip("AI 추천 연구분야를 승인하고 다시 분석합니다.")
-        save_row.addWidget(self.approve_category_button)
         save_row.addWidget(self.save_button)
         detail_layout.addLayout(save_row)
-        self.open_with_ai_button = QPushButton("sPDF + AI")
-        self.open_with_ai_button.setToolTip("AI 번역/요약 창과 함께 sPDF를 엽니다.")
-        self.open_button = QPushButton("sPDF")
-        self.open_button.setToolTip("선택한 논문을 sPDF로 엽니다.")
+        self.type_suggestion_label = QLabel()
+        self.type_suggestion_label.setWordWrap(True)
+        self.type_suggestion_label.setVisible(False)
+        detail_layout.addWidget(self.type_suggestion_label)
+        self.form = MetadataForm("", compact=True)
+        self.form.set_metadata(None)
+        detail_layout.addWidget(self.form)
+        self.open_with_ai_button = QPushButton("PDF + AI")
+        self.open_with_ai_button.setToolTip("AI 번역/요약 창과 함께 PDF를 엽니다.")
+        self.open_button = QPushButton("PDF 열기")
+        self.open_button.setToolTip("선택한 논문 PDF를 엽니다.")
         self.selection_ai_button = QPushButton("선택 AI")
         self.selection_ai_button.setToolTip(
             "sPDF에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
@@ -2060,7 +2208,6 @@ class LibraryWidget(QWidget):
         decorate_button(self.permanent_delete_button, "delete", role="destructive")
         decorate_button(self.reanalyze_selected_button, "refresh")
         decorate_button(self.reanalyze_all_button, "refresh")
-        decorate_button(self.approve_category_button, "check", role="primary")
         decorate_button(self.paperpack_manage_button, "archive")
         self.translation_button.toggled.connect(self._translation_toggled)
         self.restore_translation_button.clicked.connect(
@@ -2081,7 +2228,6 @@ class LibraryWidget(QWidget):
         )
         self.reanalyze_selected_button.clicked.connect(self._reanalyze_selected)
         self.reanalyze_all_button.clicked.connect(self._reanalyze_all)
-        self.approve_category_button.clicked.connect(self._approve_category)
         self.open_button.setEnabled(False)
         self.open_with_ai_button.setEnabled(False)
         self.selection_ai_button.setEnabled(False)
@@ -2091,13 +2237,23 @@ class LibraryWidget(QWidget):
         self.permanent_delete_button.setEnabled(False)
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
-        self.approve_category_button.setEnabled(False)
         analysis_group = QGroupBox("AI 분석 내용")
         analysis_layout = QVBoxLayout(analysis_group)
+        analysis_layout.setContentsMargins(8, 8, 8, 8)
+        analysis_layout.setSpacing(4)
         self.analysis_view = QTextBrowser()
         self.analysis_view.setOpenExternalLinks(False)
         self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
         self.analysis_view.setMinimumHeight(80)
+        self.analysis_view.document().setDocumentMargin(10)
+        self.analysis_view.setStyleSheet(
+            "QTextBrowser {"
+            " background-color: #ffffff;"
+            " border: 1px solid #d8dde6;"
+            " border-radius: 5px;"
+            " padding: 6px;"
+            "}"
+        )
         analysis_layout.addWidget(self.analysis_view)
         detail_layout.addWidget(analysis_group, 1)
 
@@ -2120,6 +2276,7 @@ class LibraryWidget(QWidget):
         detail_panel.setMinimumWidth(0)
         splitter.setSizes([640, 640])
         root.addWidget(splitter, 1)
+        self._apply_library_column_preferences()
         self._render_analysis(None)
         self.refresh()
 
@@ -2139,6 +2296,107 @@ class LibraryWidget(QWidget):
             self._submit_search()
         else:
             self.refresh(True)
+
+    def _column_index(self, column_id: str) -> int:
+        try:
+            return _LIBRARY_COLUMN_IDS.index(column_id)
+        except ValueError:
+            return -1
+
+    def _library_column_id(self, logical_index: int) -> str:
+        if 0 <= logical_index < len(_LIBRARY_COLUMN_IDS):
+            return _LIBRARY_COLUMN_IDS[logical_index]
+        return ""
+
+    def _apply_library_column_preferences(self) -> None:
+        settings = self._controller.settings()
+        order = [
+            column_id
+            for column_id in settings.library_column_order
+            if column_id in _LIBRARY_COLUMN_IDS
+        ]
+        order.extend(column_id for column_id in _LIBRARY_COLUMN_IDS if column_id not in order)
+        hidden = {
+            column_id
+            for column_id in settings.library_hidden_columns
+            if column_id in _LIBRARY_COLUMN_IDS and column_id != "title"
+        }
+        header = self.table.horizontalHeader()
+        self._applying_column_layout = True
+        try:
+            for visual_index, column_id in enumerate(order):
+                logical_index = self._column_index(column_id)
+                current_visual = header.visualIndex(logical_index)
+                if logical_index >= 0 and current_visual != visual_index:
+                    header.moveSection(current_visual, visual_index)
+            for column_id in _LIBRARY_COLUMN_IDS:
+                logical_index = self._column_index(column_id)
+                if logical_index >= 0:
+                    self.table.setColumnHidden(logical_index, column_id in hidden)
+        finally:
+            self._applying_column_layout = False
+
+    def _save_library_column_preferences(self) -> None:
+        if self._applying_column_layout:
+            return
+        header = self.table.horizontalHeader()
+        ordered = sorted(
+            range(len(_LIBRARY_COLUMN_IDS)),
+            key=header.visualIndex,
+        )
+        order = [self._library_column_id(index) for index in ordered]
+        hidden = [
+            column_id
+            for column_id in _LIBRARY_COLUMN_IDS
+            if column_id != "title"
+            and self.table.isColumnHidden(self._column_index(column_id))
+        ]
+        try:
+            self._controller.save_library_column_preferences(
+                order=order,
+                hidden=hidden,
+            )
+        except Exception as exc:
+            self.status_label.setText(f"라이브러리 열 설정 저장 실패: {exc}")
+
+    def _library_column_moved(
+        self, _logical_index: int, _old_visual_index: int, _new_visual_index: int
+    ) -> None:
+        if self.search_edit.text().strip():
+            return
+        self._save_library_column_preferences()
+
+    def _show_column_menu(self, position) -> None:
+        menu = QMenu(self)
+        actions = []
+        for column_id, label in _LIBRARY_COLUMNS:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not self.table.isColumnHidden(self._column_index(column_id)))
+            action.setEnabled(column_id != "title")
+            actions.append((action, column_id))
+        menu.addSeparator()
+        reset_action = menu.addAction("기본 열 구성으로 되돌리기")
+        selected = menu.exec_(self.table.horizontalHeader().mapToGlobal(position))
+        if selected is None:
+            return
+        if selected is reset_action:
+            try:
+                self._controller.save_library_column_preferences(
+                    order=[],
+                    hidden=[],
+                )
+            except Exception as exc:
+                self.status_label.setText(f"라이브러리 열 설정 저장 실패: {exc}")
+                return
+            self._apply_library_column_preferences()
+            return
+        for action, column_id in actions:
+            if selected is action:
+                logical_index = self._column_index(column_id)
+                self.table.setColumnHidden(logical_index, not action.isChecked())
+                self._save_library_column_preferences()
+                return
 
     def refresh(self, force: bool = False) -> None:
         selected_paths = {
@@ -2230,6 +2488,8 @@ class LibraryWidget(QWidget):
                     "analyzing": "중",
                     "failed": "실패",
                 }.get(translation_item.status, translation_status)
+            search_location_text = _search_location_text(entry)
+            search_tooltip = _search_tooltip_text(entry)
             values = [
                 metadata.title,
                 ", ".join(metadata.authors),
@@ -2239,27 +2499,18 @@ class LibraryWidget(QWidget):
                 translation_status,
                 _format_library_date(entry.paperpack_created_at),
                 _format_library_date(entry.analysis_completed_at),
-                " · ".join(
-                    (
-                        {
-                            "title": "제목",
-                            "summary": "요약",
-                            "metadata": "서지",
-                            "body": (
-                                f"본문 {entry.search_page}쪽"
-                                if entry.search_page
-                                else "본문"
-                            ),
-                        }.get(location, location)
-                        for location in entry.search_locations
-                    )
-                ),
+                search_location_text,
             ]
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setData(Qt.UserRole, str(entry.sidecar_path.resolve()))
-                if column == 8 and entry.search_snippet:
-                    cell.setToolTip(entry.search_snippet)
+                if entry.search_locations:
+                    cell.setToolTip(search_tooltip)
+                    if column == 8:
+                        cell.setBackground(QColor(232, 244, 255))
+                        cell.setForeground(QColor(23, 63, 104))
+                    elif column in {0, 1}:
+                        cell.setBackground(QColor(248, 252, 255))
                 self.table.setItem(row, column, cell)
         self.table.setSortingEnabled(True)
         if sort_column >= 0:
@@ -2281,6 +2532,7 @@ class LibraryWidget(QWidget):
             if path == current_path:
                 current_index = index
         self.library_count_label.setText(f"문서 {len(self._entries)}개")
+        self._update_search_result_bar(query)
         if self.status_label.text().startswith("라이브러리 문서 "):
             self.status_label.clear()
         self.reanalyze_all_button.setEnabled(bool(self._entries))
@@ -2312,7 +2564,25 @@ class LibraryWidget(QWidget):
             self.delete_button.setEnabled(False)
             self.permanent_delete_button.setEnabled(False)
             self.reanalyze_selected_button.setEnabled(False)
-            self.approve_category_button.setEnabled(False)
+
+    def _update_search_result_bar(self, query: str) -> None:
+        header = self.table.horizontalHeader()
+        search_visual_index = header.visualIndex(8)
+        if query:
+            if search_visual_index != 1:
+                self._applying_column_layout = True
+                try:
+                    header.moveSection(search_visual_index, 1)
+                finally:
+                    self._applying_column_layout = False
+            self.search_result_bar.setVisible(True)
+            self.search_result_label.setText(
+                _search_result_summary(query, self._entries)
+            )
+        else:
+            self._apply_library_column_preferences()
+            self.search_result_bar.setVisible(False)
+            self.search_result_label.clear()
 
     def _selected(self) -> LibraryEntry | None:
         row = self.table.currentRow()
@@ -2390,6 +2660,7 @@ class LibraryWidget(QWidget):
             "review_paper": "리뷰논문",
             "patent": "특허",
         }
+        self.type_suggestion_label.setVisible(bool(candidate))
         self.type_suggestion_label.setText(
             f"자동 재분류 후보: {type_labels.get(candidate, candidate)} — 위 문서 유형을 선택하고 저장하면 확정됩니다."
             if candidate
@@ -2408,27 +2679,6 @@ class LibraryWidget(QWidget):
         self.reanalyze_selected_button.setEnabled(bool(entries))
         self.delete_button.setEnabled(bool(entries))
         self.permanent_delete_button.setEnabled(bool(entries))
-        self.approve_category_button.setEnabled(
-            bool(
-                entry
-                and str(
-                    entry.record.get("analysis", {}).get("suggested_category") or ""
-                ).strip()
-            )
-        )
-        suggestion = (
-            str(entry.record.get("analysis", {}).get("suggested_category") or "").strip()
-            if entry
-            else ""
-        )
-        self.approve_category_button.setText(
-            "분야 승인" if suggestion else "분야 없음"
-        )
-        self.approve_category_button.setToolTip(
-            f"AI 추천 연구분야 '{suggestion}'을 승인하고 다시 분석합니다."
-            if suggestion
-            else "승인할 AI 추천 연구분야가 없습니다."
-        )
         self._update_translation_button(entry)
         self._render_analysis(entry)
         self._refresh_pdf_edit_actions(entries)
@@ -2528,8 +2778,10 @@ class LibraryWidget(QWidget):
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
         if entry is None:
             self.analysis_view.setHtml(
-                "<p style='color:#777'>왼쪽 목록에서 문서를 선택하면 "
-                "AI 분석 내용이 표시됩니다.</p>"
+                _analysis_html(
+                    "<p class='empty'>왼쪽 목록에서 문서를 선택하면 "
+                    "AI 분석 내용이 표시됩니다.</p>"
+                )
             )
             return
         path = str(entry.sidecar_path.resolve())
@@ -2546,10 +2798,12 @@ class LibraryWidget(QWidget):
             )
             translated = html.escape(translation.text).replace("\n", "<br>")
             self.analysis_view.setHtml(
-                provenance
-                + "<div style='white-space:pre-wrap; line-height:1.45'>"
-                + translated
-                + "</div>"
+                _analysis_html(
+                    provenance
+                    + "<div style='white-space:pre-wrap; line-height:1.45'>"
+                    + translated
+                    + "</div>"
+                )
             )
             return
         description = entry.record.get("description", {})
@@ -2725,13 +2979,15 @@ class LibraryWidget(QWidget):
                 sections.append(
                     "<p style='color:#999'>표시할 수 있는 정규식 추출 결과가 없습니다.</p>"
                 )
-            self.analysis_view.setHtml("".join(sections))
+            self.analysis_view.setHtml(_analysis_html(sections))
             return
         summary = description.get("summary") or ""
         if not summary and not analysis:
             self.analysis_view.setHtml(
-                "<p style='color:#777'>아직 AI 분석 결과가 없습니다. "
-                "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>"
+                _analysis_html(
+                    "<p class='empty'>아직 AI 분석 결과가 없습니다. "
+                    "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>"
+                )
             )
             return
         if summary:
@@ -2797,7 +3053,7 @@ class LibraryWidget(QWidget):
         if suggestion:
             sections.append(
                 "<h3>추천 연구분야</h3>"
-                f"<p><b>{esc(suggestion)}</b> — 승인 전에는 설정에 추가되지 않습니다.</p>"
+                f"<p><b>{esc(suggestion)}</b> — 연구분야 설정에 자동 반영됩니다.</p>"
             )
         provenance = analysis.get("provenance") or entry.record.get(
             "provenance", {}
@@ -2824,7 +3080,7 @@ class LibraryWidget(QWidget):
                 f"{version_text}"
                 f" · {esc(analysis.get('completed_at', ''))}</p>"
             )
-        self.analysis_view.setHtml("".join(sections))
+        self.analysis_view.setHtml(_analysis_html(sections))
 
     def _reanalyze_selected(self) -> None:
         entries = self._selected_entries()
@@ -2882,14 +3138,14 @@ class LibraryWidget(QWidget):
             return
         if QMessageBox.question(
             self,
-            "추천 연구분야 승인",
-            f"‘{suggestion}’을 설정의 연구분야에 추가하고 이 논문을 다시 분석할까요?",
+            "추천 연구분야 적용",
+            f"‘{suggestion}’을 연구분야 설정에 추가하고 이 논문을 다시 분석할까요?",
         ) != QMessageBox.Yes:
             return
         try:
             approved = self._controller.approve_category_suggestion(entry)
         except Exception as exc:
-            QMessageBox.warning(self, "연구분야 승인 실패", str(exc))
+            QMessageBox.warning(self, "연구분야 적용 실패", str(exc))
             return
         self._queue_reanalysis([entry], high=True)
         self.status_label.setText(
@@ -2923,6 +3179,24 @@ class LibraryWidget(QWidget):
         entry = self._selected()
         if entry is None:
             return
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("색인 편집 저장")
+        dialog.setIcon(QMessageBox.Question)
+        dialog.setText("색인 편집 내용을 저장할까요?")
+        dialog.setInformativeText(
+            "저장하면 PaperPack 메타데이터와 통합 색인을 갱신합니다. "
+            "요약 내용까지 다시 만들 필요가 있으면 저장 후 재요약을 선택하세요."
+        )
+        save_only = dialog.addButton("저장만", QMessageBox.AcceptRole)
+        save_and_reanalyze = dialog.addButton(
+            "저장 후 재요약", QMessageBox.ActionRole
+        )
+        dialog.addButton(QMessageBox.Cancel)
+        dialog.setDefaultButton(save_only)
+        dialog.exec_()
+        clicked = dialog.clickedButton()
+        if clicked not in {save_only, save_and_reanalyze}:
+            return
         try:
             updated = self._controller.update_library_metadata(entry, self.form.metadata())
         except Exception as exc:
@@ -2930,8 +3204,11 @@ class LibraryWidget(QWidget):
             return
         status = "PaperPack 메타데이터 저장 및 통합 인덱스 재생성을 완료했습니다."
         self.refresh()
-        self.status_label.setText(status)
         self.metadata_changed.emit()
+        if clicked is save_and_reanalyze:
+            self._queue_reanalysis([updated], high=True)
+            status += " 재요약을 분석 대기열에 넣었습니다."
+        self.status_label.setText(status)
 
     def _show_context_menu(self, position) -> None:
         index = self.table.indexAt(position)
@@ -2942,7 +3219,7 @@ class LibraryWidget(QWidget):
         if not entries:
             return
         menu = QMenu(self)
-        open_action = menu.addAction("sPDF로 열기")
+        open_action = menu.addAction("PDF 열기")
         decorate_action(open_action, "open")
         open_action.setEnabled(self.open_button.isEnabled())
         open_action.triggered.connect(self._open_selected)
@@ -2974,7 +3251,7 @@ class LibraryWidget(QWidget):
                 or ""
             ).strip()
             approve_action = menu.addAction(
-                f"AI 추천 연구분야 ‘{suggestion}’ 승인"
+                f"AI 추천 연구분야 ‘{suggestion}’ 적용"
                 if suggestion
                 else "AI 추천 연구분야 없음"
             )
@@ -3118,7 +3395,7 @@ class LibraryWidget(QWidget):
                 failures.append(f"{entry.metadata.title}: {exc}")
         self._refresh_pdf_edit_actions(self._selected_entries())
         if failures:
-            QMessageBox.warning(self, "일부 sPDF 열기 실패", "\n".join(failures[:10]))
+            QMessageBox.warning(self, "일부 PDF 열기 실패", "\n".join(failures[:10]))
 
     def _open_selected_with_ai(self) -> None:
         entries = self._selected_entries()
@@ -3138,7 +3415,7 @@ class LibraryWidget(QWidget):
             self._focus_spdf_window(spdf_window)
             self._refresh_pdf_edit_actions(entries)
         except Exception as exc:
-            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+            QMessageBox.warning(self, "PDF 열기 실패", str(exc))
 
     def _open_row(self, row: int) -> None:
         cell = self.table.item(row, 0)
@@ -3164,7 +3441,7 @@ class LibraryWidget(QWidget):
             )
             self._refresh_pdf_edit_actions(self._selected_entries())
         except Exception as exc:
-            QMessageBox.warning(self, "sPDF 열기 실패", str(exc))
+            QMessageBox.warning(self, "PDF 열기 실패", str(exc))
 
     def _spdf_selection_changed(self, selection: SpdfSelection | None) -> None:
         self._spdf_selection = selection

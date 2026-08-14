@@ -8,6 +8,7 @@ from pathlib import Path
 import fitz
 
 from paper_organizer.cli import main
+from paper_organizer.core.paperpack import build_content_payload
 
 
 class CliTests(unittest.TestCase):
@@ -118,6 +119,77 @@ class CliTests(unittest.TestCase):
                         "--move-legacy-to-trash",
                     ]
                 )
+
+    def test_search_normalization_audit_reports_expected_numeric_drop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf = root / "paper.pdf"
+            document = fitz.open()
+            document.new_page()
+            document.save(pdf)
+            document.close()
+            metadata = root / "metadata.json"
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "identity": {"file_id": "sha256:cli-audit"},
+                        "bibliography": {"title": "Audit Paper"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            content = root / "content.json"
+            content.write_text(
+                json.dumps(
+                    build_content_payload(
+                        [
+                            "[PDF PAGE 2]\n"
+                            "Heat shock response remains searchable.\n"
+                            "\t2\t\n"
+                            "Final sentence."
+                        ],
+                    ),
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            pack = root / "library" / "papers" / "paper.paperpack"
+            pack.parent.mkdir(parents=True)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    main(
+                        [
+                            "paperpack",
+                            "create",
+                            str(pdf),
+                            str(metadata),
+                            str(pack),
+                            "--content",
+                            str(content),
+                        ]
+                    ),
+                    0,
+                )
+
+            normal_output = io.StringIO()
+            with redirect_stdout(normal_output):
+                result = main(["audit-search-normalization", str(pack.parent)])
+            self.assertEqual(result, 0)
+            self.assertIn("감소 0개", normal_output.getvalue())
+
+            numeric_output = io.StringIO()
+            with redirect_stdout(numeric_output):
+                result = main(
+                    [
+                        "audit-search-normalization",
+                        str(pack.parent),
+                        "--query",
+                        "page",
+                    ]
+                )
+            self.assertEqual(result, 2)
+            self.assertIn("검색 결과 감소 후보", numeric_output.getvalue())
+            self.assertIn("- page: 1 -> 0", numeric_output.getvalue())
 
 
 if __name__ == "__main__":

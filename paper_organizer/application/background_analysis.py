@@ -20,7 +20,10 @@ from paper_organizer.application.summary_service import (
     SummaryMode,
     ollama_model_supports_ocr,
 )
-from paper_organizer.core.model_recommendation import load_model_catalog
+from paper_organizer.core.model_recommendation import (
+    LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB,
+    load_model_catalog,
+)
 from paper_organizer.infra.hardware import HardwareInspector
 from paper_organizer.infra.ollama_runtime import (
     OllamaRuntimeInspector,
@@ -503,9 +506,9 @@ def _ollama_memory_readiness(
 
     key = _model_key(selected)
     loaded = any(_model_key(model.name) == key for model in status.running_models)
-    reserve_gb = 1.0
+    reserve_gb = LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB
     if loaded:
-        required_gb = max(1.0, reserve_gb)
+        required_gb = reserve_gb
         if available_gb >= required_gb:
             return AnalysisReadiness(True, f"가용 메모리 {available_gb:.1f}GB")
         return AnalysisReadiness(

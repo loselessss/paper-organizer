@@ -205,6 +205,27 @@ class SettingsTests(unittest.TestCase):
 
             self.assertTrue(load_settings(path).watch_subdirectories)
 
+    def test_library_column_preferences_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            settings = AppSettings(
+                library_column_order=["title", "year", "authors"],
+                library_hidden_columns=["translation_status", "analysis_at"],
+            )
+
+            save_settings(settings, path)
+            loaded = load_settings(path)
+
+            self.assertEqual(loaded.library_column_order, ["title", "year", "authors"])
+            self.assertEqual(
+                loaded.library_hidden_columns,
+                ["translation_status", "analysis_at"],
+            )
+        with self.assertRaises(ValueError):
+            AppSettings(library_column_order=["title", "title"]).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(library_hidden_columns=[""]).validate()
+
     def test_recursive_watch_rejects_library_inside_watch_folder(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -225,6 +246,10 @@ class SettingsTests(unittest.TestCase):
     def test_research_categories_are_editable_unique_names(self):
         AppSettings(
             research_categories=["생명과학", "사용자 정의 분야"],
+            research_subcategories={
+                "생명과학": ["생화학", "세포생물학"],
+                "사용자 정의 분야": ["사용자 세부분야"],
+            },
             focus_categories=["사용자 정의 분야"],
         ).validate()
         with self.assertRaises(ValueError):
@@ -235,6 +260,16 @@ class SettingsTests(unittest.TestCase):
             AppSettings(
                 research_categories=["생명과학"],
                 focus_categories=["삭제된 분야"],
+            ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(
+                research_categories=["생명과학"],
+                research_subcategories={"삭제된 분야": ["세부분야"]},
+            ).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(
+                research_categories=["생명과학"],
+                research_subcategories={"생명과학": ["생화학", "생화학"]},
             ).validate()
 
 

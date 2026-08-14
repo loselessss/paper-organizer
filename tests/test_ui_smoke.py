@@ -3,6 +3,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
@@ -42,23 +43,20 @@ class UiSmokeTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_fluent_choice_controls_show_dropdown_affordance(self):
+    def test_fluent_choice_controls_keep_native_indicators(self):
         from paper_organizer.ui.fluent_style import apply_fluent_theme
 
         apply_fluent_theme(self.app)
         stylesheet = self.app.styleSheet()
 
-        self.assertIn("QComboBox::down-arrow", stylesheet)
-        self.assertIn("border-top: 5px solid #5f5f5f", stylesheet)
-        self.assertIn("QSpinBox::up-arrow", stylesheet)
-        self.assertIn("border-bottom: 4px solid #6f6f6f", stylesheet)
-        self.assertNotIn(
-            "QComboBox::down-arrow {\n"
-            "            image: none;\n"
-            "            border: 0;\n"
-            "            width: 0;",
-            stylesheet,
-        )
+        self.assertNotIn("QComboBox::down-arrow", stylesheet)
+        self.assertNotIn("QSpinBox::up-arrow", stylesheet)
+        self.assertNotIn("QSpinBox::down-arrow", stylesheet)
+        self.assertNotIn("border-top: 5px solid #5f5f5f", stylesheet)
+        self.assertNotIn("border-bottom: 4px solid #6f6f6f", stylesheet)
+        self.assertNotIn("QComboBox,\n        QSpinBox", stylesheet)
+        self.assertNotIn("QComboBox:focus", stylesheet)
+        self.assertNotIn("QSpinBox:focus", stylesheet)
 
     def test_selection_ai_uses_a_separate_dialog(self):
         from PyQt5.QtCore import Qt
@@ -158,6 +156,7 @@ class UiSmokeTests(unittest.TestCase):
         from PyQt5.QtWidgets import (
             QAction,
             QBoxLayout,
+            QFormLayout,
             QFrame,
             QMessageBox,
             QToolBar,
@@ -240,12 +239,26 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("GPU 사용을 보장하지 않으며", dialog.igpu_guidance.text())
             self.assertEqual(
                 dialog.manage_models_button.text(),
-                "Ollama 설치·삭제…",
+                "Ollama 모델 설치·관리…",
             )
             self.assertEqual(dialog.provider_group.title(), "제공자·출력")
             self.assertEqual(
                 dialog.local_model_group.title(),
-                "모델 선택·Ollama 설치 및 삭제",
+                "추천·Ollama 설치·모델 선택",
+            )
+            local_labels = []
+            for row in range(dialog.local_model_form.rowCount()):
+                item = dialog.local_model_form.itemAt(row, QFormLayout.LabelRole)
+                widget = item.widget() if item is not None else None
+                if isinstance(widget, QLabel):
+                    local_labels.append(widget.text())
+            self.assertLess(
+                local_labels.index("추천 프로필"),
+                local_labels.index("Ollama 모델"),
+            )
+            self.assertLess(
+                local_labels.index("Ollama 모델"),
+                local_labels.index("백그라운드 모델"),
             )
             self.assertFalse(hasattr(dialog, "model_candidates"))
             self.assertEqual(
@@ -342,7 +355,7 @@ class UiSmokeTests(unittest.TestCase):
             ]
             self.assertEqual(
                 ribbon_menus,
-                ["sPDF", "AI 번역", "PaperPack", "삭제", "재요약"],
+                ["PDF 열기", "AI 번역", "PaperPack", "삭제", "재요약"],
             )
             reanalysis_menu = next(
                 button.menu()
@@ -582,10 +595,29 @@ class UiSmokeTests(unittest.TestCase):
             )
             with mock.patch(
                 "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
+                return_value=("맞춤 세부분야", True),
+            ):
+                folder_dialog._add_subcategory()
+            self.assertEqual(
+                folder_dialog.subcategory_list.item(0).text(),
+                "맞춤 세부분야",
+            )
+            with mock.patch(
+                "paper_organizer.ui.folder_settings_dialog.QInputDialog.getText",
                 return_value=("수정된 연구분야", True),
             ):
                 folder_dialog._edit_focus_category()
             self.assertEqual(custom_item.text(), "수정된 연구분야")
+            self.assertEqual(
+                folder_dialog.subcategory_list.item(0).text(),
+                "맞춤 세부분야",
+            )
+            folder_dialog.subcategory_list.item(0).setSelected(True)
+            folder_dialog._remove_subcategories()
+            self.assertEqual(
+                folder_dialog.subcategory_list.item(0).text(),
+                "세부분야 없음",
+            )
             folder_dialog._remove_focus_categories()
             self.assertEqual(folder_dialog.focus_list.count(), initial_categories)
             folder_dialog.close()
@@ -810,11 +842,9 @@ class UiSmokeTests(unittest.TestCase):
                 "★ 1",
             )
             self.assertIn("수동 본문 분석 기본", dialog.model_detail.text())
-            self.assertIn("품질 33.92/100", dialog.model_detail.text())
-            self.assertIn(
-                "연구·리뷰·서지 정확도",
-                dialog.model_detail.text(),
-            )
+            self.assertNotIn("품질 33.92/100", dialog.model_detail.text())
+            self.assertNotIn("연구·리뷰·서지 정확도", dialog.model_detail.text())
+            self.assertGreaterEqual(dialog.model_table.minimumHeight(), 260)
             gemma_row = dialog._row_for_model("gemma3:12b")
             self.assertGreaterEqual(gemma_row, 0)
             self.assertIn(
@@ -826,7 +856,7 @@ class UiSmokeTests(unittest.TestCase):
             dialog.model_table.setCurrentCell(qwen_row, 0)
             dialog.model_table.selectRow(qwen_row)
             self.assertEqual(dialog._selected_entry().model_id, "qwen3:4b")
-            self.assertIn("일반 요약", dialog.model_detail.text())
+            self.assertIn("수동 정밀 3~4B급", dialog.model_detail.text())
             self.assertTrue(dialog.delete_button.isEnabled())
             dialog.model_table.setCurrentCell(gemma_row, 0)
             dialog.model_table.selectRow(gemma_row)
@@ -871,6 +901,50 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(refresh_flag_during_message, [True])
             self.assertEqual(dialog.progress.format(), "삭제 완료")
             dialog._worker = None
+            dialog.close()
+
+    def test_ollama_runtime_setup_copies_download_url_when_missing(self):
+        from PyQt5.QtWidgets import QApplication, QMessageBox
+
+        from paper_organizer.application.ai_settings import AiSettingsController
+        from paper_organizer.infra.ollama_installer import (
+            OLLAMA_DOWNLOAD_URL,
+            OllamaRuntimeState,
+        )
+        from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
+
+        with tempfile.TemporaryDirectory() as temp:
+            controller = AiSettingsController(
+                MemorySecretStore(),
+                Path(temp) / "settings.json",
+            )
+            dialog = OllamaModelDialog(controller)
+            with (
+                mock.patch(
+                    "paper_organizer.ui.ollama_model_dialog.inspect_runtime",
+                    return_value=OllamaRuntimeState(
+                        installed=False,
+                        running=False,
+                        version="",
+                        can_install_with_winget=True,
+                    ),
+                ),
+                mock.patch(
+                    "paper_organizer.ui.ollama_model_dialog.QMessageBox.information",
+                    return_value=QMessageBox.Ok,
+                ) as information,
+                mock.patch(
+                    "paper_organizer.ui.ollama_model_dialog._RuntimeSetupWorker"
+                ) as worker,
+            ):
+                dialog._setup_runtime()
+
+            information.assert_called_once()
+            worker.assert_not_called()
+            self.assertEqual(QApplication.clipboard().text(), OLLAMA_DOWNLOAD_URL)
+            self.assertEqual(dialog.setup_runtime_button.text(), "Ollama 실행")
+            self.assertIn("공식 다운로드", dialog.setup_runtime_button.toolTip())
+            self.assertEqual(dialog.open_download_button.text(), "다운로드 주소 복사")
             dialog.close()
 
     def test_update_dialog_shows_the_versioned_installer_name(self):
@@ -1474,6 +1548,8 @@ class UiSmokeTests(unittest.TestCase):
         from PyQt5.QtCore import QItemSelectionModel
         from PyQt5.QtWidgets import (
             QAbstractItemView,
+            QFormLayout,
+            QLabel,
             QMenu,
             QMessageBox,
             QWidget,
@@ -1483,6 +1559,7 @@ class UiSmokeTests(unittest.TestCase):
             EditablePaperMetadata,
             LibraryEntry,
         )
+        from paper_organizer.infra.settings import AppSettings
         from paper_organizer.application.library_translation import (
             LibraryTranslation,
         )
@@ -1497,7 +1574,10 @@ class UiSmokeTests(unittest.TestCase):
             entry = LibraryEntry(
                 pdf_path=paperpack,
                 sidecar_path=paperpack,
-                metadata=EditablePaperMetadata(title="Original English Title"),
+                metadata=EditablePaperMetadata(
+                    title="Original English Title",
+                    tags=["legacy-tag"],
+                ),
                 work_id="work:test",
                 source_variant="publisher",
                 paperpack_created_at="2026-07-27T11:30:00",
@@ -1531,9 +1611,22 @@ class UiSmokeTests(unittest.TestCase):
                 def __init__(self):
                     self.search_queries = []
                     self.deleted = []
+                    self.saved = []
+                    self.reanalysis_requests = []
+                    self._settings = AppSettings()
 
                 def invalidate_library_cache(self):
                     pass
+
+                def settings(self):
+                    return self._settings
+
+                def save_library_column_preferences(self, *, order=None, hidden=None):
+                    if order is not None:
+                        self._settings.library_column_order = list(order)
+                    if hidden is not None:
+                        self._settings.library_hidden_columns = list(hidden)
+                    return self._settings
 
                 def list_library(self):
                     return [
@@ -1544,6 +1637,19 @@ class UiSmokeTests(unittest.TestCase):
 
                 def search_library(self, query):
                     self.search_queries.append(query)
+                    if query == "thermostable enzyme":
+                        return [
+                            replace(
+                                entry,
+                                search_locations=("body",),
+                                search_page=2,
+                                search_snippet=(
+                                    "Methods introduce the assay. "
+                                    "Thermostable enzyme activity increased. "
+                                    "The next sentence reports controls."
+                                ),
+                            )
+                        ]
                     return self.list_library()
 
                 def analysis_queue(self):
@@ -1551,6 +1657,15 @@ class UiSmokeTests(unittest.TestCase):
 
                 def paperpack_working_copy(self, _path):
                     return None
+
+                def update_library_metadata(self, value, metadata):
+                    updated = replace(value, metadata=metadata)
+                    self.saved.append((value, metadata))
+                    return updated
+
+                def queue_reanalysis(self, entries, *, high=False):
+                    self.reanalysis_requests.append((list(entries), high))
+                    return len(entries), ()
 
                 def materialize_editable_pdf(self, path):
                     return path
@@ -1561,10 +1676,10 @@ class UiSmokeTests(unittest.TestCase):
 
             class FakeTranslationService:
                 def has_source(self, value):
-                    return value is entry
+                    return value.sidecar_path == entry.sidecar_path
 
                 def cached(self, value):
-                    if value is not entry:
+                    if value.sidecar_path != entry.sidecar_path:
                         return None
                     return LibraryTranslation(
                         text="[요약]\n한국어 번역 요약",
@@ -1586,7 +1701,7 @@ class UiSmokeTests(unittest.TestCase):
                     translation_service=translation_service,
                     selection_ai=object(),
                 )
-            self.assertEqual(widget.open_button.text(), "sPDF")
+            self.assertEqual(widget.open_button.text(), "PDF 열기")
             self.assertEqual(widget.selection_ai_button.text(), "선택 AI")
             self.assertIn("다시 열", widget.selection_ai_button.toolTip())
             self.assertEqual(widget.apply_pdf_button.text(), "적용")
@@ -1606,6 +1721,23 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(widget.library_title_label.text(), "라이브러리")
             self.assertEqual(widget.library_count_label.text(), "문서 2개")
             self.assertNotIn("라이브러리 문서", widget.status_label.text())
+            self.assertEqual(widget.form.title(), "")
+            self.assertTrue(widget.type_suggestion_label.isHidden())
+            detail_layout = widget.form.parentWidget().layout()
+            self.assertLess(
+                detail_layout.indexOf(widget.save_button.parentWidget()),
+                detail_layout.indexOf(widget.form),
+            )
+            form_labels = []
+            for row in range(widget.form._form_layout.rowCount()):
+                item = widget.form._form_layout.itemAt(row, QFormLayout.LabelRole)
+                label = item.widget() if item is not None else None
+                if isinstance(label, QLabel):
+                    form_labels.append(label.text())
+            self.assertIn("분야/세부분야", form_labels)
+            self.assertNotIn("태그", form_labels)
+            self.assertEqual(widget.form.metadata().tags, ["legacy-tag"])
+            self.assertFalse(hasattr(widget, "approve_category_button"))
             action_buttons = {
                 widget.open_button,
                 widget.selection_ai_button,
@@ -1619,7 +1751,6 @@ class UiSmokeTests(unittest.TestCase):
             }
             index_actions = {
                 widget.save_button,
-                widget.approve_category_button,
             }
             index_action_rows = []
             root_action_rows = []
@@ -1638,10 +1769,9 @@ class UiSmokeTests(unittest.TestCase):
                     index_action_rows.append(row_buttons & index_actions)
             self.assertEqual(root_action_rows, [])
             self.assertEqual(index_action_rows, [])
-            self.assertEqual(widget.approve_category_button.text(), "분야 없음")
             self.assertEqual(
                 widget.open_with_ai_button.text(),
-                "sPDF + AI",
+                "PDF + AI",
             )
             self.assertFalse(hasattr(widget, "selection_result"))
             self.assertTrue(widget.select_path(paperpack))
@@ -1651,6 +1781,68 @@ class UiSmokeTests(unittest.TestCase):
             ) as opened:
                 widget._open_row(row)
             self.assertNotIn("selection_callback", opened.call_args.kwargs)
+
+            class FakeSaveMessageBox:
+                Question = QMessageBox.Question
+                AcceptRole = QMessageBox.AcceptRole
+                ActionRole = QMessageBox.ActionRole
+                Cancel = QMessageBox.Cancel
+
+                next_choice = "save"
+
+                def __init__(self, _parent=None):
+                    self._buttons = {}
+                    self._clicked = None
+
+                def setWindowTitle(self, _text):
+                    pass
+
+                def setIcon(self, _icon):
+                    pass
+
+                def setText(self, _text):
+                    pass
+
+                def setInformativeText(self, _text):
+                    pass
+
+                def addButton(self, label, _role=None):
+                    button = object()
+                    self._buttons[label] = button
+                    return button
+
+                def setDefaultButton(self, _button):
+                    pass
+
+                def exec_(self):
+                    label = (
+                        "저장 후 재요약"
+                        if self.next_choice == "reanalyze"
+                        else "저장만"
+                    )
+                    self._clicked = self._buttons[label]
+
+                def clickedButton(self):
+                    return self._clicked
+
+            FakeSaveMessageBox.next_choice = "save"
+            with mock.patch(
+                "paper_organizer.ui.library_workflow_widget.QMessageBox",
+                FakeSaveMessageBox,
+            ):
+                widget._save_selected()
+            self.assertEqual(len(controller.saved), 1)
+            self.assertEqual(controller.reanalysis_requests, [])
+
+            FakeSaveMessageBox.next_choice = "reanalyze"
+            with mock.patch(
+                "paper_organizer.ui.library_workflow_widget.QMessageBox",
+                FakeSaveMessageBox,
+            ):
+                widget._save_selected()
+            self.assertEqual(len(controller.saved), 2)
+            self.assertEqual(len(controller.reanalysis_requests), 1)
+            self.assertTrue(controller.reanalysis_requests[0][1])
 
             opened_window = QWidget()
             with (
@@ -1718,6 +1910,16 @@ class UiSmokeTests(unittest.TestCase):
             widget.search_edit.setText("thermostable enzyme")
             widget._submit_search()
             self.assertEqual(controller.search_queries, ["thermostable enzyme"])
+            self.assertFalse(widget.search_result_bar.isHidden())
+            self.assertIn("검색 'thermostable enzyme'", widget.search_result_label.text())
+            self.assertIn("본문 1", widget.search_result_label.text())
+            self.assertIn("문맥 1개", widget.search_result_label.text())
+            self.assertEqual(widget.table.horizontalHeader().visualIndex(8), 1)
+            self.assertEqual(widget.table.item(0, 8).text(), "본문 2쪽 · 문맥 있음")
+            self.assertIn(
+                "Thermostable enzyme activity increased",
+                widget.table.item(0, 0).toolTip(),
+            )
             captured_menus = []
 
             def capture_menu(menu, _position):
@@ -1768,6 +1970,23 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(widget.table.item(0, 5).text(), "—")
             self.assertEqual(widget.table.item(0, 6).text(), "2026-07-27")
             self.assertEqual(widget.table.item(0, 7).text(), "2026-07-28")
+            header = widget.table.horizontalHeader()
+            header.moveSection(header.visualIndex(2), 1)
+            self.assertEqual(
+                controller.settings().library_column_order[:3],
+                ["title", "year", "authors"],
+            )
+            widget.table.setColumnHidden(5, True)
+            widget._save_library_column_preferences()
+            self.assertIn(
+                "translation_status",
+                controller.settings().library_hidden_columns,
+            )
+            controller.settings().library_column_order = []
+            controller.settings().library_hidden_columns = []
+            widget._apply_library_column_preferences()
+            self.assertEqual(header.visualIndex(8), 8)
+            self.assertFalse(widget.table.isColumnHidden(5))
             self.assertIn("앱 v1.4.1", widget.analysis_view.toPlainText())
             self.assertEqual(
                 _analysis_version_label(
@@ -1833,6 +2052,8 @@ class UiSmokeTests(unittest.TestCase):
             widget.search_edit.setText("다른 검색어")
             self.assertTrue(widget.select_path(paperpack))
             self.assertEqual(widget.search_edit.text(), "")
+            self.assertTrue(widget.search_result_bar.isHidden())
+            self.assertEqual(widget.table.horizontalHeader().visualIndex(8), 8)
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
             widget.table.selectAll()
             with (

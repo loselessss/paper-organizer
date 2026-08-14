@@ -521,7 +521,7 @@ class AiClassificationTests(unittest.TestCase):
             self.assertEqual(record["description"]["summary"], "기존 AI 요약")
             self.assertEqual(record["analysis"]["summary"], "")
 
-    def test_category_suggestion_requires_approval_then_can_be_requeued(self):
+    def test_category_suggestion_is_saved_then_can_be_requeued_from_context_menu(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             controller, library, pack = self._organized(root)
@@ -537,10 +537,11 @@ class AiClassificationTests(unittest.TestCase):
             )
             entry = controller.list_library()[0]
             settings = load_settings(root / "settings.json")
-            self.assertNotIn("우주생물학", settings.research_categories)
+            self.assertIn("우주생물학", settings.research_categories)
             self.assertEqual(
                 entry.record["analysis"]["suggested_category"], "우주생물학"
             )
+            self.assertTrue(entry.record["analysis"]["suggested_category_applied"])
 
             approved = controller.approve_category_suggestion(entry)
             queued, problems = controller.queue_reanalysis([entry], high=True)
