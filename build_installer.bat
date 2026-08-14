@@ -7,6 +7,12 @@ if errorlevel 1 exit /b %errorlevel%
 
 set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "%ISCC%" goto compile_installer
+set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+if exist "%ISCC%" goto compile_installer
+for /f "delims=" %%I in ('where ISCC.exe 2^>nul') do (
+  set "ISCC=%%I"
+  goto compile_installer
+)
 echo [ERROR] Inno Setup 6 was not found.
 exit /b 1
 

@@ -2169,9 +2169,11 @@ class LibraryWidget(QWidget):
             "PaperPack에 한 건만 보관한 직전 AI 번역으로 되돌립니다."
         )
         self.apply_pdf_button = QPushButton("적용")
-        self.apply_pdf_button.setToolTip("sPDF 편집본을 PaperPack에 적용합니다.")
-        self.discard_pdf_button = QPushButton("폐기")
-        self.discard_pdf_button.setToolTip("sPDF 편집본을 폐기합니다.")
+        self.apply_pdf_button.setToolTip("PDF 편집본을 PaperPack에 적용합니다.")
+        self.discard_pdf_button = QPushButton("편집 취소")
+        self.discard_pdf_button.setToolTip(
+            "PDF 편집 작업본만 제거합니다. PaperPack 원본은 유지됩니다."
+        )
         self.delete_button = QPushButton("휴지통")
         self.delete_button.setToolTip("선택 항목을 앱 휴지통으로 이동합니다.")
         self.permanent_delete_button = QPushButton("완전 삭제")
@@ -2237,25 +2239,20 @@ class LibraryWidget(QWidget):
         self.permanent_delete_button.setEnabled(False)
         self.reanalyze_selected_button.setEnabled(False)
         self.reanalyze_all_button.setEnabled(False)
-        analysis_group = QGroupBox("AI 분석 내용")
-        analysis_layout = QVBoxLayout(analysis_group)
-        analysis_layout.setContentsMargins(8, 8, 8, 8)
-        analysis_layout.setSpacing(4)
         self.analysis_view = QTextBrowser()
         self.analysis_view.setOpenExternalLinks(False)
         self.analysis_view.setLineWrapMode(QTextEdit.WidgetWidth)
         self.analysis_view.setMinimumHeight(80)
-        self.analysis_view.document().setDocumentMargin(10)
+        self.analysis_view.document().setDocumentMargin(8)
         self.analysis_view.setStyleSheet(
             "QTextBrowser {"
             " background-color: #ffffff;"
             " border: 1px solid #d8dde6;"
             " border-radius: 5px;"
-            " padding: 6px;"
+            " padding: 4px;"
             "}"
         )
-        analysis_layout.addWidget(self.analysis_view)
-        detail_layout.addWidget(analysis_group, 1)
+        detail_layout.addWidget(self.analysis_view, 1)
 
         splitter = QSplitter(Qt.Horizontal)
         self.library_splitter = splitter
@@ -2566,21 +2563,12 @@ class LibraryWidget(QWidget):
             self.reanalyze_selected_button.setEnabled(False)
 
     def _update_search_result_bar(self, query: str) -> None:
-        header = self.table.horizontalHeader()
-        search_visual_index = header.visualIndex(8)
         if query:
-            if search_visual_index != 1:
-                self._applying_column_layout = True
-                try:
-                    header.moveSection(search_visual_index, 1)
-                finally:
-                    self._applying_column_layout = False
             self.search_result_bar.setVisible(True)
             self.search_result_label.setText(
                 _search_result_summary(query, self._entries)
             )
         else:
-            self._apply_library_column_preferences()
             self.search_result_bar.setVisible(False)
             self.search_result_label.clear()
 
@@ -2780,7 +2768,7 @@ class LibraryWidget(QWidget):
             self.analysis_view.setHtml(
                 _analysis_html(
                     "<p class='empty'>왼쪽 목록에서 문서를 선택하면 "
-                    "AI 분석 내용이 표시됩니다.</p>"
+                    "AI 요약이 표시됩니다.</p>"
                 )
             )
             return
@@ -2996,7 +2984,7 @@ class LibraryWidget(QWidget):
                 for paragraph in str(summary).split("\n\n")
                 if paragraph.strip()
             )
-            sections.append(f"<h3>요약</h3>{summary_paragraphs}")
+            sections.append(f"<h3>AI 요약</h3>{summary_paragraphs}")
         question = description.get("research_question") or ""
         if question:
             question_label = (
@@ -3241,7 +3229,7 @@ class LibraryWidget(QWidget):
         decorate_action(apply_pdf_action, "save")
         apply_pdf_action.setEnabled(self.apply_pdf_button.isEnabled())
         apply_pdf_action.triggered.connect(self._apply_pdf_edit)
-        discard_pdf_action = menu.addAction("편집본 폐기")
+        discard_pdf_action = menu.addAction("PDF 편집 취소")
         decorate_action(discard_pdf_action, "cancel")
         discard_pdf_action.setEnabled(self.discard_pdf_button.isEnabled())
         discard_pdf_action.triggered.connect(self._discard_pdf_edit)
@@ -3685,9 +3673,9 @@ class LibraryWidget(QWidget):
             return
         if QMessageBox.question(
             self,
-            "편집본 폐기",
+            "PDF 편집 취소",
             f"선택한 PaperPack {len(entries)}개의 원본은 유지하고 "
-            "sPDF 작업 복사본만 삭제할까요?",
+            "PDF 편집 작업본만 제거할까요?",
         ) != QMessageBox.Yes:
             return
         removed = 0
@@ -3701,11 +3689,11 @@ class LibraryWidget(QWidget):
                 failures.append(f"{entry.metadata.title}: {exc}")
         self._refresh_pdf_edit_actions(self._selected_entries())
         self.status_label.setText(
-            f"sPDF 편집본 {removed}개를 폐기했습니다."
+            f"PDF 편집 작업본 {removed}개를 제거했습니다."
             if removed
-            else "폐기할 편집본이 없습니다."
+            else "제거할 PDF 편집 작업본이 없습니다."
         )
         if failures:
             QMessageBox.warning(
-                self, "일부 편집본 폐기 실패", "\n".join(failures[:10])
+                self, "일부 PDF 편집 작업본 제거 실패", "\n".join(failures[:10])
             )

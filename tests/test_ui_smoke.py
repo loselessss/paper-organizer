@@ -382,7 +382,7 @@ class UiSmokeTests(unittest.TestCase):
             ]
             self.assertEqual(
                 paperpack_visible_actions,
-                ["적용", "폐기", "PDF 환원…", "검색 색인 재구축"],
+                ["적용", "편집 취소", "PDF 환원…", "검색 색인 재구축"],
             )
             with mock.patch.object(
                 workflow_controller,
@@ -1705,7 +1705,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(widget.selection_ai_button.text(), "선택 AI")
             self.assertIn("다시 열", widget.selection_ai_button.toolTip())
             self.assertEqual(widget.apply_pdf_button.text(), "적용")
-            self.assertEqual(widget.discard_pdf_button.text(), "폐기")
+            self.assertEqual(widget.discard_pdf_button.text(), "편집 취소")
             self.assertEqual(widget.delete_button.text(), "휴지통")
             self.assertEqual(widget.permanent_delete_button.text(), "완전 삭제")
             self.assertEqual(widget.reanalyze_selected_button.text(), "선택 재요약")
@@ -1914,7 +1914,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("검색 'thermostable enzyme'", widget.search_result_label.text())
             self.assertIn("본문 1", widget.search_result_label.text())
             self.assertIn("문맥 1개", widget.search_result_label.text())
-            self.assertEqual(widget.table.horizontalHeader().visualIndex(8), 1)
+            self.assertEqual(widget.table.horizontalHeader().visualIndex(8), 8)
             self.assertEqual(widget.table.item(0, 8).text(), "본문 2쪽 · 문맥 있음")
             self.assertIn(
                 "Thermostable enzyme activity increased",
@@ -1934,7 +1934,7 @@ class UiSmokeTests(unittest.TestCase):
             ]
             self.assertIn("선택 영역 창 다시 열기", context_actions)
             self.assertIn("편집본을 PaperPack에 적용", context_actions)
-            self.assertIn("편집본 폐기", context_actions)
+            self.assertIn("PDF 편집 취소", context_actions)
             self.assertIn("AI 추천 연구분야 없음", context_actions)
             self.assertIn("전체 논문 재요약", context_actions)
             self.assertLess(
@@ -1957,6 +1957,8 @@ class UiSmokeTests(unittest.TestCase):
             self.assertNotIn("분석 요약", widget.analysis_view.toPlainText())
             widget.translation_button.click()
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
+            widget.search_edit.clear()
+            widget.refresh()
             self.assertEqual(widget.table.columnCount(), 9)
             self.assertEqual(widget.table.horizontalHeaderItem(8).text(), "검색 위치")
             self.assertEqual(
