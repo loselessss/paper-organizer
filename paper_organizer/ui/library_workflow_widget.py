@@ -667,7 +667,12 @@ class MetadataForm(QGroupBox):
             )
         form = QFormLayout(self)
         self._form_layout = form
-        form.setContentsMargins(4 if not title else 12, 0 if not title else 12, 4, 4)
+        form.setContentsMargins(
+            0 if compact else 4 if not title else 12,
+            0 if not title else 12,
+            0 if compact else 4,
+            4,
+        )
         form.setVerticalSpacing(4 if not title else 6)
         self.title_edit = QLineEdit()
         self.authors_edit = QLineEdit()
