@@ -812,7 +812,11 @@ class MetadataForm(QGroupBox):
 
     def _analysis_row_height(self, label: str, body: str) -> int:
         if label == "분석 정보":
-            return 30
+            line_count = 1 + body.count("<br")
+            text = html.unescape(re.sub(r"<[^>]+>", " ", body)).strip()
+            if len(text) > 95:
+                line_count += 1
+            return min(64, max(30, 22 + line_count * 18))
         if label in {"추천 연구분야", "AI 메타태그", "키워드"}:
             return 70
         text = re.sub(r"<[^>]+>", " ", body)
@@ -2382,10 +2386,16 @@ class LibraryWidget(QWidget):
         detail_layout.setSpacing(4)
         self.save_button = QPushButton("색인 편집 저장 및 재색인")
         self.save_button.setToolTip("현재 색인 편집 내용을 저장하고 통합 색인을 다시 만듭니다.")
+        self.reverify_bibliography_button = QPushButton("서지 재검증")
+        self.reverify_bibliography_button.setToolTip(
+            "선택한 논문의 제목·저자·연도·저널을 PubMed·Crossref로 다시 확인합니다. "
+            "직접 입력한 필드는 덮어쓰지 않습니다."
+        )
         save_row = QHBoxLayout()
         save_row.setContentsMargins(0, 0, 0, 0)
         save_row.setSpacing(6)
         save_row.addStretch(1)
+        save_row.addWidget(self.reverify_bibliography_button)
         save_row.addWidget(self.save_button)
         detail_layout.addLayout(save_row)
         self.type_suggestion_label = QLabel()
@@ -2447,6 +2457,7 @@ class LibraryWidget(QWidget):
         migration_action.triggered.connect(self.legacy_migration_requested.emit)
         self.paperpack_manage_button.setMenu(manage_menu)
         decorate_button(self.save_button, "save", role="primary")
+        decorate_button(self.reverify_bibliography_button, "refresh")
         decorate_button(self.open_button, "open")
         decorate_button(self.open_with_ai_button, "ai")
         decorate_button(self.selection_ai_button, "ai")
@@ -2465,6 +2476,10 @@ class LibraryWidget(QWidget):
         )
         self.save_button.clicked.connect(self._save_selected)
         self.save_button.setEnabled(False)
+        self.reverify_bibliography_button.clicked.connect(
+            self._reverify_selected_bibliography
+        )
+        self.reverify_bibliography_button.setEnabled(False)
         self.open_button.clicked.connect(self._open_selected)
         self.open_with_ai_button.clicked.connect(self._open_selected_with_ai)
         self.selection_ai_button.clicked.connect(
@@ -2798,6 +2813,7 @@ class LibraryWidget(QWidget):
             self.form.set_metadata(None)
             self._render_analysis(None)
             self.save_button.setEnabled(False)
+            self.reverify_bibliography_button.setEnabled(False)
             self.open_button.setEnabled(False)
             self.apply_pdf_button.setEnabled(False)
             self.discard_pdf_button.setEnabled(False)
@@ -2899,6 +2915,9 @@ class LibraryWidget(QWidget):
         )
         self.form.setEnabled(entry is not None)
         self.save_button.setEnabled(entry is not None)
+        self.reverify_bibliography_button.setEnabled(
+            bool(entry and entry.metadata.document_type != "patent")
+        )
         self.open_button.setEnabled(
             any(value.pdf_path.is_file() for value in entries)
         )
@@ -3243,19 +3262,19 @@ class LibraryWidget(QWidget):
                 sections.append(
                     "<p style='color:#999'>표시할 수 있는 정규식 추출 결과가 없습니다.</p>"
                 )
-            self._set_analysis_rows([("분석 상태", "".join(sections))])
+            rows = [("분석 상태", "".join(sections))]
+            self._set_analysis_rows(rows)
             return
         summary = description.get("summary") or ""
         if not summary and not analysis:
-            self._set_analysis_rows(
-                [
-                    (
-                        "AI 요약",
-                        "<p class='empty'>아직 AI 분석 결과가 없습니다. "
-                        "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>",
-                    )
-                ]
-            )
+            rows = [
+                (
+                    "AI 요약",
+                    "<p class='empty'>아직 AI 분석 결과가 없습니다. "
+                    "분석 큐에서 백그라운드 분석이 끝나면 이곳에 표시됩니다.</p>",
+                )
+            ]
+            self._set_analysis_rows(rows)
             return
         rows: list[tuple[str, str]] = []
         if summary:
@@ -3323,6 +3342,7 @@ class LibraryWidget(QWidget):
         provenance = analysis.get("provenance") or entry.record.get(
             "provenance", {}
         ).get("summary")
+        analysis_info_parts: list[str] = []
         if isinstance(provenance, dict) and provenance.get("provider"):
             version_bits = [
                 value
@@ -3339,13 +3359,18 @@ class LibraryWidget(QWidget):
             version_text = (
                 f" · {esc(' · '.join(version_bits))}" if version_bits else ""
             )
+            analysis_info_parts.append(
+                f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
+                f"{version_text}"
+                f" · {esc(_format_analysis_time(analysis.get('completed_at', '')))}"
+            )
+        if analysis_info_parts:
             rows.append(
                 (
                     "분석 정보",
                     "<p class='meta muted'>"
-                    f"{esc(provenance.get('provider'))} / {esc(provenance.get('model'))}"
-                    f"{version_text}"
-                    f" · {esc(_format_analysis_time(analysis.get('completed_at', '')))}</p>",
+                    + "<br>".join(analysis_info_parts)
+                    + "</p>",
                 )
             )
         self._set_analysis_rows(rows)
@@ -3478,6 +3503,25 @@ class LibraryWidget(QWidget):
             status += " 재요약을 분석 대기열에 넣었습니다."
         self.status_label.setText(status)
 
+    def _reverify_selected_bibliography(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        self.reverify_bibliography_button.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = self._controller.reverify_library_bibliography(entry)
+        except Exception as exc:
+            QMessageBox.warning(self, "서지 재검증 실패", str(exc))
+            self.reverify_bibliography_button.setEnabled(True)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.refresh(True)
+        self.select_path(result.entry.sidecar_path)
+        self.metadata_changed.emit()
+        self.status_label.clear()
+
     def _show_context_menu(self, position) -> None:
         index = self.table.indexAt(position)
         if index.isValid() and not self.table.item(index.row(), 0).isSelected():
@@ -3526,6 +3570,14 @@ class LibraryWidget(QWidget):
             decorate_action(approve_action, "check")
             approve_action.setEnabled(bool(suggestion))
             approve_action.triggered.connect(self._approve_category)
+            reverify_bib_action = menu.addAction("서지 재검증")
+            decorate_action(reverify_bib_action, "refresh")
+            reverify_bib_action.setEnabled(
+                self.reverify_bibliography_button.isEnabled()
+            )
+            reverify_bib_action.triggered.connect(
+                self._reverify_selected_bibliography
+            )
         menu.addSeparator()
         reanalyze_action = menu.addAction("선택 논문 재요약")
         decorate_action(reanalyze_action, "refresh")

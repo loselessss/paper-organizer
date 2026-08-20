@@ -15,6 +15,7 @@ from paper_organizer.application.library_workflow import (
     LibraryWorkflowController,
     default_input_dir,
 )
+from paper_organizer.application.bibliography_lookup import VerifiedBibliography
 from paper_organizer.application.library_translation import (
     analysis_translation_source_hash,
 )
@@ -57,12 +58,21 @@ def write_pdf(path: Path, pages: list[str]) -> None:
 
 
 class LibraryWorkflowTests(unittest.TestCase):
-    def _controller(self, root: Path, *, remove_source: bool = False):
+    def _controller(
+        self,
+        root: Path,
+        *,
+        remove_source: bool = False,
+        bibliography_lookup=None,
+    ):
         input_dir = root / "downloads"
         library = root / "library"
         input_dir.mkdir()
         settings_path = root / "settings.json"
-        controller = LibraryWorkflowController(settings_path)
+        controller = LibraryWorkflowController(
+            settings_path,
+            bibliography_lookup=bibliography_lookup,
+        )
         controller.save_paths(
             input_dir,
             library,
@@ -476,6 +486,100 @@ class LibraryWorkflowTests(unittest.TestCase):
             self.assertNotEqual(sources.get("bibliography.authors"), "user")
             self.assertIn("document.type", updated.record["curation"]["locked_fields"])
             self.assertIsNone(controller.suggested_document_type(updated))
+
+    def test_reverify_bibliography_updates_non_user_fields_only(self):
+        class FakeLookup:
+            def verify(self, *, title, doi="", page_texts=()):
+                return VerifiedBibliography(
+                    title="Verified External Title",
+                    authors=("Alpha Author", "Beta Author"),
+                    year=2026,
+                    venue="Verified Journal",
+                    doi="10.1234/verified",
+                    source="verified:crossref",
+                    score=0.95,
+                    matched_identifier="doi:10.1234/verified",
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(
+                root,
+                bibliography_lookup=FakeLookup(),
+            )
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            controller.organize(item, item.metadata, field_source="auto:regex")
+            entry = controller.list_library()[0]
+            curated = EditablePaperMetadata(
+                **{
+                    **asdict(entry.metadata),
+                    "title": "User Title",
+                }
+            )
+            entry = controller.update_library_metadata(entry, curated)
+
+            result = controller.reverify_library_bibliography(entry)
+
+            self.assertEqual(result.entry.metadata.title, "User Title")
+            self.assertEqual(
+                result.entry.metadata.authors,
+                ["Alpha Author", "Beta Author"],
+            )
+            self.assertEqual(result.entry.metadata.year, 2026)
+            self.assertEqual(result.entry.metadata.venue, "Verified Journal")
+            saved = load_paperpack_metadata(result.entry.sidecar_path)
+            sources = saved["curation"]["field_sources"]
+            self.assertEqual(sources["bibliography.title"], "user")
+            self.assertEqual(
+                sources["bibliography.authors"],
+                "verified:crossref",
+            )
+            self.assertEqual(
+                saved["curation"]["bibliography_quality"]["label"],
+                "외부 검증됨",
+            )
+            self.assertEqual(
+                saved["provenance"]["bibliography"]["matched_identifier"],
+                "doi:10.1234/verified",
+            )
+
+    def test_legacy_user_bibliography_sources_are_repaired_on_library_load(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, input_dir, _library = self._controller(root)
+            write_pdf(input_dir / "paper.pdf", academic_pages())
+            item = self._scan_twice(controller).items[0]
+            organized = controller.organize(
+                item,
+                item.metadata,
+                field_source="auto:regex",
+            )
+            record = load_paperpack_metadata(organized.sidecar_path)
+            record["curation"]["field_sources"].update(
+                {
+                    "bibliography.title": "user",
+                    "bibliography.authors": "user",
+                    "bibliography.year": "user",
+                    "bibliography.venue": "user",
+                }
+            )
+            update_paperpack(
+                organized.sidecar_path,
+                record,
+                changed_by="legacy-import",
+            )
+
+            fresh = LibraryWorkflowController(root / "settings.json")
+            loaded = fresh.list_library()[0]
+
+            sources = loaded.record["curation"]["field_sources"]
+            self.assertEqual(sources["bibliography.title"], "auto:regex")
+            self.assertEqual(sources["bibliography.authors"], "auto:regex")
+            self.assertEqual(
+                loaded.record["curation"]["last_edited_by"],
+                "auto:bibliography-history-repair",
+            )
 
     def test_legacy_generic_user_title_is_repaired_from_embedded_pdf(self):
         with tempfile.TemporaryDirectory() as temp:

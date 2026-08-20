@@ -7,6 +7,7 @@ from pathlib import Path
 import fitz
 
 from paper_organizer.application.library_workflow import LibraryWorkflowController
+from paper_organizer.application.bibliography_lookup import VerifiedBibliography
 from paper_organizer.application.summary_service import (
     SummaryExecution,
     SummaryMode,
@@ -347,12 +348,15 @@ class AiClassificationTests(unittest.TestCase):
             saved = load_paperpack_metadata(moved)
             self.assertEqual(saved["analysis"]["patent_claims"], claims)
 
-    def _organized(self, root: Path):
+    def _organized(self, root: Path, *, bibliography_lookup=None):
         input_dir = root / "downloads"
         library = root / "library"
         input_dir.mkdir()
         settings_path = root / "settings.json"
-        controller = LibraryWorkflowController(settings_path)
+        controller = LibraryWorkflowController(
+            settings_path,
+            bibliography_lookup=bibliography_lookup,
+        )
         controller.save_paths(input_dir, library, auto_enabled=False)
         settings = load_settings(settings_path)
         settings.minimum_age_seconds = 0
@@ -388,6 +392,52 @@ class AiClassificationTests(unittest.TestCase):
             )
             self.assertEqual(record["bibliography"]["year"], 2019)
             self.assertEqual(record["file"]["relative_path"], moved.relative_to(library).as_posix())
+
+    def test_ai_bibliography_is_verified_online_before_save(self):
+        class FakeLookup:
+            def __init__(self):
+                self.calls = []
+
+            def verify(self, *, title, doi="", page_texts=()):
+                self.calls.append((title, doi, tuple(page_texts)))
+                return VerifiedBibliography(
+                    title="Verified Thermostable Enzyme Scaffold",
+                    authors=("External A", "External B"),
+                    year=2020,
+                    venue="Verified Journal",
+                    doi="10.1016/j.jmb.2019.01.001",
+                    source="verified:crossref",
+                    score=0.93,
+                    matched_identifier="doi:10.1016/j.jmb.2019.01.001",
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            lookup = FakeLookup()
+            root = Path(temp)
+            controller, library, pack = self._organized(
+                root,
+                bibliography_lookup=lookup,
+            )
+            pdf = controller.materialize_pdf(pack)
+            lookup.calls.clear()
+
+            controller.apply_analysis_result(pack, execution(pdf))
+
+            self.assertEqual(len(lookup.calls), 1)
+            moved = next((library / "papers").rglob("*.paperpack"))
+            record = load_paperpack_metadata(moved)
+            self.assertEqual(
+                record["bibliography"]["title"],
+                "Verified Thermostable Enzyme Scaffold",
+            )
+            self.assertEqual(
+                record["curation"]["field_sources"]["bibliography.title"],
+                "verified:crossref",
+            )
+            self.assertEqual(
+                record["provenance"]["bibliography"]["matched_identifier"],
+                "doi:10.1016/j.jmb.2019.01.001",
+            )
             self.assertEqual(len(search(library, "halophilic")), 0)
             self.assertEqual(len(search(library, "chromatography")), 1)
 

@@ -28,6 +28,9 @@ from paper_organizer.application.bibliography_lookup import (
     BibliographyLookupService,
     VerifiedBibliography,
 )
+from paper_organizer.application.bibliography_quality import (
+    assess_bibliography_quality,
+)
 from paper_organizer.application.legacy_migration import (
     LegacyMigrationPreview,
     LegacyMigrationResult,
@@ -188,6 +191,15 @@ class OrganizedPaper:
     pdf_path: Path
     sidecar_path: Path
     warning: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyReverificationResult:
+    entry: LibraryEntry
+    changed_fields: tuple[str, ...]
+    quality_label: str
+    issues: tuple[str, ...]
+    source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -755,6 +767,8 @@ def _merge_verified_bibliography(
         subcategory=metadata.subcategory,
         tags=list(metadata.tags),
         summary=metadata.summary,
+        bibliography_source=metadata.bibliography_source,
+        verified_identifier=metadata.verified_identifier,
     )
     if verified.title and (
         not merged.title.strip()
@@ -852,6 +866,57 @@ def _history_has_explicit_user_bibliography_change(
         previous = value
         seen = True
     return False
+
+
+def _auto_bibliography_metadata_for_repair(
+    paperpack: Path,
+) -> EditablePaperMetadata:
+    pages = [
+        text for _number, text in content_pages(load_paperpack_content(paperpack))
+    ]
+    with tempfile.TemporaryDirectory(
+        prefix="paper-organizer-bibliography-repair-"
+    ) as temp:
+        extracted = extract_paperpack_pdf(paperpack, Path(temp) / "source.pdf")
+        metadata = _default_metadata(extracted, pages)
+    if not metadata.venue:
+        metadata.venue = extract_venue(pages)
+    return metadata
+
+
+def _bibliography_field_matches_auto(
+    record: dict[str, Any],
+    auto_metadata: EditablePaperMetadata,
+    field_name: str,
+) -> bool:
+    current = _metadata_from_record(record)
+    if field_name == "title":
+        return _normalize_bibliography_value(current.title) == _normalize_bibliography_value(
+            auto_metadata.title
+        )
+    if field_name == "authors":
+        return _normalize_bibliography_people(current.authors) == _normalize_bibliography_people(
+            auto_metadata.authors
+        )
+    if field_name == "year":
+        return current.year == auto_metadata.year
+    if field_name == "venue":
+        return _normalize_bibliography_value(current.venue) == _normalize_bibliography_value(
+            auto_metadata.venue
+        )
+    return False
+
+
+def _normalize_bibliography_value(value: object) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _normalize_bibliography_people(values: Iterable[object]) -> tuple[str, ...]:
+    return tuple(
+        _normalize_bibliography_value(value)
+        for value in values
+        if _normalize_bibliography_value(value)
+    )
 
 
 def _default_metadata(path: Path, page_texts: list[str]) -> EditablePaperMetadata:
@@ -2766,6 +2831,7 @@ class LibraryWorkflowController:
         repeated_title_lines: set[str] = set()
         preferred_title = ""
         preferred_authors: list[str] = []
+        paper_page_texts: list[str] = []
         try:
             paper_page_texts = [
                 text
@@ -2871,9 +2937,14 @@ class LibraryWorkflowController:
             preferred_title=preferred_title,
             preferred_authors=preferred_authors,
         )
+        self._try_verify_record_bibliography(
+            record,
+            page_texts=paper_page_texts,
+        )
         curation["revision"] = int(curation.get("revision", 0)) + 1
         curation["last_edited_at"] = now
         curation["last_edited_by"] = f"ai:{result.provider}"
+        _refresh_bibliography_quality(record)
         workflow = record.setdefault("workflow", {})
         workflow.update(
             {
@@ -3634,11 +3705,22 @@ class LibraryWorkflowController:
                     continue
                 history = load_paperpack_history(paperpack)
                 changed = False
+                auto_metadata: EditablePaperMetadata | None = None
                 for field_name in ("title", "authors", "year", "venue"):
                     path = f"bibliography.{field_name}"
                     if sources.get(path) != "user" or path in locked:
                         continue
                     if _history_has_explicit_user_bibliography_change(history, field_name):
+                        continue
+                    if auto_metadata is None:
+                        auto_metadata = _auto_bibliography_metadata_for_repair(
+                            paperpack
+                        )
+                    if not _bibliography_field_matches_auto(
+                        record,
+                        auto_metadata,
+                        field_name,
+                    ):
                         continue
                     sources[path] = "auto:regex"
                     changed = True
@@ -3647,14 +3729,22 @@ class LibraryWorkflowController:
                 curation["revision"] = int(curation.get("revision", 0)) + 1
                 curation["last_edited_at"] = _now_iso()
                 curation["last_edited_by"] = "auto:bibliography-history-repair"
+                _refresh_bibliography_quality(record)
                 record.setdefault("workflow", {})["updated_at"] = _now_iso()
                 update_paperpack(paperpack, record, changed_by="auto:bibliography-history-repair")
                 repaired += 1
             except (OSError, TypeError, ValueError, PaperPackError) as exc:
                 problems.append(f"{paperpack.name}: 서지 출처 복구 실패: {exc}")
         if repaired:
-            rebuild_library_index(root)
-            rebuild_search_index(root)
+            try:
+                rebuild_library_index(root)
+            except Exception as exc:
+                problems.append(f"통합 색인 재생성 실패: {exc}")
+            try:
+                _count, search_problems = rebuild_search_index(root)
+                problems.extend(f"검색 색인: {problem}" for problem in search_problems)
+            except (OSError, SearchIndexError) as exc:
+                problems.append(f"검색 색인 재생성 실패: {exc}")
             self._library_cache = None
         return repaired, tuple(problems)
 
@@ -3664,6 +3754,7 @@ class LibraryWorkflowController:
         if not self._legacy_title_repair_checked:
             self._legacy_title_repair_checked = True
             self.repair_legacy_generic_titles()
+            self.repair_legacy_user_bibliography_sources()
         if self._library_cache is None:
             entries: list[LibraryEntry] = []
             if root.is_dir():
@@ -3748,6 +3839,142 @@ class LibraryWorkflowController:
         if current == "paper":
             current = RESEARCH_PAPER
         return candidate if candidate != current else None
+
+    def reverify_library_bibliography(
+        self, entry: LibraryEntry
+    ) -> BibliographyReverificationResult:
+        """Re-run external bibliography lookup for one library entry."""
+
+        lookup = self._bibliography_lookup
+        if lookup is None:
+            raise LibraryWorkflowError("외부 서지 검증 서비스를 사용할 수 없습니다.")
+        _input_dir, root = self.configured_paths()
+        sidecar = entry.sidecar_path.expanduser().resolve()
+        papers_root = (root / "papers").resolve()
+        is_paperpack = sidecar.suffix.casefold() == PAPERPACK_SUFFIX
+        is_legacy_sidecar = sidecar.name.endswith(SIDECAR_SUFFIX)
+        if not _inside(papers_root, sidecar) or not (
+            is_paperpack or is_legacy_sidecar
+        ):
+            raise LibraryWorkflowError("라이브러리 밖의 색인은 재검증할 수 없습니다.")
+        current = load_record(sidecar)
+        metadata = _metadata_from_record(current)
+        if metadata.document_type == "patent":
+            raise LibraryWorkflowError("특허 서지는 외부 논문 DB로 재검증하지 않습니다.")
+        try:
+            page_texts = _record_page_texts(entry, current, sidecar)
+        except (OSError, PaperPackError, PdfIdentityError, ValueError) as exc:
+            raise LibraryWorkflowError(f"재검증용 본문을 읽지 못했습니다: {exc}") from None
+        doi = str(
+            current.get("bibliography", {}).get("doi")
+            if isinstance(current.get("bibliography"), dict)
+            else ""
+        ).strip()
+        if not doi:
+            doi = str(current.get("identity", {}).get("doi") or "").strip()
+        try:
+            verified = self._verify_record_bibliography(
+                current,
+                page_texts=page_texts,
+                title=metadata.title,
+                doi=doi,
+            )
+        except LibraryWorkflowError as exc:
+            raise LibraryWorkflowError(f"외부 서지 검증에 실패했습니다: {exc}") from None
+        changed_fields: tuple[str, ...] = ()
+        now = _now_iso()
+        if verified is not None:
+            changed_fields = _apply_verified_bibliography_to_record(current, verified)
+            _store_verified_bibliography_provenance(current, verified, verified_at=now)
+        curation = current.setdefault("curation", {})
+        curation["revision"] = int(curation.get("revision", 0)) + 1
+        curation["last_edited_at"] = now
+        curation["last_edited_by"] = (
+            verified.source if verified is not None else "verified:none"
+        )
+        _refresh_bibliography_quality(current)
+        current.setdefault("workflow", {})["updated_at"] = now
+        try:
+            if is_paperpack:
+                update_paperpack(sidecar, current, changed_by=str(curation["last_edited_by"]))
+            else:
+                _atomic_json_write(sidecar, current)
+            rebuild_library_index(root)
+        except (OSError, PaperPackError) as exc:
+            raise LibraryWorkflowError(f"외부 서지 검증 결과를 저장하지 못했습니다: {exc}") from None
+        if is_paperpack:
+            self._index_search_entry(sidecar)
+        self._library_cache = None
+        created_at, analyzed_at = _library_entry_timestamps(current, sidecar)
+        updated_entry = LibraryEntry(
+            pdf_path=entry.pdf_path,
+            sidecar_path=sidecar,
+            metadata=_metadata_for_library_entry(current, sidecar),
+            work_id=entry.work_id,
+            source_variant=entry.source_variant,
+            record=current,
+            paperpack_created_at=created_at,
+            analysis_completed_at=analyzed_at,
+        )
+        quality = assess_bibliography_quality(current)
+        return BibliographyReverificationResult(
+            entry=updated_entry,
+            changed_fields=changed_fields,
+            quality_label=quality.label,
+            issues=quality.issues,
+            source=verified.source if verified is not None else "",
+        )
+
+    def _try_verify_record_bibliography(
+        self,
+        record: dict[str, Any],
+        *,
+        page_texts: list[str],
+    ) -> VerifiedBibliography | None:
+        try:
+            verified = self._verify_record_bibliography(record, page_texts=page_texts)
+        except LibraryWorkflowError:
+            return None
+        if verified is None:
+            return None
+        _apply_verified_bibliography_to_record(record, verified)
+        _store_verified_bibliography_provenance(
+            record,
+            verified,
+            verified_at=_now_iso(),
+        )
+        return verified
+
+    def _verify_record_bibliography(
+        self,
+        record: dict[str, Any],
+        *,
+        page_texts: list[str],
+        title: str = "",
+        doi: str = "",
+    ) -> VerifiedBibliography | None:
+        lookup = self._bibliography_lookup
+        if lookup is None:
+            return None
+        metadata = _metadata_from_record(record)
+        if metadata.document_type == "patent":
+            return None
+        bibliography = record.get("bibliography")
+        bibliography = bibliography if isinstance(bibliography, dict) else {}
+        identity = record.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        lookup_title = title.strip() or metadata.title
+        lookup_doi = doi.strip() or str(
+            bibliography.get("doi") or identity.get("doi") or ""
+        ).strip()
+        try:
+            return lookup.verify(
+                title=lookup_title,
+                doi=lookup_doi,
+                page_texts=page_texts,
+            )
+        except Exception as exc:
+            raise LibraryWorkflowError(str(exc)) from None
 
     def invalidate_library_cache(self) -> None:
         self._library_cache = None
@@ -4310,6 +4537,7 @@ class LibraryWorkflowController:
                 "last_edited_by": "user",
             }
         )
+        _refresh_bibliography_quality(current)
         current.setdefault("workflow", {})["updated_at"] = _now_iso()
         try:
             if is_paperpack:
@@ -4458,6 +4686,98 @@ def _apply_metadata(record: dict[str, Any], metadata: EditablePaperMetadata) -> 
     record.setdefault("description", {})["summary"] = metadata.summary.strip()
 
 
+def _refresh_bibliography_quality(record: dict[str, Any]) -> None:
+    curation = record.setdefault("curation", {})
+    if not isinstance(curation, dict):
+        curation = {}
+        record["curation"] = curation
+    curation["bibliography_quality"] = assess_bibliography_quality(record).to_dict()
+
+
+def _apply_verified_bibliography_to_record(
+    record: dict[str, Any],
+    verified: VerifiedBibliography,
+) -> tuple[str, ...]:
+    bibliography = record.setdefault("bibliography", {})
+    if not isinstance(bibliography, dict):
+        bibliography = {}
+        record["bibliography"] = bibliography
+    curation = record.setdefault("curation", {})
+    if not isinstance(curation, dict):
+        curation = {}
+        record["curation"] = curation
+    sources = curation.setdefault("field_sources", {})
+    if not isinstance(sources, dict):
+        sources = {}
+        curation["field_sources"] = sources
+    changed: list[str] = []
+
+    candidates: tuple[tuple[str, str, object], ...] = (
+        ("bibliography.title", "title", verified.title.strip()),
+        (
+            "bibliography.authors",
+            "authors",
+            [author for author in verified.authors if author.strip()],
+        ),
+        ("bibliography.year", "year", verified.year),
+        ("bibliography.venue", "venue", verified.venue.strip()),
+    )
+    for source_path, key, value in candidates:
+        if sources.get(source_path) == "user":
+            continue
+        if value in (None, "", []):
+            continue
+        source_changed = sources.get(source_path) != verified.source
+        if bibliography.get(key) != value:
+            bibliography[key] = value
+            changed.append(source_path)
+        elif source_changed:
+            changed.append(source_path)
+        sources[source_path] = verified.source
+    if verified.doi:
+        bibliography["doi"] = verified.doi
+    if verified.pmid:
+        bibliography["pmid"] = verified.pmid
+    if verified.pmcid:
+        bibliography["pmcid"] = verified.pmcid
+    return tuple(changed)
+
+
+def _store_verified_bibliography_provenance(
+    record: dict[str, Any],
+    verified: VerifiedBibliography,
+    *,
+    verified_at: str,
+) -> None:
+    provenance = record.setdefault("provenance", {})
+    provenance["bibliography"] = {
+        "source": verified.source,
+        "matched_identifier": verified.matched_identifier,
+        "score": verified.score,
+        "verified_at": verified_at,
+    }
+
+
+def _record_page_texts(
+    entry: LibraryEntry,
+    record: dict[str, Any],
+    sidecar: Path,
+) -> list[str]:
+    if sidecar.suffix.casefold() == PAPERPACK_SUFFIX:
+        return [
+            text
+            for _number, text in content_pages(load_paperpack_content(sidecar))
+        ]
+    pdf_path = entry.pdf_path
+    if not pdf_path.is_file():
+        file_info = record.get("file")
+        if isinstance(file_info, dict):
+            current_name = str(file_info.get("current_name") or "")
+            if current_name:
+                pdf_path = sidecar.with_name(current_name)
+    return extract_page_texts(pdf_path)
+
+
 def _new_sidecar(
     item: ReviewItem,
     metadata: EditablePaperMetadata,
@@ -4578,4 +4898,5 @@ def _new_sidecar(
         for path, has_value in verified_fields.items():
             if has_value and record["curation"]["field_sources"].get(path) != "user":
                 record["curation"]["field_sources"][path] = metadata.bibliography_source
+    _refresh_bibliography_quality(record)
     return record
