@@ -102,6 +102,7 @@ _LIBRARY_COLUMN_IDS = tuple(column_id for column_id, _label in _LIBRARY_COLUMNS)
 _LIBRARY_COLUMN_LABELS = {
     column_id: label for column_id, label in _LIBRARY_COLUMNS
 }
+_AUTO_BIBLIOGRAPHY_CHECK_VERSION = (2, 3, 0)
 
 
 def _search_location_text(entry: LibraryEntry) -> str:
@@ -201,16 +202,7 @@ def _has_previous_analysis_translation(record: dict) -> bool:
 
 
 def _analysis_version_label(record: dict) -> str:
-    analysis = record.get("analysis")
-    analysis = analysis if isinstance(analysis, dict) else {}
-    provenance = analysis.get("provenance")
-    if not isinstance(provenance, dict):
-        root_provenance = record.get("provenance")
-        provenance = (
-            root_provenance.get("summary")
-            if isinstance(root_provenance, dict)
-            else {}
-        )
+    provenance = _analysis_provenance(record)
     if not isinstance(provenance, dict):
         return ""
     app_version = str(provenance.get("app_version") or "").strip()
@@ -235,6 +227,68 @@ def _analysis_version_label(record: dict) -> str:
     suffix = prompt_version.split(marker, 1)[1]
     number = suffix.split("-", 1)[0]
     return f"v{number}" if number.isdigit() else ""
+
+
+def _analysis_provenance(record: dict) -> dict:
+    analysis = record.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    provenance = analysis.get("provenance")
+    if isinstance(provenance, dict):
+        return provenance
+    root_provenance = record.get("provenance")
+    if isinstance(root_provenance, dict):
+        summary = root_provenance.get("summary")
+        if isinstance(summary, dict):
+            return summary
+    return {}
+
+
+def _version_tuple(value: object) -> tuple[int, int, int]:
+    text = str(value or "").strip().removeprefix("v")
+    parts = re.findall(r"\d+", text)
+    numbers = [int(part) for part in parts[:3]]
+    while len(numbers) < 3:
+        numbers.append(0)
+    return (numbers[0], numbers[1], numbers[2])
+
+
+def _bibliography_was_checked_by_current_ai_flow(record: dict) -> bool:
+    app_version = _analysis_provenance(record).get("app_version")
+    return _version_tuple(app_version) >= _AUTO_BIBLIOGRAPHY_CHECK_VERSION
+
+
+def _has_verified_bibliography(record: dict) -> bool:
+    provenance = record.get("provenance")
+    bibliography = (
+        provenance.get("bibliography")
+        if isinstance(provenance, dict)
+        else None
+    )
+    if isinstance(bibliography, dict) and str(
+        bibliography.get("source") or ""
+    ).startswith("verified:"):
+        return True
+    curation = record.get("curation")
+    sources = curation.get("field_sources") if isinstance(curation, dict) else {}
+    if not isinstance(sources, dict):
+        return False
+    fields = (
+        "bibliography.title",
+        "bibliography.authors",
+        "bibliography.year",
+        "bibliography.venue",
+    )
+    return any(str(sources.get(field) or "").startswith("verified:") for field in fields)
+
+
+def _should_show_bibliography_reverify(entry: LibraryEntry | None) -> bool:
+    if entry is None or entry.metadata.document_type == "patent":
+        return False
+    record = entry.record
+    return not (
+        _bibliography_was_checked_by_current_ai_flow(record)
+        or _has_verified_bibliography(record)
+    )
 
 
 def _analysis_html(sections: list[str] | str) -> str:
@@ -2480,6 +2534,7 @@ class LibraryWidget(QWidget):
             self._reverify_selected_bibliography
         )
         self.reverify_bibliography_button.setEnabled(False)
+        self.reverify_bibliography_button.setVisible(False)
         self.open_button.clicked.connect(self._open_selected)
         self.open_with_ai_button.clicked.connect(self._open_selected_with_ai)
         self.selection_ai_button.clicked.connect(
@@ -2814,6 +2869,7 @@ class LibraryWidget(QWidget):
             self._render_analysis(None)
             self.save_button.setEnabled(False)
             self.reverify_bibliography_button.setEnabled(False)
+            self.reverify_bibliography_button.setVisible(False)
             self.open_button.setEnabled(False)
             self.apply_pdf_button.setEnabled(False)
             self.discard_pdf_button.setEnabled(False)
@@ -2915,9 +2971,9 @@ class LibraryWidget(QWidget):
         )
         self.form.setEnabled(entry is not None)
         self.save_button.setEnabled(entry is not None)
-        self.reverify_bibliography_button.setEnabled(
-            bool(entry and entry.metadata.document_type != "patent")
-        )
+        show_bibliography_reverify = _should_show_bibliography_reverify(entry)
+        self.reverify_bibliography_button.setVisible(show_bibliography_reverify)
+        self.reverify_bibliography_button.setEnabled(show_bibliography_reverify)
         self.open_button.setEnabled(
             any(value.pdf_path.is_file() for value in entries)
         )
@@ -3570,14 +3626,12 @@ class LibraryWidget(QWidget):
             decorate_action(approve_action, "check")
             approve_action.setEnabled(bool(suggestion))
             approve_action.triggered.connect(self._approve_category)
-            reverify_bib_action = menu.addAction("서지 재검증")
-            decorate_action(reverify_bib_action, "refresh")
-            reverify_bib_action.setEnabled(
-                self.reverify_bibliography_button.isEnabled()
-            )
-            reverify_bib_action.triggered.connect(
-                self._reverify_selected_bibliography
-            )
+            if _should_show_bibliography_reverify(entries[0]):
+                reverify_bib_action = menu.addAction("서지 재검증")
+                decorate_action(reverify_bib_action, "refresh")
+                reverify_bib_action.triggered.connect(
+                    self._reverify_selected_bibliography
+                )
         menu.addSeparator()
         reanalyze_action = menu.addAction("선택 논문 재요약")
         decorate_action(reanalyze_action, "refresh")

@@ -151,6 +151,62 @@ class UiSmokeTests(unittest.TestCase):
             "v9",
         )
 
+    def test_bibliography_reverify_is_hidden_after_automatic_checking(self):
+        from paper_organizer.ui.library_workflow_widget import (
+            _should_show_bibliography_reverify,
+        )
+
+        def entry(record, document_type="research_paper"):
+            return SimpleNamespace(
+                record=record,
+                metadata=SimpleNamespace(document_type=document_type),
+            )
+
+        self.assertFalse(
+            _should_show_bibliography_reverify(
+                entry(
+                    {
+                        "analysis": {
+                            "provenance": {
+                                "app_version": "2.3.0",
+                                "provider": "ollama",
+                            }
+                        }
+                    }
+                )
+            )
+        )
+        self.assertFalse(
+            _should_show_bibliography_reverify(
+                entry(
+                    {
+                        "curation": {
+                            "field_sources": {
+                                "bibliography.title": "verified:crossref"
+                            }
+                        }
+                    }
+                )
+            )
+        )
+        self.assertTrue(
+            _should_show_bibliography_reverify(
+                entry(
+                    {
+                        "analysis": {
+                            "provenance": {
+                                "app_version": "2.2.0",
+                                "provider": "ollama",
+                            }
+                        }
+                    }
+                )
+            )
+        )
+        self.assertFalse(
+            _should_show_bibliography_reverify(entry({}, document_type="patent"))
+        )
+
     def test_ai_settings_and_summary_shell_construct(self):
         from PyQt5.QtCore import QItemSelectionModel, Qt
         from PyQt5.QtWidgets import (
