@@ -46,6 +46,8 @@ git submodule update --init
   HTTP는 가짜 클라이언트를 주입해 검증합니다(`tests/test_providers.py` 참고).
 - 코드를 고쳤으면 커밋 전에 전체 테스트를 돌립니다.
 - 커밋은 한 문장으로 설명되는 단위로 끊습니다.
+- 버전 업데이트와 릴리스 노트 작업을 할 때는 [RELEASE_NOTE_RULES.md](RELEASE_NOTE_RULES.md)를
+  읽고 사용자에게 보이는 변경만 간결하게 적습니다.
 
 ## 주의가 필요한 지점
 
