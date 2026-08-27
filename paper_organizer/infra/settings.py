@@ -50,7 +50,8 @@ class AppSettings:
     last_hardware_scan_at: str = ""
     hardware_profile: dict[str, Any] = field(default_factory=dict)
     managed_ollama_models: list[str] = field(default_factory=list)
-    summary_provider: str = "ollama"
+    ollama_retirement_notice_acknowledged: bool = False
+    summary_provider: str = "local"
     summary_language: str = "ko"
     summary_timeout_seconds: int = 900
     automatic_analysis_interval_seconds: int = 30
@@ -193,8 +194,14 @@ class AppSettings:
             != len(self.managed_ollama_models)
         ):
             raise ValueError("managed_ollama_models must contain unique model names")
-        if self.summary_provider not in {"ollama", "openai", "anthropic"}:
-            raise ValueError("summary_provider must be ollama, openai or anthropic")
+        if not isinstance(self.ollama_retirement_notice_acknowledged, bool):
+            raise ValueError(
+                "ollama_retirement_notice_acknowledged must be a boolean"
+            )
+        if self.summary_provider not in {"local", "ollama", "openai", "anthropic"}:
+            raise ValueError(
+                "summary_provider must be local, ollama, openai or anthropic"
+            )
         if self.summary_language not in {"ko", "source"}:
             raise ValueError("summary_language must be ko or source")
         if (
@@ -323,7 +330,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> Path:
     return target
 
 
-def ollama_model_for_purpose(
+def local_model_for_purpose(
     settings: AppSettings,
     purpose: str,
 ) -> str:
@@ -336,15 +343,24 @@ def ollama_model_for_purpose(
     raise ValueError("purpose must be background or manual")
 
 
+def ollama_model_for_purpose(
+    settings: AppSettings,
+    purpose: str,
+) -> str:
+    """Compatibility alias for settings created before the embedded runtime."""
+
+    return local_model_for_purpose(settings, purpose)
+
+
 def settings_for_summary_purpose(
     settings: AppSettings,
     purpose: str,
 ) -> AppSettings:
     """Build request-local settings without mutating the persisted preferences."""
 
-    if settings.summary_provider != "ollama":
+    if settings.summary_provider not in {"local", "ollama"}:
         return settings
-    model = ollama_model_for_purpose(settings, purpose)
+    model = local_model_for_purpose(settings, purpose)
     if purpose == "background":
         residency_mode = (
             "always" if settings.background_model_resident else "unload"

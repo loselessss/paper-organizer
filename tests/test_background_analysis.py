@@ -212,6 +212,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -242,6 +243,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -280,6 +282,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -329,6 +332,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
                 settings_path = root / "settings.json"
                 save_settings(
                     AppSettings(
+                        summary_provider="ollama",
                         selected_model="qwen3:4b",
                         background_model="qwen3:4b",
                         background_analysis_enabled=True,
@@ -358,7 +362,11 @@ class BackgroundAnalysisTests(unittest.TestCase):
             root = Path(temp)
             settings_path = root / "settings.json"
             save_settings(
-                AppSettings(selected_model="qwen3:4b", background_analysis_enabled=True),
+                AppSettings(
+                    summary_provider="ollama",
+                    selected_model="qwen3:4b",
+                    background_analysis_enabled=True,
+                ),
                 settings_path,
             )
             workflow = FakeWorkflow(root / "paper.paperpack")
@@ -384,6 +392,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                     resource_profile="eco",
@@ -419,6 +428,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:1.7b",
                     background_model="qwen3:1.7b",
                     manual_model="qwen3:4b",
@@ -452,6 +462,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                     resource_profile="eco",
@@ -492,6 +503,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                     resource_profile="eco",
@@ -528,6 +540,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                     resource_profile="eco",
@@ -562,6 +575,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -591,6 +605,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -618,6 +633,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -667,6 +683,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),
@@ -700,7 +717,11 @@ class BackgroundAnalysisTests(unittest.TestCase):
             root = Path(temp)
             settings_path = root / "settings.json"
             save_settings(
-                AppSettings(selected_model="qwen3:8b", background_analysis_enabled=True),
+                AppSettings(
+                    summary_provider="ollama",
+                    selected_model="qwen3:8b",
+                    background_analysis_enabled=True,
+                ),
                 settings_path,
             )
             workflow = FakeWorkflow(root / "paper.paperpack")
@@ -736,6 +757,7 @@ class BackgroundAnalysisTests(unittest.TestCase):
             settings_path = root / "settings.json"
             save_settings(
                 AppSettings(
+                    summary_provider="ollama",
                     selected_model="qwen3:4b",
                     background_analysis_enabled=True,
                 ),

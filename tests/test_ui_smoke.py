@@ -228,6 +228,7 @@ class UiSmokeTests(unittest.TestCase):
             LibraryWorkflowController,
         )
         from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
+        from paper_organizer.ui.embedded_model_dialog import EmbeddedModelDialog
         from paper_organizer.ui.main_window import PaperOrganizerWindow
         from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
         from paper_organizer.ui.ollama_model_dialog import _download_detail
@@ -251,6 +252,7 @@ class UiSmokeTests(unittest.TestCase):
                 return_value=("qwen3:1.7b", "qwen3:4b"),
             ):
                 dialog = AiSettingsDialog(ai_controller)
+            embedded_model_dialog = EmbeddedModelDialog(ai_controller)
             model_dialog = OllamaModelDialog(ai_controller)
             window = PaperOrganizerWindow(
                 ai_controller,
@@ -269,18 +271,12 @@ class UiSmokeTests(unittest.TestCase):
             )
             self.assertEqual(dialog.language_combo.currentData(), "ko")
             self.assertEqual(dialog.timeout_spin.value(), 900)
-            self.assertFalse(dialog.model_combo.isEditable())
-            self.assertEqual(dialog.model_combo.count(), 2)
-            self.assertEqual(dialog.manual_model_combo.count(), 2)
-            dialog.manual_model_combo.setCurrentIndex(
-                dialog.manual_model_combo.findData("qwen3:4b")
-            )
+            self.assertTrue(dialog.model_combo.isEditable())
+            self.assertEqual(dialog.model_combo.count(), 1)
+            self.assertEqual(dialog.manual_model_combo.count(), 1)
             self.assertEqual(ai_controller.settings().selected_model, "")
-            self.assertIn("저장 버튼", dialog.model_status.text())
-            self.assertIn("창 없이", dialog.model_status.text())
-            self.assertIn("백그라운드 서지·Abstract", dialog.model_guidance.text())
-            self.assertIn("수동 정밀 3~4B급", dialog.model_guidance.text())
-            self.assertIn("기여·한계 미지원", dialog.model_guidance.text())
+            self.assertIn("GGUF", dialog.model_status.text())
+            self.assertIn("모두 선택", dialog.model_guidance.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             with mock.patch.object(dialog, "_scan_hardware") as scan_hardware:
                 dialog.model_profile_combo.setCurrentIndex(
@@ -295,12 +291,26 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("GPU 사용을 보장하지 않으며", dialog.igpu_guidance.text())
             self.assertEqual(
                 dialog.manage_models_button.text(),
-                "Ollama 모델 설치·관리…",
+                "모델 다운로드·관리…",
+            )
+            self.assertEqual(
+                embedded_model_dialog.windowTitle(),
+                "내장 로컬 AI 모델 관리",
+            )
+            self.assertFalse(embedded_model_dialog.select_button.isEnabled())
+            self.assertFalse(embedded_model_dialog.download_button.isEnabled())
+            self.assertFalse(embedded_model_dialog.delete_button.isEnabled())
+            self.assertGreaterEqual(embedded_model_dialog.minimumWidth(), 760)
+            self.assertFalse(
+                bool(
+                    embedded_model_dialog.windowFlags()
+                    & Qt.WindowContextHelpButtonHint
+                )
             )
             self.assertEqual(dialog.provider_group.title(), "제공자·출력")
             self.assertEqual(
                 dialog.local_model_group.title(),
-                "추천·Ollama 설치·모델 선택",
+                "추천·모델 다운로드·모델 선택",
             )
             local_labels = []
             for row in range(dialog.local_model_form.rowCount()):
@@ -310,10 +320,10 @@ class UiSmokeTests(unittest.TestCase):
                     local_labels.append(widget.text())
             self.assertLess(
                 local_labels.index("추천 프로필"),
-                local_labels.index("Ollama 모델"),
+                local_labels.index("로컬 모델"),
             )
             self.assertLess(
-                local_labels.index("Ollama 모델"),
+                local_labels.index("로컬 모델"),
                 local_labels.index("백그라운드 모델"),
             )
             self.assertFalse(hasattr(dialog, "model_candidates"))
@@ -549,7 +559,7 @@ class UiSmokeTests(unittest.TestCase):
                     "paper_organizer.ui.main_window.AiSettingsDialog"
                 ) as first_run_engine,
                 mock.patch(
-                    "paper_organizer.ui.main_window.OllamaModelDialog"
+                    "paper_organizer.ui.main_window.EmbeddedModelDialog"
                 ),
             ):
                 window.show_first_run_ai_setup()
@@ -588,7 +598,7 @@ class UiSmokeTests(unittest.TestCase):
                 for action in window._provider_group.actions()
                 if action.isChecked()
             ]
-            self.assertEqual(checked, ["로컬 Ollama"])
+            self.assertEqual(checked, ["내장 로컬 AI"])
             from paper_organizer.ui.folder_settings_dialog import FolderSettingsDialog
 
             folder_dialog = FolderSettingsDialog(workflow_controller)

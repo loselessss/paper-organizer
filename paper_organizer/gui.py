@@ -45,6 +45,7 @@ def main() -> int:
     )
     from paper_organizer.application.summary_service import SummaryController
     from paper_organizer.application.update_service import GitHubUpdateService
+    from paper_organizer.infra.embedded_llm_runtime import stop_runtime
     from paper_organizer.infra.ollama_installer import stop_managed_runtime
     from paper_organizer.infra.secrets import default_secret_store
     from paper_organizer.ui.main_window import PaperOrganizerWindow
@@ -64,6 +65,7 @@ def main() -> int:
     from paper_organizer.application.background_ocr import stop_active_ocr_workers
 
     app.aboutToQuit.connect(stop_active_ocr_workers)
+    app.aboutToQuit.connect(stop_runtime)
     app.aboutToQuit.connect(stop_managed_runtime)
     app.aboutToQuit.connect(single_instance.close)
     lifecycle = LifecycleSettingsController()
@@ -147,6 +149,8 @@ def main() -> int:
             splash.finish(window)
             if was_first_run:
                 QTimer.singleShot(0, window.show_first_run_ai_setup)
+            else:
+                QTimer.singleShot(0, window.show_ollama_retirement_notice_if_needed)
 
     loader = StartupLoader(workflow, splash)
     runtime["loader"] = loader

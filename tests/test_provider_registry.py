@@ -12,7 +12,7 @@ class MemorySecretStore:
 class ProviderRegistryTests(unittest.TestCase):
     def test_configured_summary_timeout_reaches_every_provider(self):
         store = MemorySecretStore()
-        for provider in ("ollama", "openai", "anthropic"):
+        for provider in ("local", "ollama", "openai", "anthropic"):
             with self.subTest(provider=provider):
                 settings = AppSettings(
                     summary_provider=provider,

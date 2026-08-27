@@ -145,7 +145,7 @@ class AiSettingsControllerTests(unittest.TestCase):
             view = controller.select_ollama_model("qwen3:8b")
             controller.select_ollama_model("qwen3:8b")
 
-            self.assertEqual(view.provider, "ollama")
+            self.assertEqual(view.provider, "local")
             self.assertEqual(view.model, "qwen3:8b")
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["selected_model"], "qwen3:8b")
@@ -260,7 +260,7 @@ class AiSettingsControllerTests(unittest.TestCase):
 
         self.assertTrue(view.ollama_force_igpu)
         self.assertTrue(saved["ollama_force_igpu"])
-        self.assertEqual(changes, [True, True])
+        self.assertEqual(changes, [])
 
     def test_saved_gpu_priority_is_reapplied_on_app_start(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -286,7 +286,7 @@ class AiSettingsControllerTests(unittest.TestCase):
 
             controller.synchronize_ollama_acceleration()
 
-        self.assertEqual(changes, [True])
+        self.assertEqual(changes, [])
 
     def test_ollama_restart_uses_injected_restarter(self):
         calls = []
@@ -339,6 +339,29 @@ class AiSettingsControllerTests(unittest.TestCase):
             controller.installed_ollama_models()
 
         self.assertEqual(manager.calls, 1)
+
+    def test_ollama_retirement_notice_is_needed_once_for_legacy_users(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            from paper_organizer.infra.settings import AppSettings, save_settings
+
+            save_settings(
+                AppSettings(
+                    summary_provider="ollama",
+                    managed_ollama_models=["qwen3:4b"],
+                    ollama_resident_model="qwen3:4b",
+                ),
+                path,
+            )
+            controller = AiSettingsController(MemorySecretStore(), path)
+
+            self.assertTrue(controller.should_show_ollama_retirement_notice())
+            controller.acknowledge_ollama_retirement_notice()
+
+            self.assertFalse(controller.should_show_ollama_retirement_notice())
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["summary_provider"], "local")
+            self.assertTrue(saved["ollama_retirement_notice_acknowledged"])
 
 
 if __name__ == "__main__":

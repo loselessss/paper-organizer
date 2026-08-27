@@ -226,7 +226,7 @@ class SearchChatDialog(QDialog):
         destination = (
             f"{prepared.provider} 전송 대기"
             if prepared.sends_to_cloud
-            else "로컬 Ollama 처리"
+            else "내장 로컬 AI 처리"
         )
         context = (
             f" · 컨텍스트 {prepared.context_window:,}토큰"

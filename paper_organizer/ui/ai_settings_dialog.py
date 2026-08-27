@@ -33,8 +33,8 @@ from paper_organizer.application.summary_service import (
     REVIEW_SUMMARY_PROMPT_VERSION,
 )
 from paper_organizer.core.model_recommendation import model_usage_guidance
-from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
+from paper_organizer.ui.ollama_model_dialog import OllamaModelDialog
 
 
 def _prompt_short_version(prompt_version: str) -> str:
@@ -205,11 +205,11 @@ class AiSettingsDialog(QDialog):
         form.addRow("월간 참고 예산(강제 차단 아님)", self.budget_spin)
         self.engine_columns.addWidget(self.provider_group, 1)
 
-        self.local_model_group = QGroupBox("추천·Ollama 설치·모델 선택")
+        self.local_model_group = QGroupBox("추천·모델 다운로드·모델 선택")
         local_layout = QVBoxLayout(self.local_model_group)
         local_form = QFormLayout()
         self.local_model_form = local_form
-        self.manage_models_button = QPushButton("Ollama 모델 설치·관리…")
+        self.manage_models_button = QPushButton("모델 다운로드·관리…")
         management_row = QWidget()
         management_layout = QHBoxLayout(management_row)
         management_layout.setContentsMargins(0, 0, 0, 0)
@@ -247,11 +247,10 @@ class AiSettingsDialog(QDialog):
             "내장 GPU도 사용 허용 (Vulkan · 사용할 수 없으면 CPU)"
         )
         self.force_igpu_check.setToolTip(
-            "Ollama가 Intel Iris Xe 같은 내장 GPU를 후보에서 제외하지 않도록 합니다. "
-            "설정 변경 후 Ollama를 완전히 종료하고 다시 실행해야 합니다."
+            "내장 로컬 AI 런타임이 Intel Iris Xe 같은 내장 GPU도 후보로 사용할 수 있게 합니다."
         )
         self.igpu_guidance = QLabel(
-            "외장 GPU는 Ollama가 자동으로 우선 사용합니다. 이 옵션은 내장 GPU도 "
+            "외장 GPU는 로컬 런타임이 우선 사용할 수 있습니다. 이 옵션은 내장 GPU도 "
             "후보에 포함하지만 GPU 사용을 보장하지 않으며, 드라이버·메모리 조건이 "
             "맞지 않으면 CPU로 실행됩니다. 내장 GPU는 1.7B 모델부터 시험하세요."
         )
@@ -264,9 +263,9 @@ class AiSettingsDialog(QDialog):
             "border-radius: 4px; padding: 7px; color: #173f68;"
         )
         local_form.addRow("추천 프로필", profile_row)
-        local_form.addRow("PC / Ollama", self.hardware_status)
+        local_form.addRow("PC / 로컬 AI", self.hardware_status)
         local_form.addRow("추천", self.recommendation_status)
-        local_form.addRow("Ollama 모델", management_row)
+        local_form.addRow("로컬 모델", management_row)
         local_form.addRow("백그라운드 모델", model_row)
         local_form.addRow("수동 요약 모델", self.manual_model_combo)
         translation_guidance = QLabel(
@@ -285,7 +284,7 @@ class AiSettingsDialog(QDialog):
         local_layout.addLayout(local_form)
         local_note = QLabel(
             "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "
-            "모델을 저장해도 실행 중인 Ollama 서버는 재시작하지 않습니다. 서버가 "
+            "모델을 저장해도 실행 중인 로컬 AI 런타임은 재시작하지 않습니다. 런타임이 "
             "꺼져 있을 때만 창 없이 백그라운드로 시작합니다."
         )
         local_note.setWordWrap(True)
@@ -415,10 +414,12 @@ class AiSettingsDialog(QDialog):
 
     def _populate_model_combo(self, provider: str, selected: str) -> None:
         self.model_combo.blockSignals(True)
+        self.manual_model_combo.blockSignals(True)
         self.model_combo.clear()
         is_ollama = provider == "ollama"
         self.model_combo.setEditable(not is_ollama)
         self.model_refresh_button.setVisible(is_ollama)
+        self.manage_models_button.setVisible(provider in {"local", "ollama"})
         if is_ollama:
             try:
                 models = self._controller.installed_ollama_models()
@@ -448,6 +449,21 @@ class AiSettingsDialog(QDialog):
             self.manual_model_combo.setCurrentIndex(max(0, manual_index))
             self.manual_model_combo.setEnabled(bool(models))
             self.manual_model_combo.blockSignals(False)
+        elif provider == "local":
+            self.model_combo.setEnabled(True)
+            self.model_combo.addItem(selected, selected)
+            self.model_combo.setCurrentText(selected)
+            self.model_status.setText(
+                "내장 로컬 AI는 앱 모델 폴더의 GGUF 파일을 사용합니다. "
+                "모델 ID를 저장하면 해당 ID의 .gguf 파일을 찾습니다."
+            )
+            line_edit = self.model_combo.lineEdit()
+            if line_edit is not None:
+                line_edit.setPlaceholderText("예: qwen3:1.7b")
+            self.manual_model_combo.clear()
+            self.manual_model_combo.addItem(selected, selected)
+            self.manual_model_combo.setCurrentText(selected)
+            self.manual_model_combo.setEnabled(True)
         else:
             self.model_combo.setEnabled(True)
             self.model_combo.addItem(selected)
@@ -459,6 +475,7 @@ class AiSettingsDialog(QDialog):
             self.manual_model_combo.clear()
             self.manual_model_combo.setEnabled(False)
         self.model_combo.blockSignals(False)
+        self.manual_model_combo.blockSignals(False)
         self._update_model_guidance()
 
     def _reload_ollama_models(self) -> None:
@@ -471,18 +488,26 @@ class AiSettingsDialog(QDialog):
 
     def _model_changed(self) -> None:
         self._update_model_guidance()
-        if self.provider_combo.currentData() != "ollama":
+        if self.provider_combo.currentData() not in {"local", "ollama"}:
             return
         self.model_status.setText(
             "백그라운드·수동 모델 선택을 변경했습니다. 저장 버튼을 누르면 "
-            "즉시 적용하며, 필요할 때만 Ollama 서버를 창 없이 시작합니다."
+            "즉시 적용하며, 필요할 때만 로컬 AI 런타임을 창 없이 시작합니다."
         )
 
     def _update_model_guidance(self) -> None:
         provider = self.provider_combo.currentData()
-        if provider == "ollama":
-            background = str(self.model_combo.currentData() or "")
-            manual = str(self.manual_model_combo.currentData() or "")
+        if provider in {"local", "ollama"}:
+            background = str(
+                self.model_combo.currentData()
+                or self.model_combo.currentText()
+                or ""
+            ).strip()
+            manual = str(
+                self.manual_model_combo.currentData()
+                or self.manual_model_combo.currentText()
+                or ""
+            ).strip()
             if not background or not manual:
                 self.model_guidance.setText(
                     "백그라운드 모델과 수동 요약 모델을 모두 선택하세요."
@@ -521,8 +546,12 @@ class AiSettingsDialog(QDialog):
         )
 
     def _current_model(self) -> str:
-        if self.provider_combo.currentData() == "ollama":
-            return str(self.model_combo.currentData() or "")
+        if self.provider_combo.currentData() in {"local", "ollama"}:
+            return str(
+                self.model_combo.currentData()
+                or self.model_combo.currentText()
+                or ""
+            ).strip()
         return self.model_combo.currentText().strip()
 
     def _refresh_key_status(self) -> None:
@@ -645,7 +674,7 @@ class AiSettingsDialog(QDialog):
             self._recommended_model = ""
             self.recommendation_status.setText(
                 f"{profile_label} 결과 · 추천 가능한 로컬 모델이 없습니다. "
-                "자세한 후보 비교는 Ollama 설치·삭제에서 확인하세요."
+                "자세한 후보 비교는 모델 다운로드·관리에서 확인하세요."
             )
         else:
             self._recommended_model = chosen.spec.model_id
@@ -657,7 +686,7 @@ class AiSettingsDialog(QDialog):
             self.recommendation_status.setText(
                 f"{profile_label} 결과 · {chosen.spec.label} "
                 f"({chosen.rating}, {state}). "
-                "후보별 용량과 메모리 비교는 Ollama 설치·삭제에서 확인하세요."
+                "후보별 용량과 메모리 비교는 모델 다운로드·관리에서 확인하세요."
             )
         self._update_residency_guidance()
 
@@ -666,6 +695,27 @@ class AiSettingsDialog(QDialog):
         self.recommendation_status.setText("추천을 계산하지 못했습니다.")
 
     def _open_model_manager(self, initial_model: str = "") -> None:
+        provider = self.provider_combo.currentData()
+        if provider == "local":
+            from paper_organizer.ui.embedded_model_dialog import (
+                EmbeddedModelDialog,
+            )
+
+            preferred = (
+                initial_model
+                or self._recommended_model
+                or self._controller.model_for_provider("local")
+            )
+            dialog = EmbeddedModelDialog(
+                self._controller,
+                self,
+                initial_model=preferred,
+            )
+            dialog.model_selected.connect(self._local_model_selected)
+            dialog.model_deleted.connect(self._local_model_deleted)
+            dialog.refresh()
+            dialog.exec_()
+            return
         preferred = (
             initial_model
             or self._recommended_model
@@ -680,6 +730,18 @@ class AiSettingsDialog(QDialog):
         dialog.model_deleted.connect(self._model_deleted)
         dialog.refresh()
         dialog.exec_()
+
+    def _local_model_selected(self, model: str) -> None:
+        local_index = self.provider_combo.findData("local")
+        if local_index >= 0:
+            self.provider_combo.setCurrentIndex(local_index)
+        self._populate_model_combo("local", model)
+
+    def _local_model_deleted(self, model: str, selection_cleared: bool) -> None:
+        if self.provider_combo.currentData() == "local":
+            selected = "" if selection_cleared else self._current_model()
+            self._populate_model_combo("local", selected)
+            return
 
     def _model_install_verified(self, model: str) -> None:
         ollama_index = self.provider_combo.findData("ollama")
@@ -701,9 +763,10 @@ class AiSettingsDialog(QDialog):
                 "사양 검사가 끝난 뒤 설정을 저장하세요.",
             )
             return
+        provider = self.provider_combo.currentData()
         acceleration_changed = (
-            self.force_igpu_check.isChecked()
-            != self._initial_force_igpu
+            provider == "ollama"
+            and self.force_igpu_check.isChecked() != self._initial_force_igpu
         )
         if acceleration_changed and QMessageBox.question(
             self,
@@ -716,7 +779,7 @@ class AiSettingsDialog(QDialog):
             return
         try:
             self._controller.save_preferences(
-                provider=self.provider_combo.currentData(),
+                provider=provider,
                 model=self._current_model(),
                 cloud_processing_consent=self.consent_check.isChecked(),
                 cloud_request_profile=self.profile_combo.currentData(),
@@ -730,11 +793,15 @@ class AiSettingsDialog(QDialog):
                 ),
                 manual_analysis_interval_seconds=self.manual_interval_spin.value(),
                 background_model=str(
-                    self.model_combo.currentData() or ""
-                ),
+                    self.model_combo.currentData()
+                    or self.model_combo.currentText()
+                    or ""
+                ).strip(),
                 manual_model=str(
-                    self.manual_model_combo.currentData() or ""
-                ),
+                    self.manual_model_combo.currentData()
+                    or self.manual_model_combo.currentText()
+                    or ""
+                ).strip(),
                 background_model_resident=(
                     self.background_resident_check.isChecked()
                 ),

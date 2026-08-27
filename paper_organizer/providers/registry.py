@@ -8,6 +8,7 @@ from paper_organizer.infra.settings import AppSettings
 
 from .anthropic import AnthropicProvider
 from .base import JsonHttpClient, SummaryProvider
+from .embedded import EmbeddedLlamaProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
 
@@ -18,6 +19,12 @@ def build_provider(
     http_client: JsonHttpClient | None = None,
 ) -> SummaryProvider:
     settings.validate()
+    if settings.summary_provider == "local":
+        return EmbeddedLlamaProvider(
+            settings.selected_model,
+            http_client=http_client,
+            timeout_seconds=settings.summary_timeout_seconds,
+        )
     if settings.summary_provider == "ollama":
         memory_total_gb = settings.hardware_profile.get("memory_total_gb")
         if not isinstance(memory_total_gb, (int, float)):

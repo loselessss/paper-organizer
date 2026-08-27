@@ -254,7 +254,15 @@ class SummaryController:
             load_settings(self._settings_path),
             purpose,
         )
-        if settings.summary_provider == "ollama":
+        if settings.summary_provider == "local":
+            from paper_organizer.infra.embedded_llm_runtime import start_runtime
+
+            if not start_runtime(settings):
+                raise SummaryPreparationError(
+                    "내장 AI 런타임을 시작할 수 없습니다. "
+                    "AI 설정에서 모델 파일과 내장 실행 파일 상태를 확인하세요."
+                )
+        elif settings.summary_provider == "ollama":
             starter = self._ollama_starter
             if starter is None:
                 from paper_organizer.infra.ollama_installer import start_runtime
@@ -319,9 +327,9 @@ def prepare_summary(
             raise SummaryPreparationError(
                 "2페이지 미만 문서는 OCR 대상에서 제외됩니다."
             )
-        if provider == "ollama" and not ollama_model_supports_ocr(model):
+        if provider in {"local", "ollama"} and not local_model_supports_ocr(model):
             raise SummaryPreparationError(
-                "OCR 문서는 8B 이상 Ollama 모델에서만 분석할 수 있습니다. "
+                "OCR 문서는 8B 이상 로컬 모델에서만 분석할 수 있습니다. "
                 "AI 설정에서 8B 모델을 선택한 뒤 다시 시도하세요."
             )
         try:
@@ -1365,7 +1373,7 @@ def _selected_page_indexes(page_count: int, mode: SummaryMode) -> tuple[int, ...
 
 
 def _selected_model(settings: AppSettings) -> str:
-    if settings.summary_provider == "ollama":
+    if settings.summary_provider in {"local", "ollama"}:
         return settings.selected_model.strip()
     if settings.summary_provider == "openai":
         return settings.openai_model.strip()
@@ -1389,17 +1397,23 @@ def _model_parameters(model: str) -> float:
 def ollama_model_supports_ocr(model: str) -> bool:
     """Return whether a known Ollama model meets the OCR analysis floor."""
 
+    return local_model_supports_ocr(model)
+
+
+def local_model_supports_ocr(model: str) -> bool:
+    """Return whether a known local model meets the OCR analysis floor."""
+
     return _model_parameters(model) >= OCR_MINIMUM_OLLAMA_PARAMETERS_B
 
 
 def _uses_hierarchical_summary(settings: AppSettings, model: str) -> bool:
     parameters = _model_parameters(model)
-    return settings.summary_provider == "ollama" and 0 < parameters < 8.0
+    return settings.summary_provider in {"local", "ollama"} and 0 < parameters < 8.0
 
 
 def _uses_abstract_only_summary(settings: AppSettings, model: str) -> bool:
     return (
-        settings.summary_provider == "ollama"
+        settings.summary_provider in {"local", "ollama"}
         and model.strip().casefold().removesuffix(":latest") == "qwen3:1.7b"
     )
 
@@ -1409,7 +1423,7 @@ def _adaptive_context_window(
 ) -> int | None:
     """Choose a quiet local context that fits the model, PC and paper length."""
 
-    if settings.summary_provider != "ollama":
+    if settings.summary_provider not in {"local", "ollama"}:
         return None
     parameters = _model_parameters(model)
     hardware = settings.hardware_profile

@@ -22,6 +22,7 @@ from .base import (
     SummaryRequest,
     SummaryResult,
 )
+from .embedded import EmbeddedLlamaProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
 from .policy import CloudRequestPolicy, cloud_request_policy
@@ -36,6 +37,7 @@ __all__ = [
     "DocumentTypeData",
     "DocumentTypeRequest",
     "DocumentTypeResult",
+    "EmbeddedLlamaProvider",
     "OllamaProvider",
     "OpenAIProvider",
     "ProviderError",

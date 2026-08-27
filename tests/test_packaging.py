@@ -35,6 +35,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('name="spdf-ocr"', spec)
         self.assertIn("paper_organizer/ocr_worker_main.py", spec)
         self.assertIn("korean_PP-OCRv5_rec_mobile.onnx", spec)
+        self.assertIn("llama-server.exe", spec)
+        self.assertIn('"llm"', spec)
         self.assertIn("PaperOrganizer-ocr", build_script)
         self.assertIn("PaperOrganizer\\ocr", build_script)
 

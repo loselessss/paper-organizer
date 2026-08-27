@@ -43,6 +43,7 @@ from paper_organizer.application.update_schedule import UpdateCheckSchedule
 
 from .ai_settings_dialog import AiSettingsDialog
 from .fluent_style import apply_fluent_theme, decorate_action, decorate_button
+from .embedded_model_dialog import EmbeddedModelDialog
 from .library_workflow_widget import (
     AnalysisQueueWidget,
     CollectionReviewWidget,
@@ -286,9 +287,9 @@ class PaperOrganizerWindow(QMainWindow):
         decorate_action(ai_settings_action, "settings")
         ai_settings_action.triggered.connect(self.show_ai_settings)
         menu.addAction(ai_settings_action)
-        models_action = QAction("Ollama 모델 관리...", self)
+        models_action = QAction("모델 다운로드·관리...", self)
         decorate_action(models_action, "download")
-        models_action.triggered.connect(self.show_ollama_models)
+        models_action.triggered.connect(self.show_local_models)
         menu.addAction(models_action)
         menu.aboutToShow.connect(self._sync_provider_actions)
         self._sync_provider_actions()
@@ -593,8 +594,8 @@ class PaperOrganizerWindow(QMainWindow):
         message = f"요약 AI 제공자를 {view.provider_label}(으)로 변경했습니다."
         if view.key_required and not view.key_configured:
             message += " API 키를 '요약 엔진 옵션'에서 등록하세요."
-        if view.provider == "ollama" and not view.model:
-            message += " Ollama 모델을 먼저 선택하세요."
+        if view.provider == "local" and not view.model:
+            message += " 내장 로컬 AI 모델을 먼저 선택하세요."
         self.statusBar().showMessage(message)
 
     def show_ai_settings(self) -> None:
@@ -619,18 +620,50 @@ class PaperOrganizerWindow(QMainWindow):
         QMessageBox.information(
             self,
             "요약 엔진 설정",
-            "Paper Organizer는 기본 요약 AI로 Ollama를 이용합니다.\n\n다음 설정 화면에서 "
-            "로컬 Ollama를 선택한 뒤 추천 모델의 설치·검증을 진행하세요. "
+            "Paper Organizer는 기본 요약 AI로 내장 로컬 AI를 이용합니다.\n\n다음 설정 화면에서 "
+            "내장 로컬 AI를 선택한 뒤 추천 모델의 설치·검증을 진행하세요. "
             "OpenAI 또는 Anthropic을 대신 사용하려면 API 키와 클라우드 전송 "
             "동의를 설정할 수 있습니다.",
         )
         AiSettingsDialog(self._ai_settings, self).exec_()
         self._sync_provider_actions()
         settings = self._ai_settings.settings()
-        if settings.summary_provider == "ollama" and not settings.selected_model.strip():
-            dialog = OllamaModelDialog(self._ai_settings, self)
+        if settings.summary_provider in {"local", "ollama"} and not settings.selected_model.strip():
+            dialog = (
+                EmbeddedModelDialog(self._ai_settings, self)
+                if settings.summary_provider == "local"
+                else OllamaModelDialog(self._ai_settings, self)
+            )
             dialog.refresh()
             dialog.exec_()
+
+    def show_ollama_retirement_notice_if_needed(self) -> None:
+        if not self._ai_settings.should_show_ollama_retirement_notice():
+            return
+        QMessageBox.information(
+            self,
+            "Ollama 정리 안내",
+            "이번 버전부터 Paper Organizer는 Ollama 대신 앱 전용 내장 로컬 AI를 "
+            "사용합니다. 기존 Ollama 제공자 설정은 내장 로컬 AI로 전환됩니다.\n\n"
+            "기존 Ollama와 Ollama 모델 파일은 자동으로 삭제하지 않습니다. 다른 앱에서 "
+            "Ollama를 쓰지 않는다면 Windows 설정의 앱 목록에서 Ollama를 제거하고, "
+            "필요하면 %USERPROFILE%\\.ollama\\models 폴더의 모델 파일도 정리하세요.\n\n"
+            "다른 앱에서 Ollama를 계속 사용한다면 그대로 두면 됩니다.",
+        )
+        self._ai_settings.acknowledge_ollama_retirement_notice()
+
+    def show_local_models(self) -> None:
+        settings = self._ai_settings.settings()
+        if settings.summary_provider == "ollama":
+            self.show_ollama_models()
+            return
+        dialog = EmbeddedModelDialog(
+            self._ai_settings,
+            self,
+            initial_model=settings.selected_model,
+        )
+        dialog.refresh()
+        dialog.exec_()
 
     def show_ollama_models(self) -> None:
         OllamaModelDialog(self._ai_settings, self).exec_()

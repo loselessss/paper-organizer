@@ -29,8 +29,12 @@ from paper_organizer.core.search_index import (
     search_metadata,
 )
 from paper_organizer.core.model_recommendation import load_model_catalog
+from paper_organizer.infra.embedded_llm_runtime import (
+    start_runtime as start_embedded_runtime,
+    stop_runtime as stop_embedded_runtime,
+)
 from paper_organizer.infra.ollama_installer import (
-    start_runtime,
+    start_runtime as start_ollama_runtime,
     stop_managed_runtime,
 )
 from paper_organizer.infra.ollama_runtime import (
@@ -167,12 +171,20 @@ class ConversationalSearchController:
         self._http_client = http_client
         self._ollama = ollama or OllamaRuntimeInspector()
         self._start_local_runtime = start_local_runtime or (
-            lambda: start_runtime(inspector=self._ollama)
+            lambda: start_ollama_runtime(inspector=self._ollama)
         )
         self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def provider_view(self) -> SearchProviderView:
         settings = load_settings(self._settings_path)
+        if settings.summary_provider == "local":
+            model = settings.selected_model.strip()
+            return SearchProviderView(
+                provider="local",
+                model=model,
+                sends_to_cloud=False,
+                requires_cloud_consent=False,
+            )
         local_model = ""
         if self._start_local_runtime():
             local_model = _preferred_installed_model(
@@ -208,6 +220,10 @@ class ConversationalSearchController:
         if not view.model:
             raise ConversationalSearchError("AI 모델을 먼저 선택하세요.")
         consent = settings.cloud_processing_consent or allow_cloud_once
+        if view.provider == "local" and not start_embedded_runtime(settings):
+            raise ConversationalSearchError(
+                "내장 AI 런타임을 시작할 수 없습니다. AI 설정과 모델 파일 상태를 확인하세요."
+            )
         if view.provider == "ollama" and not self._start_local_runtime():
             raise ConversationalSearchError(
                 "Ollama 서버를 시작할 수 없습니다. AI 설정과 설치 상태를 확인하세요."
@@ -234,11 +250,11 @@ class ConversationalSearchController:
             candidates = self._retrieve_candidates(normalized, plan)
             context_text, candidates = _build_context(candidates)
         except Exception:
-            if view.provider == "ollama":
+            if view.provider in {"local", "ollama"}:
                 self._stop_local_runtime_in_queue()
             raise
         if not candidates:
-            if view.provider == "ollama":
+            if view.provider in {"local", "ollama"}:
                 self._stop_local_runtime_in_queue()
             return PreparedSearch(
                 question=normalized,
@@ -305,7 +321,9 @@ class ConversationalSearchController:
                     )
                 )
             finally:
-                if view.provider == "ollama":
+                if view.provider == "local":
+                    stop_embedded_runtime()
+                elif view.provider == "ollama":
                     stop_managed_runtime()
         answer = _validated_answer(result.data, prepared.candidates)
         return ConversationalSearchResult(
@@ -324,9 +342,10 @@ class ConversationalSearchController:
     def _stop_local_runtime_in_queue(self) -> None:
         with self._execution_queue.slot(
             "runtime_cleanup",
-            "Ollama 검색 종료",
+            "로컬 AI 검색 종료",
             priority=AI_PRIORITY_SEARCH,
         ):
+            stop_embedded_runtime()
             stop_managed_runtime()
 
     def _retrieve_candidates(
@@ -410,7 +429,7 @@ def _entry_file_id(entry: LibraryEntry) -> str:
 
 
 def _selected_model(settings: AppSettings) -> str:
-    if settings.summary_provider == "ollama":
+    if settings.summary_provider in {"local", "ollama"}:
         return settings.selected_model.strip()
     if settings.summary_provider == "openai":
         return settings.openai_model.strip()
@@ -420,11 +439,11 @@ def _selected_model(settings: AppSettings) -> str:
 def _settings_for_search_provider(
     settings: AppSettings, view: SearchProviderView
 ) -> AppSettings:
-    if view.provider != "ollama":
+    if view.provider not in {"local", "ollama"}:
         return settings
     return replace(
         settings,
-        summary_provider="ollama",
+        summary_provider=view.provider,
         selected_model=view.model,
     )
 

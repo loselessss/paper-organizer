@@ -10,6 +10,9 @@ from paper_organizer.application.local_ai import (
     LocalAiAssessment,
     LocalAiAssessmentService,
 )
+from paper_organizer.application.embedded_model_manager import (
+    EmbeddedModelManagerService,
+)
 from paper_organizer.application.ollama_model_manager import (
     OllamaModelManagerService,
 )
@@ -22,18 +25,19 @@ from paper_organizer.infra.secrets import (
 from paper_organizer.infra.settings import (
     AppSettings,
     default_settings_path,
+    local_model_for_purpose,
     load_settings,
-    ollama_model_for_purpose,
     save_settings,
 )
 from paper_organizer.providers.policy import cloud_request_policy
 
 
 PROVIDER_LABELS = {
-    "ollama": "로컬 Ollama",
+    "local": "내장 로컬 AI",
     "openai": "OpenAI API",
     "anthropic": "Anthropic Claude API",
 }
+LOCAL_PROVIDER_NAMES = {"local", "ollama"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,18 +82,25 @@ class AiSettingsController:
         secret_store: SecretStore,
         settings_path: Path | None = None,
         local_ai: LocalAiAssessmentService | None = None,
+        embedded_model_manager: EmbeddedModelManagerService | None = None,
         model_manager: OllamaModelManagerService | None = None,
         ollama_starter: Callable[[], bool] | None = None,
+        local_runtime_starter: Callable[[], bool] | None = None,
         ollama_igpu_configurer: Callable[[bool], None] | None = None,
         ollama_restarter: Callable[[], bool] | None = None,
     ) -> None:
         self._secret_store = secret_store
         self._settings_path = settings_path or default_settings_path()
         self._local_ai = local_ai or LocalAiAssessmentService(self._settings_path)
+        self._embedded_model_manager = (
+            embedded_model_manager
+            or EmbeddedModelManagerService(self._settings_path)
+        )
         self._model_manager = model_manager or OllamaModelManagerService(
             self._settings_path
         )
         self._ollama_starter = ollama_starter
+        self._local_runtime_starter = local_runtime_starter or ollama_starter
         self._ollama_igpu_configurer = ollama_igpu_configurer
         self._ollama_restarter = ollama_restarter
 
@@ -99,7 +110,7 @@ class AiSettingsController:
 
     def view(self) -> AiSettingsView:
         settings = self.settings()
-        provider = settings.summary_provider
+        provider = _normalized_provider(settings.summary_provider)
         is_cloud = provider in {"openai", "anthropic"}
         status = (
             get_secret_status(self._secret_store, provider) if is_cloud else None
@@ -110,7 +121,7 @@ class AiSettingsController:
             provider_label=PROVIDER_LABELS[provider],
             model=_selected_model(settings),
             provider_choices=tuple(
-                ProviderChoice(name, label, name != "ollama")
+                ProviderChoice(name, label, name not in LOCAL_PROVIDER_NAMES)
                 for name, label in PROVIDER_LABELS.items()
             ),
             key_required=is_cloud,
@@ -134,11 +145,11 @@ class AiSettingsController:
             manual_analysis_interval_seconds=(
                 settings.manual_analysis_interval_seconds
             ),
-            background_model=ollama_model_for_purpose(
+            background_model=local_model_for_purpose(
                 settings,
                 "background",
             ),
-            manual_model=ollama_model_for_purpose(settings, "manual"),
+            manual_model=local_model_for_purpose(settings, "manual"),
             background_model_resident=settings.background_model_resident,
             ollama_residency_mode=settings.ollama_residency_mode,
             ollama_resident_model=settings.ollama_resident_model,
@@ -148,10 +159,32 @@ class AiSettingsController:
     def settings(self) -> AppSettings:
         return load_settings(self._settings_path)
 
+    def should_show_ollama_retirement_notice(self) -> bool:
+        """Return whether an upgraded user should see the Ollama cleanup note."""
+
+        settings = load_settings(self._settings_path)
+        if settings.ollama_retirement_notice_acknowledged:
+            return False
+        return (
+            settings.summary_provider == "ollama"
+            or bool(settings.managed_ollama_models)
+            or bool(settings.ollama_model_benchmarks)
+            or bool(settings.ollama_resident_model.strip())
+        )
+
+    def acknowledge_ollama_retirement_notice(self) -> None:
+        settings = load_settings(self._settings_path)
+        if settings.summary_provider == "ollama":
+            settings.summary_provider = "local"
+        settings.ollama_retirement_notice_acknowledged = True
+        save_settings(settings, self._settings_path)
+
     def synchronize_ollama_acceleration(self) -> None:
         """Reapply the saved iGPU preference before this app may start Ollama."""
 
         settings = load_settings(self._settings_path)
+        if settings.summary_provider != "ollama":
+            return
         configurer = self._ollama_igpu_configurer
         if configurer is None:
             from paper_organizer.infra.ollama_acceleration import (
@@ -183,11 +216,12 @@ class AiSettingsController:
 
     def model_for_provider(self, provider: str) -> str:
         normalized = provider.strip().lower()
+        normalized = _normalized_provider(normalized)
         if normalized not in PROVIDER_LABELS:
             raise ValueError(f"Unsupported AI provider: {provider}")
         settings = self.settings()
-        if normalized == "ollama":
-            return ollama_model_for_purpose(settings, "background")
+        if normalized == "local":
+            return local_model_for_purpose(settings, "background")
         if normalized == "openai":
             return settings.openai_model
         return settings.anthropic_model
@@ -196,6 +230,7 @@ class AiSettingsController:
         """Switch only the summary provider, e.g. from the menu bar."""
 
         normalized = provider.strip().lower()
+        normalized = _normalized_provider(normalized)
         if normalized not in PROVIDER_LABELS:
             raise ValueError(f"Unsupported AI provider: {provider}")
         settings = load_settings(self._settings_path)
@@ -225,6 +260,7 @@ class AiSettingsController:
         ollama_force_igpu: bool | None = None,
     ) -> AiSettingsView:
         normalized_provider = provider.strip().lower()
+        normalized_provider = _normalized_provider(normalized_provider)
         if normalized_provider not in PROVIDER_LABELS:
             raise ValueError(f"Unsupported AI provider: {provider}")
         normalized_model = model.strip()
@@ -232,8 +268,8 @@ class AiSettingsController:
             raise ValueError("AI model cannot be empty")
         settings = load_settings(self._settings_path)
         previous_ollama_models = (
-            ollama_model_for_purpose(settings, "background"),
-            ollama_model_for_purpose(settings, "manual"),
+            local_model_for_purpose(settings, "background"),
+            local_model_for_purpose(settings, "manual"),
         )
         settings.summary_provider = normalized_provider
         settings.cloud_processing_consent = bool(cloud_processing_consent)
@@ -261,7 +297,7 @@ class AiSettingsController:
         previous_force_igpu = settings.ollama_force_igpu
         if ollama_force_igpu is not None:
             settings.ollama_force_igpu = bool(ollama_force_igpu)
-        if normalized_provider == "ollama":
+        if normalized_provider == "local":
             normalized_background = (
                 background_model.strip()
                 if background_model is not None
@@ -296,7 +332,8 @@ class AiSettingsController:
         settings.validate()
         acceleration_changed = settings.ollama_force_igpu != previous_force_igpu
         apply_acceleration = (
-            ollama_force_igpu is not None
+            settings.summary_provider == "ollama"
+            and ollama_force_igpu is not None
             and (settings.ollama_force_igpu or acceleration_changed)
         )
         if apply_acceleration:
@@ -311,15 +348,15 @@ class AiSettingsController:
         try:
             save_settings(settings, self._settings_path)
         except Exception:
-            if acceleration_changed:
+            if apply_acceleration and acceleration_changed:
                 try:
                     configurer(previous_force_igpu)
                 except Exception:
                     pass
             raise
         current_ollama_models = (
-            ollama_model_for_purpose(settings, "background"),
-            ollama_model_for_purpose(settings, "manual"),
+            local_model_for_purpose(settings, "background"),
+            local_model_for_purpose(settings, "manual"),
         )
         models_changed = any(
             not _same_ollama_model(previous, current)
@@ -329,21 +366,60 @@ class AiSettingsController:
             )
         )
         if (
-            normalized_provider == "ollama"
+            normalized_provider == "local"
             and models_changed
-            and not self.start_ollama_runtime()
+            and not self.start_local_runtime()
         ):
             raise RuntimeError(
-                "모델 설정은 저장했지만 Ollama 서버를 시작하지 못했습니다. "
-                "AI 설정에서 Ollama 설치 상태를 확인하세요."
+                "모델 설정은 저장했지만 내장 AI 런타임을 시작하지 못했습니다. "
+                "AI 설정에서 모델 파일과 내장 실행 파일 상태를 확인하세요."
             )
         return self.view()
 
     def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
         return self._local_ai.scan(profile=profile)
 
+    def start_local_runtime(self) -> bool:
+        """Ensure the app-managed local AI runtime is running."""
+
+        if self._local_runtime_starter is not None:
+            return self._local_runtime_starter()
+        settings = load_settings(self._settings_path)
+        from paper_organizer.infra.embedded_llm_runtime import start_runtime
+
+        return start_runtime(settings)
+
     def ollama_model_snapshot(self):
         return self._model_manager.snapshot()
+
+    def embedded_model_snapshot(self):
+        return self._embedded_model_manager.snapshot()
+
+    def plan_embedded_model_download(self, model: str):
+        return self._embedded_model_manager.plan_download(model)
+
+    def download_embedded_model(self, model: str, *, on_progress=None, cancel=None):
+        return self._embedded_model_manager.download(
+            model,
+            on_progress=on_progress,
+            cancel=cancel,
+        )
+
+    def select_embedded_model(
+        self,
+        model: str,
+        *,
+        purpose: str = "background",
+        start_server: bool = True,
+    ) -> AiSettingsView:
+        return self.select_ollama_model(
+            model,
+            purpose=purpose,
+            start_server=start_server,
+        )
+
+    def delete_embedded_model(self, model: str) -> bool:
+        return self._embedded_model_manager.delete(model)
 
     def installed_ollama_models(self) -> tuple[str, ...]:
         try:
@@ -389,8 +465,8 @@ class AiSettingsController:
         if purpose not in {"background", "manual"}:
             raise ValueError("purpose must be background or manual")
         settings = load_settings(self._settings_path)
-        previous = ollama_model_for_purpose(settings, purpose)
-        settings.summary_provider = "ollama"
+        previous = local_model_for_purpose(settings, purpose)
+        settings.summary_provider = "local"
         if purpose == "background":
             settings.selected_model = normalized
             settings.background_model = normalized
@@ -401,11 +477,11 @@ class AiSettingsController:
         if (
             start_server
             and not _same_ollama_model(previous, normalized)
-            and not self.start_ollama_runtime()
+            and not self.start_local_runtime()
         ):
             raise RuntimeError(
-                "모델 선택은 저장했지만 Ollama 서버를 시작하지 못했습니다. "
-                "AI 설정에서 Ollama 설치 상태를 확인하세요."
+                "모델 선택은 저장했지만 내장 AI 런타임을 시작하지 못했습니다. "
+                "AI 설정에서 모델 파일과 내장 실행 파일 상태를 확인하세요."
             )
         return self.view()
 
@@ -420,24 +496,30 @@ class AiSettingsController:
 
     def key_status(self, provider: str) -> SecretStatus:
         normalized = provider.strip().lower()
-        if normalized == "ollama":
-            return SecretStatus("ollama", False, "")
+        normalized = _normalized_provider(normalized)
+        if normalized == "local":
+            return SecretStatus("local", False, "")
         return get_secret_status(self._secret_store, normalized)
 
     def delete_api_key(self, provider: str) -> AiSettingsView:
         normalized = provider.strip().lower()
-        if normalized == "ollama":
-            raise ValueError("Ollama does not use an API key")
+        normalized = _normalized_provider(normalized)
+        if normalized == "local":
+            raise ValueError("내장 로컬 AI는 API 키를 사용하지 않습니다.")
         self._secret_store.delete(normalized)
         return self.view()
 
 
 def _selected_model(settings: AppSettings) -> str:
-    if settings.summary_provider == "ollama":
+    if settings.summary_provider in LOCAL_PROVIDER_NAMES:
         return settings.selected_model
     if settings.summary_provider == "openai":
         return settings.openai_model
     return settings.anthropic_model
+
+
+def _normalized_provider(provider: str) -> str:
+    return "local" if provider == "ollama" else provider
 
 
 def _same_ollama_model(left: str, right: str) -> bool:

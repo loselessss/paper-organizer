@@ -45,6 +45,8 @@ class ModelSpec:
     benchmark_bibliography_score: float | None
     benchmark_strengths: tuple[str, ...]
     benchmark_hardware: str
+    download_url: str = ""
+    sha256: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +168,8 @@ def load_model_catalog(path: Path | None = None) -> tuple[str, tuple[ModelSpec, 
             benchmark_hardware=str(
                 benchmark.get("hardware") or benchmark_hardware
             ).strip(),
+            download_url=str(raw.get("download_url") or "").strip(),
+            sha256=str(raw.get("sha256") or "").strip().lower(),
         )
         if not spec.model_id or spec.model_id in seen:
             raise ValueError("model catalog contains an empty or duplicate id")
@@ -521,7 +525,7 @@ def memory_tier_guidance(total_ram_gb: float) -> str:
 
     if total_ram_gb < LOCAL_AI_MINIMUM_TOTAL_RAM_GB:
         return (
-            "8GB급 RAM: 로컬 Ollama 분석은 지원하지 않습니다. "
+            "8GB급 RAM: 내장 로컬 AI 분석은 지원하지 않습니다. "
             "OpenAI·Claude API 또는 RAM 16GB 이상 PC를 사용하세요."
         )
     if total_ram_gb < 24:

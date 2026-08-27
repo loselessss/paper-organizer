@@ -11,7 +11,7 @@ MINIMUM_TRANSLATION_PARAMETERS_B = 4.0
 RECOMMENDED_TRANSLATION_PARAMETERS_B = 8.0
 
 
-def ollama_model_parameters_b(model: str) -> float:
+def local_model_parameters_b(model: str) -> float:
     """Return a catalog or model-tag parameter count, or zero when unknown."""
 
     key = model.strip().casefold().removesuffix(":latest")
@@ -27,13 +27,19 @@ def ollama_model_parameters_b(model: str) -> float:
     return float(match.group(1)) if match else 0.0
 
 
+def ollama_model_parameters_b(model: str) -> float:
+    """Compatibility alias for older Ollama-specific callers."""
+
+    return local_model_parameters_b(model)
+
+
 def require_translation_model(settings: AppSettings) -> None:
     """Reject local translation models below the supported quality floor."""
 
-    if settings.summary_provider != "ollama":
+    if settings.summary_provider not in {"local", "ollama"}:
         return
     model = settings.selected_model.strip()
-    parameters = ollama_model_parameters_b(model)
+    parameters = local_model_parameters_b(model)
     if parameters >= MINIMUM_TRANSLATION_PARAMETERS_B:
         return
     detail = f"현재 모델은 {parameters:g}B입니다." if parameters else "현재 모델 크기를 확인할 수 없습니다."

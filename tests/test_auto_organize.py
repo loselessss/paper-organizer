@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import fitz
 
@@ -396,8 +397,12 @@ class AutoOrganizeTests(unittest.TestCase):
             controller, input_dir, library = self._controller(root)
             write_pdf(input_dir / "notes.pdf", ["짧은 메모입니다."])
 
-            controller.scan()
-            result = controller.scan()
+            with mock.patch(
+                "paper_organizer.application.background_ocr.ocr_page_texts",
+                return_value=["", "", ""],
+            ):
+                controller.scan()
+                result = controller.scan()
 
             self.assertEqual(len(result.items), 1)
             self.assertNotEqual(result.items[0].detection_status, "academic_likely")

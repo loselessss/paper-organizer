@@ -54,7 +54,7 @@ the library.
    - Lets the user manage research fields and subfields.
 
 4. AI analysis
-   - Uses local Ollama models by default.
+   - Uses app-managed local GGUF models by default.
    - Supports OpenAI and Anthropic only for requests the user explicitly allows.
    - Uses separate prompts for research papers, review papers, and patents.
    - Runs the background analysis queue one paper at a time to reduce load on
@@ -76,7 +76,7 @@ the library.
 - `.paperpack` creation, validation, extraction, and reindexing
 - External bibliography verification for title, author, year, and journal fields
 - Research field and subfield classification with user-managed taxonomy
-- Local Ollama-based AI summaries
+- Embedded local GGUF-based AI summaries
 - Optional OpenAI and Anthropic integration
 - Separate summary prompts for research papers, review papers, and patents
 - Background analysis queue with retry handling
@@ -94,8 +94,8 @@ the library.
 Paper Organizer is designed to run locally by default.
 
 - PDFs and PaperPacks stay on the user's PC.
-- Ollama model weights are not bundled with the installer; the user chooses which
-  models to install.
+- Local model weights are managed by the app and can be installed separately from
+  the main installer.
 - Cloud AI is used only for requests the user explicitly permits.
 - API keys are read from the OS credential store or environment variables, not
   committed to Git or stored in plain project files.
@@ -120,7 +120,7 @@ Download one of these files from the
 - `PaperOrganizer_Setup_<version>.exe`
 
 The installer includes the app, bundled sPDF integration, and the default OCR
-runtime. Ollama LLM weights are not included.
+runtime. Local LLM weights are managed separately so the installer stays small.
 
 ## Development
 

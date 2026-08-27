@@ -26,7 +26,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(load_settings(path), expected)
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["resource_profile"], "eco")
-            self.assertEqual(saved["summary_provider"], "ollama")
+            self.assertEqual(saved["summary_provider"], "local")
             self.assertNotIn("api_key", saved)
             self.assertNotIn("OPENAI_API_KEY", path.read_text(encoding="utf-8"))
 
@@ -46,6 +46,11 @@ class SettingsTests(unittest.TestCase):
         settings = AppSettings(summary_provider="unknown")
         with self.assertRaises(ValueError):
             settings.validate()
+
+    def test_embedded_local_summary_provider_is_the_default(self):
+        self.assertEqual(AppSettings().summary_provider, "local")
+        AppSettings(summary_provider="local").validate()
+        AppSettings(summary_provider="ollama").validate()
 
     def test_high_throughput_cloud_profile_is_supported(self):
         settings = AppSettings(
@@ -152,6 +157,11 @@ class SettingsTests(unittest.TestCase):
         ).validate()
         with self.assertRaises(ValueError):
             AppSettings(ollama_model_benchmarks={"qwen3:1.7b": "GPU"}).validate()
+
+    def test_ollama_retirement_notice_flag_is_boolean(self):
+        AppSettings(ollama_retirement_notice_acknowledged=True).validate()
+        with self.assertRaises(ValueError):
+            AppSettings(ollama_retirement_notice_acknowledged="yes").validate()
 
     def test_summary_language_is_validated(self):
         AppSettings(summary_language="ko").validate()

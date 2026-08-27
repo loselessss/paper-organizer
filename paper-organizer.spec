@@ -60,6 +60,16 @@ coll_ocr = COLLECT(
 )
 
 spdf_hidden = collect_submodules("pdfeditor")
+LLAMA_SERVER_CANDIDATES = (
+    "vendor/llama.cpp/build/bin/Release/llama-server.exe",
+    "vendor/llama.cpp/build/bin/llama-server.exe",
+    "tools/llama.cpp/llama-server.exe",
+)
+llm_datas = []
+for candidate in LLAMA_SERVER_CANDIDATES:
+    if os.path.exists(candidate):
+        llm_datas.append((candidate, "llm"))
+        break
 main_datas = [
     ("paper_organizer/assets", "paper_organizer/assets"),
     ("paper_organizer/models", "paper_organizer/models"),
@@ -67,6 +77,7 @@ main_datas = [
     ("vendor/spdf/assets/spdf.ico", "assets"),
     ("vendor/spdf/assets/spdf_doc.ico", "assets"),
     ("vendor/spdf/LICENSES.md", "."),
+    *llm_datas,
 ]
 a_gui = Analysis(
     ["run_gui.py"],

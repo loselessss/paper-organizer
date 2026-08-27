@@ -18,7 +18,7 @@ from paper_organizer.application.library_translation import LibraryTranslationSe
 from paper_organizer.application.summary_service import (
     SummaryController,
     SummaryMode,
-    ollama_model_supports_ocr,
+    local_model_supports_ocr,
 )
 from paper_organizer.core.model_recommendation import (
     LOCAL_AI_SYSTEM_MEMORY_RESERVE_GB,
@@ -97,7 +97,7 @@ class BackgroundAnalysisService:
         self._execution_queue = execution_queue or global_ai_execution_queue()
 
     def request_cancel(self) -> None:
-        """Cancel the current result and interrupt an app-managed Ollama process."""
+        """Cancel the current result and interrupt app-managed local processes."""
 
         self._cancel_requested.set()
         from paper_organizer.application.background_ocr import (
@@ -105,7 +105,13 @@ class BackgroundAnalysisService:
         )
 
         Thread(target=stop_active_ocr_workers, daemon=True).start()
-        if load_settings(self._settings_path).summary_provider != "ollama":
+        provider = load_settings(self._settings_path).summary_provider
+        if provider == "local":
+            from paper_organizer.infra.embedded_llm_runtime import stop_runtime
+
+            Thread(target=stop_runtime, daemon=True).start()
+            return
+        if provider != "ollama":
             return
         stopper = self._ollama_stopper
         if stopper is None:
@@ -137,6 +143,21 @@ class BackgroundAnalysisService:
             purpose,
         )
         provider = settings.summary_provider
+        if provider == "local":
+            model = settings.selected_model.strip()
+            if not model:
+                return AnalysisReadiness(False, "내장 로컬 AI 모델을 먼저 선택하세요.")
+            from paper_organizer.infra.embedded_llm_runtime import (
+                inspect_runtime,
+                start_runtime,
+            )
+
+            state = inspect_runtime(settings)
+            if not state.available:
+                return AnalysisReadiness(False, state.error)
+            if not start_runtime(settings):
+                return AnalysisReadiness(False, "내장 AI 런타임을 시작하는 중입니다.")
+            return AnalysisReadiness(True, f"내장 로컬 AI {model} 준비됨")
         if provider == "ollama":
             model = settings.selected_model.strip()
             if not model:
@@ -220,10 +241,13 @@ class BackgroundAnalysisService:
         ):
             if (
                 settings.summary_provider == "ollama"
-                and not ollama_model_supports_ocr(settings.selected_model)
+                and not local_model_supports_ocr(settings.selected_model)
+            ) or (
+                settings.summary_provider == "local"
+                and not local_model_supports_ocr(settings.selected_model)
             ):
                 reason = (
-                    "OCR 문서는 8B 이상 Ollama 모델에서만 분석합니다. "
+                    "OCR 문서는 8B 이상 로컬 모델에서만 분석합니다. "
                     "AI 설정에서 8B 모델을 선택하세요."
                 )
                 self._record_waiting_reason(next_item.queue_id, reason)
@@ -437,13 +461,22 @@ class BackgroundAnalysisService:
                     keep_runtime() if callable(keep_runtime) else keep_runtime
                 )
                 if (
-                    settings.summary_provider == "ollama"
+                    settings.summary_provider in {"local", "ollama"}
                     and settings.ollama_residency_mode == "unload"
                     and not should_keep_runtime
                 ):
-                    from paper_organizer.infra.ollama_installer import stop_managed_runtime
+                    if settings.summary_provider == "local":
+                        from paper_organizer.infra.embedded_llm_runtime import (
+                            stop_runtime,
+                        )
 
-                    stop_managed_runtime()
+                        stop_runtime()
+                    else:
+                        from paper_organizer.infra.ollama_installer import (
+                            stop_managed_runtime,
+                        )
+
+                        stop_managed_runtime()
             finally:
                 execution_lease.release()
 

@@ -1533,7 +1533,7 @@ class SummaryServiceTests(unittest.TestCase):
                 "paper_organizer.application.background_ocr.ocr_page_texts"
             ) as ocr:
                 with self.assertRaisesRegex(
-                    SummaryPreparationError, "8B 이상 Ollama 모델"
+                    SummaryPreparationError, "8B 이상 로컬 모델"
                 ):
                     prepare_summary(path, settings)
             ocr.assert_not_called()

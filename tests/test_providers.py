@@ -9,6 +9,7 @@ from paper_organizer.providers import (
     BibliographyRequest,
     CloudConsentRequiredError,
     DocumentTypeRequest,
+    EmbeddedLlamaProvider,
     OllamaProvider,
     OpenAIProvider,
     ProviderError,
@@ -101,6 +102,28 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(summary_client.calls[0]["payload"]["keep_alive"], "30m")
         self.assertEqual(search_client.calls[0]["payload"]["keep_alive"], "30m")
 
+    def test_embedded_provider_uses_openai_compatible_local_endpoint(self):
+        client = FakeHttpClient(
+            {
+                "choices": [
+                    {"message": {"content": json.dumps(SUMMARY, ensure_ascii=False)}}
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+            }
+        )
+        provider = EmbeddedLlamaProvider("qwen3_4b_q4.gguf", http_client=client)
+
+        result = provider.summarize(SummaryRequest("paper text"))
+
+        payload = client.calls[0]["payload"]
+        self.assertEqual(provider.name, "local")
+        self.assertEqual(payload["model"], "qwen3_4b_q4.gguf")
+        self.assertEqual(payload["response_format"]["type"], "json_object")
+        self.assertEqual(result.provider, "local")
+        self.assertEqual(result.input_tokens, 12)
+        self.assertEqual(result.output_tokens, 7)
+        self.assertEqual(result.data.methods, ("방법",))
+
     def test_summary_parser_recovers_json_wrapped_in_markdown(self):
         parsed = parse_summary_json(
             "Here is the result:\n```json\n"
@@ -159,18 +182,25 @@ class ProviderTests(unittest.TestCase):
                 ),
                 "ollama",
             ),
+            (
+                EmbeddedLlamaProvider,
+                FakeHttpClient(
+                    {"choices": [{"message": {"content": section}}]}
+                ),
+                "local",
+            ),
         )
         for provider_class, client, provider_name in cases:
             with self.subTest(provider=provider_name):
                 provider = (
                     provider_class("secret", http_client=client)
-                    if provider_name != "ollama"
+                    if provider_name in {"openai", "anthropic"}
                     else provider_class("qwen3:4b", http_client=client)
                 )
                 result = provider.summarize(
                     SummaryRequest(
                         "paper section",
-                        cloud_consent=provider_name != "ollama",
+                        cloud_consent=provider_name in {"openai", "anthropic"},
                         stage="section",
                     )
                 )
@@ -179,8 +209,10 @@ class ProviderTests(unittest.TestCase):
                     self.assertNotIn("text", payload)
                 elif provider_name == "anthropic":
                     self.assertNotIn("output_config", payload)
-                else:
+                elif provider_name == "ollama":
                     self.assertNotIn("format", payload)
+                else:
+                    self.assertNotIn("response_format", payload)
                 self.assertEqual(result.data.summary, section)
                 self.assertEqual(result.data.methods, ())
 
@@ -214,18 +246,25 @@ class ProviderTests(unittest.TestCase):
                 FakeHttpClient({"message": {"content": translated}}),
                 "ollama",
             ),
+            (
+                EmbeddedLlamaProvider,
+                FakeHttpClient(
+                    {"choices": [{"message": {"content": translated}}]}
+                ),
+                "local",
+            ),
         )
         for provider_class, client, provider_name in cases:
             with self.subTest(provider=provider_name):
                 provider = (
                     provider_class("secret", http_client=client)
-                    if provider_name != "ollama"
+                    if provider_name in {"openai", "anthropic"}
                     else provider_class("qwen3:4b", http_client=client)
                 )
                 result = provider.summarize(
                     SummaryRequest(
                         "[요약]\nThis study improved accuracy.",
-                        cloud_consent=provider_name != "ollama",
+                        cloud_consent=provider_name in {"openai", "anthropic"},
                         stage="translation",
                         output_language="ko",
                         advanced_analysis=False,
@@ -236,13 +275,17 @@ class ProviderTests(unittest.TestCase):
                     self.assertNotIn("text", payload)
                 elif provider_name == "anthropic":
                     self.assertNotIn("output_config", payload)
-                else:
+                elif provider_name == "ollama":
                     self.assertNotIn("format", payload)
+                else:
+                    self.assertNotIn("response_format", payload)
                 self.assertIn("translation, not summarization", (
                     payload["instructions"]
                     if provider_name == "openai"
                     else payload["system"]
                     if provider_name == "anthropic"
+                    else payload["messages"][0]["content"]
+                    if provider_name == "local"
                     else payload["messages"][0]["content"]
                 ))
                 self.assertEqual(result.data.summary, translated)
