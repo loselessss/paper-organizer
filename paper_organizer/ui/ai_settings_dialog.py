@@ -48,14 +48,23 @@ class _HardwareScanWorker(QThread):
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, controller: AiSettingsController, profile: str, parent=None) -> None:
+    def __init__(
+        self,
+        controller: AiSettingsController,
+        profile: str,
+        provider: str,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._profile = profile
+        self._provider = provider
 
     def run(self) -> None:
         try:
-            self.completed.emit(self._controller.scan_local_ai(self._profile))
+            self.completed.emit(
+                self._controller.scan_local_ai(self._profile, self._provider)
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -615,13 +624,16 @@ class AiSettingsDialog(QDialog):
             return
         self.hardware_scan_button.setEnabled(False)
         self.model_profile_combo.setEnabled(False)
-        self.hardware_status.setText("CPU·RAM·GPU·디스크와 Ollama를 검사하는 중…")
+        provider = self.provider_combo.currentData()
+        target = "Ollama" if provider == "ollama" else "앱 모델 폴더"
+        self.hardware_status.setText(f"CPU·RAM·GPU·디스크와 {target}를 검사하는 중…")
         self.recommendation_status.setText(
             f"{self.model_profile_combo.currentText()} 프로필로 추천 계산 중…"
         )
         worker = _HardwareScanWorker(
             self._controller,
             self.model_profile_combo.currentData(),
+            provider,
             self,
         )
         worker.completed.connect(self._hardware_scan_completed)
@@ -645,21 +657,29 @@ class AiSettingsDialog(QDialog):
             else gpu.name
             for gpu in hardware.gpus
         ) or "GPU 미감지 · CPU 실행"
-        ollama = assessment.ollama
-        running_text = ", ".join(
-            f"{model.name} {model.processor}"
-            for model in ollama.running_models
-        ) or "현재 적재 모델 없음"
-        ollama_text = (
-            f"Ollama {ollama.version}, 설치 모델 {len(ollama.models)}개, "
-            f"{running_text}"
-            if ollama.reachable
-            else "Ollama 연결 안 됨"
-        )
+        provider = self.provider_combo.currentData()
+        if provider == "ollama":
+            ollama = assessment.ollama
+            running_text = ", ".join(
+                f"{model.name} {model.processor}"
+                for model in ollama.running_models
+            ) or "현재 적재 모델 없음"
+            model_status = (
+                f"Ollama {ollama.version}, 설치 모델 {len(ollama.models)}개, "
+                f"{running_text}"
+                if ollama.reachable
+                else "Ollama 연결 안 됨"
+            )
+        else:
+            local_model_count = int(getattr(assessment, "local_model_count", 0) or 0)
+            local_model_dir = str(getattr(assessment, "local_model_dir", "") or "")
+            model_status = f"앱 모델 {local_model_count}개"
+            if local_model_dir:
+                model_status = f"{model_status} · {local_model_dir}"
         self.hardware_status.setText(
             f"{hardware.cpu_model} · 코어 {hardware.logical_cores} · "
             f"RAM {hardware.memory_available_gb:g}/{hardware.memory_total_gb:g}GB 사용 가능 · "
-            f"{gpu_text} · 모델 디스크 {hardware.model_disk_free_gb:g}GB 여유 · {ollama_text}"
+            f"{gpu_text} · 모델 디스크 {hardware.model_disk_free_gb:g}GB 여유 · {model_status}"
         )
         recommendation = assessment.recommendation
         profile_label = {

@@ -29,19 +29,29 @@ def default_model_dir() -> Path:
     return default_settings_path().parent / "models"
 
 
-def model_path_for(settings: AppSettings) -> Path:
-    """Return the expected local GGUF path for the selected model id."""
+def model_file_name_for_id(model: str) -> str:
+    """Return the app-owned GGUF filename for a catalog model id."""
 
-    model = settings.selected_model.strip()
-    if not model:
-        return default_model_dir() / ""
     safe = (
-        model.replace("\\", "_")
+        model.strip()
+        .replace("\\", "_")
         .replace("/", "_")
         .replace(":", "_")
         .replace(" ", "_")
     )
-    return default_model_dir() / f"{safe}.gguf"
+    return f"{safe}.gguf" if safe else ""
+
+
+def model_path_for_id(model: str, model_dir: Path | None = None) -> Path:
+    """Return the expected app-owned GGUF path for a catalog model id."""
+
+    return (model_dir or default_model_dir()) / model_file_name_for_id(model)
+
+
+def model_path_for(settings: AppSettings) -> Path:
+    """Return the expected local GGUF path for the selected model id."""
+
+    return model_path_for_id(settings.selected_model.strip())
 
 
 def bundled_llama_server() -> Path | None:

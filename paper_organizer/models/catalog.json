@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.08.01.2",
-  "verified_at": "2026-08-01",
+  "catalog_version": "2026.08.28.1",
+  "verified_at": "2026-08-28",
   "benchmark_hardware": "NVIDIA GeForce RTX 3080 Ti",
   "models": [
     {
@@ -15,6 +15,7 @@
       "quality": 1,
       "license": "Apache-2.0",
       "recommended_context": 4096,
+      "download_url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -38,6 +39,7 @@
       "quality": 2,
       "license": "Apache-2.0",
       "recommended_context": 8192,
+      "download_url": "https://huggingface.co/tensorblock/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
       "benchmark": {
         "score": 25.83,
         "paper_count": 6,
@@ -68,6 +70,7 @@
       "license": "Apache-2.0",
       "recommended_context": 8192,
       "download_priority": 1,
+      "download_url": "https://huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF/resolve/main/Qwen_Qwen3.5-2B-Q4_K_M.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -93,6 +96,7 @@
       "quality": 2,
       "license": "Apache-2.0",
       "recommended_context": 8192,
+      "download_url": "https://huggingface.co/ibm-granite/granite-3.3-2b-instruct-GGUF/resolve/main/granite-3.3-2b-instruct-Q4_K_M.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -116,6 +120,7 @@
       "license": "Apache-2.0",
       "recommended_context": 16384,
       "recommendation_rank": 2,
+      "download_url": "https://huggingface.co/ibm-granite/granite-4.1-3b-GGUF/resolve/main/granite-4.1-3b-Q4_K_M.gguf",
       "benchmark": {
         "score": 25.83,
         "paper_count": 6,
@@ -146,6 +151,7 @@
       "quality": 3,
       "license": "Apache-2.0",
       "recommended_context": 24576,
+      "download_url": "https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -169,6 +175,7 @@
       "quality": 3,
       "license": "MIT",
       "recommended_context": 24576,
+      "download_url": "https://huggingface.co/Mungert/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-q4_k.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -193,6 +200,7 @@
       "license": "Apache-2.0",
       "recommended_context": 24576,
       "recommendation_rank": 3,
+      "download_url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
       "benchmark": {
         "score": 80.8,
         "paper_count": 4,
@@ -220,6 +228,7 @@
       "recommended_context": 8192,
       "download_priority": 2,
       "recommendation_rank": 1,
+      "download_url": "https://huggingface.co/TheStageAI/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-M-TS-Q4_K_M.gguf",
       "benchmark": {
         "score": 33.92,
         "paper_count": 6,
@@ -248,7 +257,8 @@
       "tier": "light",
       "quality": 3,
       "license": "Gemma Terms",
-      "recommended_context": 8192
+      "recommended_context": 8192,
+      "download_url": "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf"
     },
     {
       "id": "gemma3:4b-it-qat",
@@ -262,6 +272,7 @@
       "quality": 3,
       "license": "Gemma Terms",
       "recommended_context": 24576,
+      "download_url": "https://huggingface.co/bartowski/google_gemma-3-4b-it-qat-GGUF/resolve/main/gemma-3-4b-it-qat-Q4_K_M.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 4,
@@ -285,6 +296,7 @@
       "quality": 4,
       "license": "Apache-2.0",
       "recommended_context": 40960,
+      "download_url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
       "benchmark": {
         "paper_count": 4,
         "success_count": 3,

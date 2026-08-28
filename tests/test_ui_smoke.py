@@ -57,6 +57,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertNotIn("QComboBox,\n        QSpinBox", stylesheet)
         self.assertNotIn("QComboBox:focus", stylesheet)
         self.assertNotIn("QSpinBox:focus", stylesheet)
+        self.assertIn("QCheckBox {\n            background: transparent;", stylesheet)
 
     def test_selection_ai_uses_a_separate_dialog(self):
         from PyQt5.QtCore import Qt
@@ -277,6 +278,32 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(ai_controller.settings().selected_model, "")
             self.assertIn("GGUF", dialog.model_status.text())
             self.assertIn("모두 선택", dialog.model_guidance.text())
+            dialog._hardware_scan_completed(
+                SimpleNamespace(
+                    hardware=SimpleNamespace(
+                        cpu_model="Test CPU",
+                        logical_cores=12,
+                        memory_available_gb=4.5,
+                        memory_total_gb=16,
+                        gpus=(),
+                        model_disk_free_gb=91,
+                    ),
+                    ollama=SimpleNamespace(
+                        reachable=True,
+                        version="0.test",
+                        models=(object(),),
+                        running_models=(),
+                    ),
+                    local_model_count=0,
+                    local_model_dir="C:/Paper Organizer/models",
+                    recommendation=SimpleNamespace(
+                        profile="auto",
+                        recommended=None,
+                    ),
+                )
+            )
+            self.assertIn("앱 모델 0개", dialog.hardware_status.text())
+            self.assertNotIn("Ollama", dialog.hardware_status.text())
             self.assertEqual(dialog.model_profile_combo.currentData(), "auto")
             with mock.patch.object(dialog, "_scan_hardware") as scan_hardware:
                 dialog.model_profile_combo.setCurrentIndex(

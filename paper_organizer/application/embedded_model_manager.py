@@ -18,6 +18,7 @@ from paper_organizer.core.model_recommendation import (
 )
 from paper_organizer.infra.embedded_llm_runtime import (
     default_model_dir,
+    model_path_for_id,
 )
 from paper_organizer.infra.hardware import HardwareInspector
 from paper_organizer.infra.settings import (
@@ -201,13 +202,7 @@ class EmbeddedModelManagerService:
         return cleared
 
     def _model_path(self, model: str) -> Path:
-        safe = (
-            model.replace("\\", "_")
-            .replace("/", "_")
-            .replace(":", "_")
-            .replace(" ", "_")
-        )
-        return self._model_dir / f"{safe}.gguf"
+        return model_path_for_id(model, self._model_dir)
 
 
 def _entry_from_spec(spec: ModelSpec, target: Path) -> EmbeddedModelEntry:

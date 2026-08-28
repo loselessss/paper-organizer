@@ -67,6 +67,11 @@ class FakeOllamaInspector:
         return self.value
 
 
+class FailingOllamaInspector:
+    def inspect(self):
+        raise AssertionError("내장 로컬 AI 사양 검사는 Ollama를 확인하지 않아야 합니다.")
+
+
 class LocalAiTests(unittest.TestCase):
     def test_model_guidance_explains_safe_roles_by_parameter_class(self):
         benchmark = model_usage_guidance("qwen3:0.6b")
@@ -99,20 +104,32 @@ class LocalAiTests(unittest.TestCase):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.08.01.2")
+        self.assertEqual(version, "2026.08.28.1")
         self.assertEqual(
             tuple(spec.model_id for spec in specs[:2]),
             ("qwen3.5:2b", "qwen3.5:4b"),
         )
         self.assertEqual(models["qwen3.5:2b"].download_gb, 2.7)
         self.assertEqual(models["qwen3.5:2b"].download_priority, 1)
+        self.assertIn(
+            "huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF",
+            models["qwen3.5:2b"].download_url,
+        )
         self.assertEqual(models["qwen3.5:4b"].download_gb, 3.4)
         self.assertEqual(models["qwen3.5:4b"].download_priority, 2)
+        self.assertIn(
+            "huggingface.co/TheStageAI/Qwen3.5-4B-GGUF",
+            models["qwen3.5:4b"].download_url,
+        )
         self.assertEqual(models["granite3.3:2b"].parameters_b, 2.5)
         self.assertEqual(models["granite3.3:2b"].download_gb, 1.55)
         self.assertEqual(models["granite4.1:3b"].parameters_b, 3.0)
         self.assertEqual(models["granite4.1:3b"].download_gb, 2.1)
         self.assertEqual(models["granite4.1:3b"].recommendation_rank, 2)
+        self.assertIn(
+            "huggingface.co/ibm-granite/granite-4.1-3b-GGUF",
+            models["granite4.1:3b"].download_url,
+        )
         self.assertEqual(models["granite4.1:3b"].benchmark_score, 25.83)
         self.assertEqual(models["qwen3.5:4b"].recommendation_rank, 1)
         self.assertEqual(models["qwen3.5:4b"].benchmark_score, 33.92)
@@ -120,6 +137,10 @@ class LocalAiTests(unittest.TestCase):
         self.assertEqual(models["qwen3:4b"].benchmark_score, 80.8)
         self.assertEqual(models["phi4-mini"].parameters_b, 3.84)
         self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 4.0)
+        self.assertEqual(
+            [spec.model_id for spec in specs if not spec.download_url],
+            [],
+        )
         self.assertEqual(
             models["ministral-3:3b-instruct-2512-q4_K_M"].parameters_b,
             3.85,
@@ -237,6 +258,17 @@ class LocalAiTests(unittest.TestCase):
         self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:4b")
         self.assertTrue(recommendation.recommended.installed)
 
+    def test_embedded_profile_marks_app_owned_models_as_installed(self):
+        recommendation = recommend_models(
+            hardware(total_ram=32, available_ram=28),
+            ollama(),
+            profile="auto",
+            installed_model_ids=("qwen3:4b",),
+        )
+
+        self.assertEqual(recommendation.recommended.spec.model_id, "qwen3:4b")
+        self.assertTrue(recommendation.recommended.installed)
+
     def test_balanced_profile_prefers_top_ranked_real_paper_model(self):
         recommendation = recommend_models(
             hardware(total_ram=16, available_ram=14),
@@ -329,7 +361,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "qwen3.5:4b")
-            self.assertEqual(saved.model_catalog_version, "2026.08.01.2")
+            self.assertEqual(saved.model_catalog_version, "2026.08.28.1")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"
@@ -338,6 +370,21 @@ class LocalAiTests(unittest.TestCase):
                 assessment.recommendation.recommended.spec.model_id,
                 "qwen3.5:4b",
             )
+
+    def test_local_provider_scan_does_not_probe_ollama(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            save_settings(AppSettings(summary_provider="local"), path)
+            service = LocalAiAssessmentService(
+                path,
+                hardware=FakeHardwareInspector(hardware()),
+                ollama=FailingOllamaInspector(),
+            )
+
+            assessment = service.scan()
+
+            self.assertFalse(assessment.ollama.reachable)
+            self.assertEqual(assessment.local_model_count, 0)
 
 
 if __name__ == "__main__":

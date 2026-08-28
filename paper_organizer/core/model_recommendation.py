@@ -7,7 +7,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from paper_organizer.infra.hardware import HardwareProfile
 from paper_organizer.infra.ollama_runtime import OllamaRuntimeStatus
@@ -400,11 +400,16 @@ def recommend_models(
     profile: str = "auto",
     selected_model: str = "",
     catalog_path: Path | None = None,
+    installed_model_ids: Iterable[str] | None = None,
 ) -> ModelRecommendation:
     if profile not in VALID_MODEL_PROFILES:
         raise ValueError(f"unsupported model profile: {profile}")
     version, specs = load_model_catalog(catalog_path)
-    installed_names = _installed_aliases(ollama)
+    installed_names = (
+        _installed_aliases(ollama)
+        if installed_model_ids is None
+        else _model_aliases(installed_model_ids)
+    )
     candidates = tuple(
         _assess(spec, hardware, spec.model_id.casefold() in installed_names)
         for spec in specs
@@ -587,9 +592,15 @@ def _smallest(candidates: list[ModelCandidate]) -> ModelCandidate | None:
 
 
 def _installed_aliases(ollama: OllamaRuntimeStatus) -> set[str]:
+    return _model_aliases(model.name for model in ollama.models)
+
+
+def _model_aliases(models: Iterable[str]) -> set[str]:
     names: set[str] = set()
-    for model in ollama.models:
-        value = model.name.casefold()
+    for model in models:
+        value = model.strip().casefold()
+        if not value:
+            continue
         names.add(value)
         if value.endswith(":latest"):
             names.add(value.removesuffix(":latest"))

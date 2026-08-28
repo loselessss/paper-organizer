@@ -102,6 +102,10 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             background: transparent;
         }
 
+        QCheckBox {
+            background: transparent;
+        }
+
         QMenuBar {
             background: #f7f7f7;
             border-bottom: 1px solid #e5e5e5;

@@ -376,8 +376,10 @@ class AiSettingsController:
             )
         return self.view()
 
-    def scan_local_ai(self, profile: str | None = None) -> LocalAiAssessment:
-        return self._local_ai.scan(profile=profile)
+    def scan_local_ai(
+        self, profile: str | None = None, provider: str | None = None
+    ) -> LocalAiAssessment:
+        return self._local_ai.scan(profile=profile, provider=provider)
 
     def start_local_runtime(self) -> bool:
         """Ensure the app-managed local AI runtime is running."""
