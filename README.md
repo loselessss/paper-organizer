@@ -2,114 +2,110 @@
 
 [Korean README](README.ko.md)
 
-Paper Organizer is a local-first Windows desktop app for collecting academic
-PDFs, storing them as portable `.paperpack` archives, summarizing them with AI,
-and searching their full text later.
+Paper Organizer is a Windows desktop app for collecting academic PDFs, storing
+them as portable `.paperpack` archives, summarizing them with AI, and searching
+their full text later.
 
 The latest installer is available from
 [GitHub Releases](https://github.com/loselessss/paper-organizer/releases/latest).
 
 ## Why It Exists
 
-Academic PDFs scatter quickly. Download folders fill with unclear filenames,
-bibliographic metadata is often incomplete, and later you may remember only an
-experimental condition, a result sentence, or a method detail rather than the
-paper title.
+Academic PDFs are easy to collect and hard to reuse. Download folders fill with
+unclear filenames, bibliography fields are often broken or incomplete, and the
+thing you remember later is usually a method detail, a result sentence, or an
+experimental condition rather than the exact title.
 
-Paper Organizer keeps that workflow in one place:
-
-- Detect new academic PDFs.
-- Store papers and patents as single `.paperpack` archives.
-- Clean up titles, authors, years, journals, conferences, and research fields.
-- Summarize papers with local AI or cloud AI only when the user allows it.
-- Index full text so papers can be found again by keyword or natural-language
-  questions.
-
-The goal is not just to make a neat folder of PDFs. It is to build a personal
-paper library that remains useful when you need to reuse the work.
+Paper Organizer keeps that workflow in one local-first library. It watches for
+new PDFs, identifies papers and patents, stores them as durable PaperPacks,
+checks bibliography data, creates AI summaries, and builds a full-text index so
+the papers can be found again when they matter.
 
 ## What It Does
 
-Paper Organizer currently covers the main flow from watching folders to searching
-the library.
-
-1. New PDF discovery
-   - Scans download and user-selected watch folders.
+1. Finds new PDFs
+   - Watches download and user-selected folders.
    - Waits until files are stable before reading them.
-   - Separates likely papers, review papers, patents, duplicate candidates,
-     damaged files, and repository wrapper pages.
-   - Uses the bundled RapidOCR path when a document needs text recovery.
+   - Separates research papers, review papers, patents, duplicates, damaged
+     files, and multi-document bundles.
+   - Uses bundled OCR support when a PDF needs text recovery.
 
-2. PaperPack archiving
-   - Stores the PDF, metadata, full text, analysis results, and edit history in a
-     `.paperpack` ZIP package.
-   - Treats `index/library.json` and `index/search.sqlite` as rebuildable caches.
-   - Keeps the `.paperpack` file as the single source of truth.
+2. Builds PaperPack archives
+   - Stores the PDF, metadata, full text, analysis results, and edit history in
+     one `.paperpack` ZIP file.
+   - Treats `index/library.json` and `index/search.sqlite` as rebuildable
+     caches.
+   - Keeps `.paperpack` as the single source of truth.
 
-3. Bibliography and field cleanup
-   - Combines regex extraction, external bibliography verification, and AI
-     analysis.
-   - Tracks sources for title, author, year, and journal fields.
-   - Preserves fields edited by the user so later AI runs do not overwrite them.
-   - Lets the user manage research fields and subfields.
+3. Cleans bibliography and fields
+   - Combines regex extraction, AI extraction, and PubMed/Crossref verification.
+   - Records field sources for title, author, year, and journal/conference.
+   - Preserves user-edited fields across later AI runs.
+   - Lets users manage research fields and subfields.
 
-4. AI analysis
+4. Summarizes and translates
    - Uses app-managed local GGUF models by default.
-   - Supports OpenAI and Anthropic only for requests the user explicitly allows.
+   - Supports OpenAI and Anthropic only when the user explicitly allows cloud
+     processing.
    - Uses separate prompts for research papers, review papers, and patents.
-   - Runs the background analysis queue one paper at a time to reduce load on
-     modest PCs.
+   - Keeps a Korean translation cache for AI analysis text.
 
-5. Search and reuse
-   - Shows title, author, year, field, analysis status, and version information
-     in the library table.
-   - Supports keyword search and natural-language paper search.
-   - Shows search evidence from actual PaperPack full-text pages.
-   - Opens PDFs through the bundled sPDF module and can apply saved PDF edits
-     back into the PaperPack.
+5. Searches and reuses papers
+   - Provides keyword search and natural-language paper search.
+   - Shows evidence snippets from actual PaperPack full-text pages.
+   - Lets users customize library columns and ordering.
+   - Opens PDFs through the bundled sPDF integration and can apply saved PDF
+     edits back into the PaperPack.
 
 ## Features
 
 - Download folder and custom watch folder scanning
-- Academic paper, review paper, and patent detection
+- Research paper, review paper, and patent detection
 - Duplicate PDF and multi-document bundle detection
 - `.paperpack` creation, validation, extraction, and reindexing
-- External bibliography verification for title, author, year, and journal fields
+- PubMed/Crossref bibliography verification
+- Bibliography anomaly detection and field-source tracking
 - Research field and subfield classification with user-managed taxonomy
-- Embedded local GGUF-based AI summaries
+- App-managed local GGUF model download and selection
+- Optional legacy Ollama provider for existing setups
 - Optional OpenAI and Anthropic integration
 - Separate summary prompts for research papers, review papers, and patents
 - Background analysis queue with retry handling
-- Korean translation cache for AI analysis
+- Korean translation cache for AI summaries
 - SQLite FTS5 full-text search
-- Natural-language paper search with evidence snippets
+- Natural-language search with evidence snippets
 - User-configurable library columns and ordering
-- Bundled sPDF integration for opening PDFs and applying edited copies
+- Bundled sPDF integration for PDF viewing and edit application
 - Bundled RapidOCR-based text recovery
 - GitHub Releases-based update checks
 - PyInstaller and Inno Setup Windows installer build
 
+## Local AI Setup
+
+Paper Organizer 2.4.0 uses app-managed local GGUF models by default. The Windows
+installer includes the application, bundled sPDF integration, OCR runtime, and
+local AI runtime support, but it does not include large model weights.
+
+After installing the app:
+
+1. Open `AI Settings`.
+2. Choose `Built-in Local AI`.
+3. Open `Model Download/Manage`.
+4. Download one of the recommended GGUF models.
+5. Select separate models for background analysis and manual summaries if
+   needed.
+
+Ollama is no longer required for the default local AI workflow. Existing Ollama
+users may keep using the legacy provider, but the app will not remove Ollama or
+shared Ollama model files automatically.
+
 ## Local-First Policy
 
-Paper Organizer is designed to run locally by default.
-
 - PDFs and PaperPacks stay on the user's PC.
-- Local model weights are managed by the app and can be installed separately from
-  the main installer.
-- Cloud AI is used only for requests the user explicitly permits.
-- API keys are read from the OS credential store or environment variables, not
-  committed to Git or stored in plain project files.
+- Local model files are stored in the app-managed model folder.
+- Cloud AI runs only for requests the user explicitly permits.
+- API keys are read from the OS credential store or environment variables.
 - Error records avoid API keys, tracebacks, and paper body text.
-
-## sPDF Integration
-
-Paper Organizer includes sPDF as a pinned Git submodule. The current integration
-targets the sPDF international edition, so the bundled PDF viewer/editor can show
-its English UI while keeping Paper Organizer's PDF edit workflow and update
-checks controlled by Paper Organizer.
-
-When Paper Organizer opens sPDF internally, sPDF's own update service and update
-notifications remain disabled.
 
 ## Installation
 
@@ -119,8 +115,8 @@ Download one of these files from the
 - `PaperOrganizer_Setup_latest.exe`
 - `PaperOrganizer_Setup_<version>.exe`
 
-The installer includes the app, bundled sPDF integration, and the default OCR
-runtime. Local LLM weights are managed separately so the installer stays small.
+Local AI model downloads can be several gigabytes, so they are handled after
+installation from inside the app.
 
 ## Development
 
@@ -164,5 +160,5 @@ The installer is written to `Output\PaperOrganizer_Setup_<version>.exe`.
 ## License And Bundled Assets
 
 Pretendard font files and their license are included for future UI font testing.
-sPDF is pinned through `vendor/spdf`; Paper Organizer does not use sPDF's own
-update notification or self-update features when sPDF is opened internally.
+sPDF is pinned through `vendor/spdf`; Paper Organizer disables sPDF's own update
+notifications and self-update behavior when sPDF is opened internally.
