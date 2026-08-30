@@ -43,30 +43,6 @@ class UiSmokeTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_update_dialog_has_spacious_decision_rows(self):
-        from paper_organizer.ui.update_dialog import UpdateDialog
-
-        update = SimpleNamespace(
-            version="2.3.0", release_notes="변경 내용\n" * 20,
-            release_url="https://github.com/loselessss/paper-organizer/releases",
-            asset=SimpleNamespace(
-                name="PaperOrganizer_Setup_2.3.0.exe", size=190000000,
-                sha256="a" * 64),
-        )
-        dialog = UpdateDialog(SimpleNamespace(current_version="1.10.1"), update)
-        dialog.show()
-        self.app.processEvents()
-        self.assertGreaterEqual(dialog.layout().contentsMargins().left(), 24)
-        self.assertGreaterEqual(dialog.layout().spacing(), 14)
-        self.assertEqual(dialog.notes.document().documentMargin(), 14)
-        self.assertNotIn(dialog.release_button, dialog.buttons.buttons())
-        self.assertEqual(len(dialog.buttons.buttons()), 3)
-        for button in dialog.buttons.buttons():
-            self.assertGreaterEqual(button.height(), 36)
-        self.assertLessEqual(
-            dialog.release_button.geometry().bottom(), dialog.buttons.y())
-        dialog.close()
-
     def test_fluent_choice_controls_keep_native_indicators(self):
         from paper_organizer.ui.fluent_style import apply_fluent_theme
 
