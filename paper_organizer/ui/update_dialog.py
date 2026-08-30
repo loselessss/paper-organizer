@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event
 
-from PyQt5.QtCore import QThread, QUrl, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (
     QDialog,
@@ -98,31 +98,35 @@ class UpdateDialog(QDialog):
         self._update = update
         self._worker: _UpdateDownloadWorker | None = None
         self.setWindowTitle("Paper Organizer 업데이트")
-        self.setMinimumSize(620, 480)
+        self.setMinimumSize(680, 540)
+        self.resize(780, 640)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(14)
         title = QLabel(
             f"<h3>Paper Organizer {update.version} 업데이트가 있습니다.</h3>"
         )
+        title.setWordWrap(True)
         layout.addWidget(title)
 
         form = QFormLayout()
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(10)
         form.addRow("현재 버전", QLabel(service.current_version))
         form.addRow("새 버전", QLabel(update.version))
-        form.addRow(
-            "설치파일",
-            QLabel(
-                (
-                    f"{update.asset.name} ({_size_text(update.asset.size)})"
-                    if update.asset
-                    else "등록 대기 중"
-                )
-            ),
+        asset_label = QLabel(
+            f"{update.asset.name} ({_size_text(update.asset.size)})"
+            if update.asset else "등록 대기 중"
         )
+        asset_label.setWordWrap(True)
+        form.addRow("설치파일", asset_label)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("변경 내용"))
         self.notes = QTextBrowser()
+        self.notes.setMinimumHeight(220)
+        self.notes.document().setDocumentMargin(14)
         self.notes.setOpenExternalLinks(False)
         self.notes.setPlainText(update.release_notes or "변경 기록이 없습니다.")
         layout.addWidget(self.notes, 1)
@@ -150,9 +154,9 @@ class UpdateDialog(QDialog):
         self.release_button.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(update.release_url))
         )
-        self.buttons.addButton(
-            self.release_button, QDialogButtonBox.ActionRole
-        )
+        # Keep the secondary link off the decision row so translated labels
+        # and larger system fonts do not crowd the three primary choices.
+        layout.addWidget(self.release_button, 0, Qt.AlignLeft)
         self.skip_button = QPushButton("이 버전 건너뛰기")
         self.skip_button.clicked.connect(self._skip_version)
         self.buttons.addButton(self.skip_button, QDialogButtonBox.ActionRole)
@@ -161,6 +165,10 @@ class UpdateDialog(QDialog):
         self.buttons.addButton(
             self.install_button, QDialogButtonBox.AcceptRole
         )
+        for button in (*self.buttons.buttons(), self.release_button):
+            button.setMinimumHeight(36)
+            button.setStyleSheet("padding: 6px 14px;")
+        layout.addSpacing(4)
         layout.addWidget(self.buttons)
 
         if update.asset is None:
