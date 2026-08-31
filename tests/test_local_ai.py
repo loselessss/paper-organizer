@@ -105,27 +105,27 @@ class LocalAiTests(unittest.TestCase):
         version, specs = load_model_catalog()
         models = {spec.model_id: spec for spec in specs}
 
-        self.assertEqual(version, "2026.08.28.1")
+        self.assertEqual(version, "2026.08.31.1")
         self.assertEqual(
             tuple(spec.model_id for spec in specs[:2]),
             ("qwen3.5:2b", "qwen3.5:4b"),
         )
-        self.assertEqual(models["qwen3.5:2b"].download_gb, 2.7)
+        self.assertEqual(models["qwen3.5:2b"].download_gb, 1.30)
         self.assertEqual(models["qwen3.5:2b"].download_priority, 1)
         self.assertIn(
             "huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF",
             models["qwen3.5:2b"].download_url,
         )
-        self.assertEqual(models["qwen3.5:4b"].download_gb, 3.4)
+        self.assertEqual(models["qwen3.5:4b"].download_gb, 2.22)
         self.assertEqual(models["qwen3.5:4b"].download_priority, 2)
         self.assertIn(
             "huggingface.co/TheStageAI/Qwen3.5-4B-GGUF",
             models["qwen3.5:4b"].download_url,
         )
         self.assertEqual(models["granite3.3:2b"].parameters_b, 2.5)
-        self.assertEqual(models["granite3.3:2b"].download_gb, 1.55)
+        self.assertEqual(models["granite3.3:2b"].download_gb, 1.44)
         self.assertEqual(models["granite4.1:3b"].parameters_b, 3.0)
-        self.assertEqual(models["granite4.1:3b"].download_gb, 2.1)
+        self.assertEqual(models["granite4.1:3b"].download_gb, 1.96)
         self.assertEqual(models["granite4.1:3b"].recommendation_rank, 2)
         self.assertIn(
             "huggingface.co/ibm-granite/granite-4.1-3b-GGUF",
@@ -137,7 +137,7 @@ class LocalAiTests(unittest.TestCase):
         self.assertEqual(models["qwen3:4b"].recommendation_rank, 3)
         self.assertEqual(models["qwen3:4b"].benchmark_score, 80.8)
         self.assertEqual(models["phi4-mini"].parameters_b, 3.84)
-        self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 4.0)
+        self.assertEqual(models["gemma3:4b-it-qat"].download_gb, 2.32)
         self.assertEqual(
             [spec.model_id for spec in specs if not spec.download_url],
             [],
@@ -362,7 +362,7 @@ class LocalAiTests(unittest.TestCase):
             self.assertEqual(saved.selected_model, "user:model")
             self.assertEqual(saved.model_profile, "balanced")
             self.assertEqual(saved.recommended_model, "qwen3.5:4b")
-            self.assertEqual(saved.model_catalog_version, "2026.08.28.1")
+            self.assertEqual(saved.model_catalog_version, "2026.08.31.1")
             self.assertEqual(saved.hardware_profile["cpu_model"], "Test CPU")
             self.assertEqual(
                 saved.hardware_profile["recommendation_profile"], "quality"

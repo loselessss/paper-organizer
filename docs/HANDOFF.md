@@ -35,6 +35,11 @@ GitHub Release는 아직 게시하지 않습니다. CUDA·Vulkan 실제 모델 �
 패키징을 확인했습니다. 이 PC에는 Inno Setup 6가 없어 설치 프로그램 생성은
 완료하지 못했으므로, 다음 릴리스 시 설치 안내 화면까지 검증해야 합니다.
 
+모델 카탈로그의 다운로드 URL은 확인한 Hugging Face 커밋으로 고정하고 SHA-256을
+저장합니다. 모델 주소를 바꾸면 `python scripts/check_model_downloads.py`를 명시적으로
+실행해 모든 주소의 HTTP 응답과 GGUF 첫 4바이트를 확인하세요. 전체 모델을 받지
+않으며 앱 실행·일반 unittest에서는 네트워크 검사를 수행하지 않습니다.
+
 Python 3.12 이상이 필요합니다. sPDF는 submodule이라 `--recurse-submodules` 없이
 clone 했다면 반드시 따로 받아야 합니다. 받지 않으면 `test_spdf_bridge`가 실패합니다.
 sPDF 버전은 문서에 따로 적지 않고 `vendor/spdf` 서브모듈이 체크아웃한 태그/커밋과

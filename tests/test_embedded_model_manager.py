@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
+from unittest.mock import Mock
 
 from paper_organizer.application.embedded_model_manager import (
     EmbeddedModelManagerService,
@@ -67,6 +69,33 @@ def write_catalog(path: Path, *, url: str = "", sha256: str = "") -> None:
 
 
 class EmbeddedModelManagerTests(unittest.TestCase):
+    def test_download_http_errors_are_explained_and_do_not_change_settings(self):
+        for code, message in ((404, "파일을 찾을 수 없습니다"), (401, "접근을 제한"), (403, "접근을 제한"), (503, "잠시 후")):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                catalog = root / "catalog.json"
+                write_catalog(catalog, url="https://example.test/model.gguf")
+                service = EmbeddedModelManagerService(root / "settings.json", catalog_path=catalog,
+                    hardware=FakeHardware(), model_dir=root / "models",
+                    opener=Mock(side_effect=HTTPError("https://example.test/model.gguf", code, "error", {}, None)))
+                with self.assertRaisesRegex(RuntimeError, message):
+                    service.download("qwen3:1.7b")
+                self.assertFalse((root / "settings.json").exists())
+                self.assertEqual(list((root / "models").iterdir()), [])
+
+    def test_hash_mismatch_does_not_install_or_select_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            catalog = root / "catalog.json"
+            write_catalog(catalog, url="https://example.test/model.gguf", sha256="0" * 64)
+            service = EmbeddedModelManagerService(root / "settings.json", catalog_path=catalog,
+                hardware=FakeHardware(), model_dir=root / "models",
+                opener=lambda url: FakeResponse(b"wrong file"))
+            with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                service.download("qwen3:1.7b")
+            self.assertFalse((root / "settings.json").exists())
+            self.assertEqual(list((root / "models").iterdir()), [])
+
     def test_plan_blocks_catalog_entry_without_direct_url(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

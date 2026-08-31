@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import Callable
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from paper_organizer.core.model_recommendation import (
@@ -83,7 +84,7 @@ class EmbeddedModelManagerService:
         self._catalog_path = catalog_path
         self._hardware = hardware or HardwareInspector()
         self._model_dir = model_dir or default_model_dir()
-        self._opener = opener or urlopen
+        self._opener = opener or (lambda url: urlopen(url, timeout=30))
 
     def snapshot(self) -> EmbeddedModelSnapshot:
         hardware = self._hardware.inspect()
@@ -169,11 +170,19 @@ class EmbeddedModelManagerService:
             if spec.sha256 and digest.hexdigest().lower() != spec.sha256:
                 raise RuntimeError("모델 파일 SHA-256 검증에 실패했습니다.")
             os.replace(temp_path, plan.target)
-        except Exception:
+        except Exception as exc:
             try:
                 temp_path.unlink()
             except OSError:
                 pass
+            if isinstance(exc, HTTPError):
+                if exc.code == 404:
+                    message = "배포처에서 모델 파일을 찾을 수 없습니다(HTTP 404). 앱을 최신 버전으로 업데이트하거나 다른 모델을 선택하세요."
+                elif exc.code in {401, 403}:
+                    message = f"배포처에서 모델 다운로드 접근을 제한했습니다(HTTP {exc.code}). 접근 권한·이용 조건을 확인하거나 다른 모델을 선택하세요."
+                else:
+                    message = f"모델 배포 서버 오류(HTTP {exc.code})입니다. 잠시 후 다시 시도하세요."
+                raise RuntimeError(message) from None
             raise
         settings = load_settings(self._settings_path)
         settings.selected_model = plan.model_id
