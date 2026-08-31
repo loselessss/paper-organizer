@@ -143,6 +143,8 @@ class BackgroundAnalysisService:
             purpose,
         )
         provider = settings.summary_provider
+        if settings.bibliography_only:
+            return AnalysisReadiness(True, "AI 없이 서지만 정리합니다.")
         if provider == "local":
             model = settings.selected_model.strip()
             if not model:
@@ -212,9 +214,12 @@ class BackgroundAnalysisService:
             item
             for item in self._workflow.analysis_queue()
             if item.status == "organized_pending_analysis"
+            and (not settings.bibliography_only or item.task_type == "analysis")
         ]
         if not pending:
             return AnalysisRunEvent("idle", "분석할 정리된 논문이 없습니다.")
+        if settings.bibliography_only:
+            return self._run_bibliography_only(on_start=on_start)
         next_item = pending[0]
         queued_path = Path(next_item.path)
         marker = getattr(
@@ -479,6 +484,26 @@ class BackgroundAnalysisService:
                         stop_managed_runtime()
             finally:
                 execution_lease.release()
+
+    def _run_bibliography_only(self, *, on_start=None) -> AnalysisRunEvent:
+        """Process only bibliography jobs, leaving AI translation requests queued."""
+        item = self._workflow.claim_next_analysis(task_type="analysis")
+        if item is None:
+            return AnalysisRunEvent("idle", "서지를 정리할 논문이 없습니다.")
+        try:
+            self._raise_if_cancelled()
+            if on_start is not None:
+                on_start(AnalysisRunEvent("started", f"{item.title} 서지를 정리합니다. AI는 사용하지 않습니다.", item.queue_id, item.title))
+            self._workflow.organize_bibliography_only(Path(item.path))
+            self._raise_if_cancelled()
+            self._workflow.remove_from_queue(item.queue_id)
+            return AnalysisRunEvent("completed", f"{item.title} 서지 정리를 완료했습니다. AI 분석은 하지 않았습니다.", item.queue_id, item.title)
+        except Exception as exc:
+            if self._cancel_requested.is_set():
+                self._workflow.retry_queue_item(item.queue_id)
+                return AnalysisRunEvent("cancelled", "서지 정리를 중지하고 대기열에 유지했습니다.", item.queue_id, item.title)
+            self._workflow.fail_analysis(item.queue_id, _safe_error(exc))
+            return AnalysisRunEvent("failed", _safe_error(exc), item.queue_id, item.title)
 
     def _raise_if_cancelled(self) -> None:
         if self._cancel_requested.is_set():

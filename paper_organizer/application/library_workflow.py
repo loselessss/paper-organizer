@@ -2520,8 +2520,8 @@ class LibraryWorkflowController:
     def recover_interrupted_analysis(self) -> int:
         return self._queue().recover_interrupted()
 
-    def claim_next_analysis(self) -> AnalysisQueueItem | None:
-        return self._queue().claim_next()
+    def claim_next_analysis(self, *, task_type: str | None = None) -> AnalysisQueueItem | None:
+        return self._queue().claim_next(task_type=task_type)
 
     def set_queue_waiting_reason(
         self, queue_id: str, message: str
@@ -3839,6 +3839,28 @@ class LibraryWorkflowController:
         if current == "paper":
             current = RESEARCH_PAPER
         return candidate if candidate != current else None
+
+    def organize_bibliography_only(self, path: Path) -> None:
+        """Persist non-AI bibliography processing without replacing existing analysis."""
+
+        _input_dir, root = self.configured_paths()
+        sidecar = path.expanduser().resolve()
+        if not _inside((root / "papers").resolve(), sidecar) or sidecar.suffix.casefold() != PAPERPACK_SUFFIX:
+            raise LibraryWorkflowError("라이브러리 안의 PaperPack만 서지를 정리할 수 있습니다.")
+        current = load_record(sidecar)
+        pages = [text for _number, text in content_pages(load_paperpack_content(sidecar))]
+        verified = self._try_verify_record_bibliography(current, page_texts=pages)
+        workflow = current.setdefault("workflow", {})
+        workflow["processing_mode"] = "bibliography_only"
+        workflow["bibliography_completed_at"] = _now_iso()
+        workflow["bibliography_status"] = "verified" if verified is not None else "extracted"
+        if workflow.get("analysis_status") != "completed" and current.get("analysis", {}).get("status") != "completed":
+            workflow["analysis_status"] = "bibliography_only"
+        _refresh_bibliography_quality(current)
+        update_paperpack(sidecar, current, changed_by="bibliography:non-ai")
+        rebuild_library_index(root)
+        self._index_search_entry(sidecar)
+        self._library_cache = None
 
     def reverify_library_bibliography(
         self, entry: LibraryEntry

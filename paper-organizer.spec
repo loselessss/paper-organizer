@@ -10,9 +10,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 sys.path.insert(0, os.path.abspath("vendor/spdf"))
 sys.path.insert(0, os.path.abspath("."))
 
-from scripts.prepare_llama_runtime import BUNDLE_DIR, validate_bundle
+from paper_organizer.infra.llama_bundle import BUNDLE_DIR, VULKAN_DIR, validate_bundle
 
 validate_bundle(BUNDLE_DIR)
+validate_bundle(VULKAN_DIR, backend="vulkan")
 
 
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
@@ -66,7 +67,10 @@ coll_ocr = COLLECT(
 
 spdf_hidden = collect_submodules("pdfeditor")
 # Keep llama-server.exe, all companion DLLs and licenses in one directory.
-llm_datas = [(str(BUNDLE_DIR), "llm")]
+llm_datas = [
+    (str(BUNDLE_DIR), "llm/cpu"),
+    (str(VULKAN_DIR), "llm/vulkan"),
+]
 main_datas = [
     ("paper_organizer/assets", "paper_organizer/assets"),
     ("paper_organizer/models", "paper_organizer/models"),

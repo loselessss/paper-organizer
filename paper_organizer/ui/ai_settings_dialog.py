@@ -126,6 +126,16 @@ class AiSettingsDialog(QDialog):
         scroll_layout = QVBoxLayout(scroll_content)
         engine_group = QGroupBox("요약 엔진 옵션")
         engine_layout = QVBoxLayout(engine_group)
+        self.bibliography_only_check = QCheckBox("AI 분석 없이 서지만 정리")
+        engine_layout.addWidget(self.bibliography_only_check)
+        bibliography_note = QLabel(
+            "모델·API 키 없이 PDF의 서지와 분류를 정리하고 검색할 수 있습니다. "
+            "서지 보완을 위해 제목·DOI를 PubMed·Crossref에 조회할 수 있으며, PDF 본문은 전송하지 않습니다. "
+            "AI 요약·번역은 실행하지 않고 기존 분석과 직접 수정한 정보는 보존합니다."
+        )
+        bibliography_note.setWordWrap(True)
+        engine_layout.addWidget(bibliography_note)
+        self.bibliography_only_check.toggled.connect(self._bibliography_mode_changed)
 
         self.engine_columns = QBoxLayout(QBoxLayout.LeftToRight)
         self.provider_group = QGroupBox("제공자·출력")
@@ -290,6 +300,10 @@ class AiSettingsDialog(QDialog):
         local_form.addRow("상주 설명", self.residency_guidance)
         local_form.addRow("GPU 가속", self.force_igpu_check)
         local_form.addRow("", self.igpu_guidance)
+        self.cuda_download_button = QPushButton("CUDA 가속 다운로드… (NVIDIA · 선택)")
+        self.cuda_download_button.setToolTip("기본 설치에는 Vulkan·CPU만 포함됩니다. CUDA는 약 642MB를 필요할 때 별도 다운로드합니다.")
+        self.cuda_download_button.clicked.connect(self._open_cuda_download)
+        local_form.addRow("CUDA 선택 설치", self.cuda_download_button)
         local_layout.addLayout(local_form)
         local_note = QLabel(
             "자동 감시와 사용자가 선택한 즉시 분석은 서로 다른 모델을 사용합니다. "
@@ -361,6 +375,8 @@ class AiSettingsDialog(QDialog):
 
     def _load(self) -> None:
         view = self._controller.view()
+        self.bibliography_only_check.setChecked(view.bibliography_only)
+        self._bibliography_mode_changed(view.bibliography_only)
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         selected_index = 0
@@ -409,6 +425,10 @@ class AiSettingsDialog(QDialog):
         self._refresh_key_status()
         self._profile_changed()
         self._update_residency_guidance()
+
+    def _bibliography_mode_changed(self, enabled: bool) -> None:
+        self.provider_group.setEnabled(not enabled)
+        self.local_model_group.setEnabled(not enabled)
 
     def _provider_changed(self) -> None:
         provider = self.provider_combo.currentData()
@@ -786,6 +806,7 @@ class AiSettingsDialog(QDialog):
         provider = self.provider_combo.currentData()
         acceleration_changed = (
             provider == "ollama"
+            and not self.bibliography_only_check.isChecked()
             and self.force_igpu_check.isChecked() != self._initial_force_igpu
         )
         if acceleration_changed and QMessageBox.question(
@@ -826,6 +847,7 @@ class AiSettingsDialog(QDialog):
                     self.background_resident_check.isChecked()
                 ),
                 ollama_force_igpu=self.force_igpu_check.isChecked(),
+                bibliography_only=self.bibliography_only_check.isChecked(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "요약 엔진 설정 저장 실패", str(exc))
@@ -841,6 +863,11 @@ class AiSettingsDialog(QDialog):
             )
             return
         self.accept()
+
+    def _open_cuda_download(self) -> None:
+        from paper_organizer.ui.cuda_runtime_dialog import CudaRuntimeDialog
+
+        CudaRuntimeDialog(self).exec_()
 
     def _start_ollama_restart(
         self, *, close_after: bool, status: str

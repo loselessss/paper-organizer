@@ -2763,6 +2763,7 @@ class LibraryWidget(QWidget):
                 else {
                     "pending_review": "검토",
                     "organized_pending_analysis": "대기",
+                    "bibliography_only": "서지만 정리",
                     "analyzing": "중",
                     "failed": "실패",
                     "skipped_multi_document": "복수 문서 · 요약 제외",

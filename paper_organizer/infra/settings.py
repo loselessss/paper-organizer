@@ -36,6 +36,7 @@ class AppSettings:
     focus_categories: list[str] = field(default_factory=list)
     resource_profile: str = "eco"
     background_analysis_enabled: bool = True
+    bibliography_only: bool = False
     model_profile: str = "auto"
     selected_model: str = ""
     background_model: str = ""
@@ -70,6 +71,8 @@ class AppSettings:
     scan_interval_seconds: int = 300
 
     def validate(self) -> None:
+        if not isinstance(self.bibliography_only, bool):
+            raise ValueError("서지 전용 설정은 참 또는 거짓이어야 합니다.")
         if self.schema_version != 1:
             raise ValueError(f"Unsupported settings schema: {self.schema_version}")
         if not isinstance(self.remove_source_after_import, bool):

@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from scripts import prepare_llama_runtime as bundle
+from paper_organizer.infra import llama_bundle as bundle
 
 
 class LlamaRuntimeBundleTests(unittest.TestCase):
@@ -116,7 +116,9 @@ class LlamaRuntimeBundleTests(unittest.TestCase):
         self.assertIn("prepare_llama_runtime.py --smoke", build)
         self.assertIn('prepare_llama_runtime.py --verify "dist\\PaperOrganizer\\_internal\\llm" --smoke', build)
         self.assertIn("validate_bundle(BUNDLE_DIR)", spec)
-        self.assertIn('(str(BUNDLE_DIR), "llm")', spec)
+        self.assertIn('(str(BUNDLE_DIR), "llm/cpu")', spec)
+        self.assertIn('(str(VULKAN_DIR), "llm/vulkan")', spec)
+        self.assertNotIn('"llm/cuda"', spec)
         self.assertIn(f'"{bundle.VERSION}"', runtime)
 
 

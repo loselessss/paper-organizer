@@ -16,12 +16,24 @@
 
 ## 1. 개발 환경 준비
 
-내장 로컬 AI의 Windows x64 CPU 런타임은 `python scripts/prepare_llama_runtime.py --smoke`로
+내장 로컬 AI의 Windows x64 CPU·Vulkan 런타임은 `python scripts/prepare_llama_runtime.py --smoke`로
 준비합니다. llama.cpp b10715 공식 배포 ZIP의 SHA-256을 검증한 뒤 `build/llama-runtime/`에
 서버·DLL·라이선스를 보관합니다. `build_exe.bat`은 이를 자동 준비하며, 패키징 전후
 전체 파일 해시와 실제 서버 실행을 검증합니다. GGUF 모델은 별도 다운로드합니다.
-런타임 버전 변경 시 준비 스크립트의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
+CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 설치에 동의하면
+`CudaRuntimeManager`가 약 642MB를 해시 검증 후 앱 데이터의 `runtimes/b10715-cuda`에
+원자적으로 설치합니다. CUDA → Vulkan → CPU 순으로 초기화하고, 실패 시 다음 방식으로
+전환합니다. 개발 검증용은 `--with-cuda`로 세 가지를 준비할 수 있습니다.
+`bibliography_only` 설정은 모델·키 없이 서지 큐만 처리하고 번역 큐는 보존합니다.
+처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며 AI 분석 날짜로 표시하지
+않습니다. 기존 요약·사용자 수정값은 유지합니다.
+런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
 함께 갱신하세요. sPDF는 기존 서브모듈 커밋으로 유지합니다.
+
+2026-08-31 작업은 사용자 요청으로 커밋·푸시까지만 진행하며 2.4.0 태그와
+GitHub Release는 아직 게시하지 않습니다. CUDA·Vulkan 실제 모델 응답과 실행 파일
+패키징을 확인했습니다. 이 PC에는 Inno Setup 6가 없어 설치 프로그램 생성은
+완료하지 못했으므로, 다음 릴리스 시 설치 안내 화면까지 검증해야 합니다.
 
 Python 3.12 이상이 필요합니다. sPDF는 submodule이라 `--recurse-submodules` 없이
 clone 했다면 반드시 따로 받아야 합니다. 받지 않으면 `test_spdf_bridge`가 실패합니다.

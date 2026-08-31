@@ -7,7 +7,7 @@ from paper_organizer.infra.secrets import SecretStore
 from paper_organizer.infra.settings import AppSettings
 
 from .anthropic import AnthropicProvider
-from .base import JsonHttpClient, SummaryProvider
+from .base import JsonHttpClient, SummaryProvider, ProviderError
 from .embedded import EmbeddedLlamaProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
@@ -19,6 +19,8 @@ def build_provider(
     http_client: JsonHttpClient | None = None,
 ) -> SummaryProvider:
     settings.validate()
+    if settings.bibliography_only:
+        raise ProviderError("서지 전용 모드에서는 AI를 사용하지 않습니다. AI 설정에서 모드를 해제하세요.")
     if settings.summary_provider == "local":
         return EmbeddedLlamaProvider(
             settings.selected_model,

@@ -262,12 +262,13 @@ class AnalysisQueueStore:
         self._replace(items, updated)
         return updated
 
-    def claim_next(self) -> AnalysisQueueItem | None:
+    def claim_next(self, *, task_type: str | None = None) -> AnalysisQueueItem | None:
         """Atomically mark the highest-priority organized paper as analyzing."""
 
         items = self.load()
         candidate = next(
-            (item for item in items if item.status == "organized_pending_analysis"),
+            (item for item in items if item.status == "organized_pending_analysis"
+             and (task_type is None or item.task_type == task_type)),
             None,
         )
         if candidate is None:

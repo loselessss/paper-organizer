@@ -254,6 +254,8 @@ class SummaryController:
             load_settings(self._settings_path),
             purpose,
         )
+        if settings.bibliography_only:
+            raise SummaryPreparationError("서지 전용 모드에서는 AI를 사용하지 않습니다. AI 설정에서 모드를 해제하세요.")
         if settings.summary_provider == "local":
             from paper_organizer.infra.embedded_llm_runtime import start_runtime
 

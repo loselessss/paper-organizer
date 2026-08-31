@@ -51,6 +51,7 @@ class EmbeddedLlamaProvider:
         timeout_seconds: float = 300,
     ) -> None:
         self.model = model.strip()
+        self._managed_runtime = http_client is None and endpoint == "http://127.0.0.1:11435/v1/chat/completions"
         self._http = http_client or UrllibJsonHttpClient()
         self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
@@ -166,6 +167,11 @@ class EmbeddedLlamaProvider:
         context_window: int | None,
         schema: Mapping[str, Any] | None,
     ) -> Mapping[str, Any]:
+        if self._managed_runtime:
+            from paper_organizer.infra.embedded_llm_runtime import wait_until_ready
+
+            if not wait_until_ready(min(120, self._timeout_seconds)):
+                raise ProviderError("내장 AI 런타임이 준비되지 않았습니다. 모델과 GPU 드라이버 상태를 확인하세요.")
         payload: dict[str, Any] = {
             "model": self.model,
             "stream": False,
@@ -176,6 +182,7 @@ class EmbeddedLlamaProvider:
             "temperature": 0,
             "seed": 0,
             "max_tokens": max_output_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if context_window is not None:
             payload["n_ctx"] = context_window

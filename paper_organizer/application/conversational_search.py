@@ -220,6 +220,8 @@ class ConversationalSearchController:
         if not view.model:
             raise ConversationalSearchError("AI 모델을 먼저 선택하세요.")
         consent = settings.cloud_processing_consent or allow_cloud_once
+        if settings.bibliography_only:
+            raise ConversationalSearchError("서지 전용 모드에서는 일반 검색을 이용하세요. AI 검색은 AI 설정에서 모드를 해제한 뒤 사용할 수 있습니다.")
         if view.provider == "local" and not start_embedded_runtime(settings):
             raise ConversationalSearchError(
                 "내장 AI 런타임을 시작할 수 없습니다. AI 설정과 모델 파일 상태를 확인하세요."

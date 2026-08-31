@@ -1,0 +1,13 @@
+NVIDIA CUDA 12.4 runtime components
+
+This application includes cudart64_12.dll, cublas64_12.dll and cublasLt64_12.dll
+for use by its bundled llama.cpp inference runtime on NVIDIA GPUs.
+Copyright NVIDIA Corporation. All rights reserved.
+
+These components are proprietary NVIDIA software, not covered by the MIT
+license of llama.cpp. Their use and redistribution are subject to the NVIDIA
+Software License Agreement and CUDA Toolkit Supplement:
+https://docs.nvidia.com/cuda/archive/12.4.1/eula/index.html
+
+The NVIDIA display driver is not included. A compatible installed driver is
+required. Paper Organizer is not sponsored or endorsed by NVIDIA.

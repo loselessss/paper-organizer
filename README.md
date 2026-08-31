@@ -82,8 +82,11 @@ the papers can be found again when they matter.
 
 ## Local AI Setup
 
-The bundled runtime is llama.cpp b10715 for Windows x64 CPUs; this release does not
-include GPU acceleration. For source runs, prepare it with
+The bundled llama.cpp b10715 runtime supports Vulkan GPUs and Windows x64 CPUs.
+CUDA is optional: in AI Settings, open CUDA installation and approve the approximately
+642 MB download when NVIDIA GPU acceleration is needed. No CUDA Toolkit installation
+is required; a compatible NVIDIA driver is required. The app tries installed CUDA,
+then Vulkan, then CPU if GPU startup fails. For source runs, prepare it with
 `python scripts/prepare_llama_runtime.py --smoke`. Installer builds do this automatically.
 
 Paper Organizer 2.4.0 uses app-managed local GGUF models by default. The Windows
@@ -91,6 +94,11 @@ installer includes the application, bundled sPDF integration, OCR runtime, and
 local AI runtime support, but it does not include large model weights.
 
 After installing the app:
+
+For bibliography management without AI, select `Organize bibliography without AI`
+in AI Settings. No model or API key is required. Titles and DOIs may be looked up in
+PubMed/Crossref; PDF text is not uploaded. Existing summaries and user edits are preserved.
+AI translation jobs remain queued until AI is enabled again.
 
 1. Open `AI Settings`.
 2. Choose `Built-in Local AI`.

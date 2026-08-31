@@ -37,5 +37,6 @@ paper_organizer = [
   "assets/*.ico",
   "assets/fonts/*.otf",
   "assets/fonts/*.txt",
+  "assets/licenses/*.txt",
   "models/*.json",
 ]

@@ -16,6 +16,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--device", default="none")
     args = parser.parse_args()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -26,7 +27,8 @@ def main() -> int:
         with (Path(temp) / "server.log").open("w+b") as log:
             process = subprocess.Popen(
                 [str(args.runtime.resolve()), "--model", str(args.model.resolve()),
-                 "--host", "127.0.0.1", "--port", str(port), "--ctx-size", "8192"],
+                 "--host", "127.0.0.1", "--port", str(port), "--ctx-size", "8192",
+                 "--device", args.device, "--gpu-layers", "0" if args.device == "none" else "auto"],
                 cwd=temp, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -63,7 +65,12 @@ def main() -> int:
                 content = json.loads(result["choices"][0]["message"]["content"])
                 if content != {"ok": True}:
                     raise ValueError("내장 AI의 JSON 응답 검증에 실패했습니다.")
-                print("Local model health and JSON inference: OK", flush=True)
+                print(f"Local model health and JSON inference ({args.device}): OK", flush=True)
+                log.flush()
+                log.seek(0)
+                for line in log.read().decode("utf-8", errors="replace").splitlines():
+                    if "offloaded" in line:
+                        print(line)
             except Exception:
                 log.flush()
                 log.seek(0)

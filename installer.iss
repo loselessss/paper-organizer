@@ -26,6 +26,9 @@ RestartApplications=no
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
+[Messages]
+FinishedLabel=Paper Organizer 설치가 완료되었습니다.%n%n기본 설치에는 Vulkan·CPU 실행 기능이 포함됩니다. NVIDIA GPU용 CUDA는 필요할 때 앱의 AI 설정 → CUDA 선택 설치에서 약 642MB를 다운로드할 수 있습니다.%n%nAI가 필요 없으면 AI 설정에서 'AI 분석 없이 서지만 정리'를 선택하세요.
+
 [Tasks]
 Name: "desktopicon"; Description: "바탕 화면 바로가기 만들기"; GroupDescription: "추가 바로가기:"; Flags: unchecked
 Name: "startup"; Description: "Windows 로그인 시 백그라운드로 시작"; GroupDescription: "자동 시작:"; Flags: unchecked

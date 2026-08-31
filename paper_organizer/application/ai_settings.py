@@ -74,6 +74,7 @@ class AiSettingsView:
     ollama_residency_mode: str
     ollama_resident_model: str
     ollama_force_igpu: bool
+    bibliography_only: bool = False
 
 
 class AiSettingsController:
@@ -111,7 +112,7 @@ class AiSettingsController:
     def view(self) -> AiSettingsView:
         settings = self.settings()
         provider = _normalized_provider(settings.summary_provider)
-        is_cloud = provider in {"openai", "anthropic"}
+        is_cloud = provider in {"openai", "anthropic"} and not settings.bibliography_only
         status = (
             get_secret_status(self._secret_store, provider) if is_cloud else None
         )
@@ -154,6 +155,7 @@ class AiSettingsController:
             ollama_residency_mode=settings.ollama_residency_mode,
             ollama_resident_model=settings.ollama_resident_model,
             ollama_force_igpu=settings.ollama_force_igpu,
+            bibliography_only=settings.bibliography_only,
         )
 
     def settings(self) -> AppSettings:
@@ -258,7 +260,14 @@ class AiSettingsController:
         ollama_residency_mode: str | None = None,
         ollama_resident_model: str | None = None,
         ollama_force_igpu: bool | None = None,
+        bibliography_only: bool | None = None,
     ) -> AiSettingsView:
+        settings = load_settings(self._settings_path)
+        if bibliography_only is not None:
+            settings.bibliography_only = bibliography_only
+        if settings.bibliography_only:
+            save_settings(settings, self._settings_path)
+            return self.view()
         normalized_provider = provider.strip().lower()
         normalized_provider = _normalized_provider(normalized_provider)
         if normalized_provider not in PROVIDER_LABELS:
@@ -266,7 +275,6 @@ class AiSettingsController:
         normalized_model = model.strip()
         if not normalized_model:
             raise ValueError("AI model cannot be empty")
-        settings = load_settings(self._settings_path)
         previous_ollama_models = (
             local_model_for_purpose(settings, "background"),
             local_model_for_purpose(settings, "manual"),
@@ -384,9 +392,11 @@ class AiSettingsController:
     def start_local_runtime(self) -> bool:
         """Ensure the app-managed local AI runtime is running."""
 
+        settings = load_settings(self._settings_path)
+        if settings.bibliography_only:
+            return False
         if self._local_runtime_starter is not None:
             return self._local_runtime_starter()
-        settings = load_settings(self._settings_path)
         from paper_organizer.infra.embedded_llm_runtime import start_runtime
 
         return start_runtime(settings)

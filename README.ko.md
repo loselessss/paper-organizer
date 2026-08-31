@@ -81,11 +81,20 @@ Paper Organizer 2.4.0부터 기본 로컬 AI는 앱이 직접 관리하는 GGUF 
 설치본에는 앱, sPDF 연동, OCR 런타임, 로컬 AI 실행 기반이 포함되지만 대용량 모델
 가중치는 포함하지 않습니다.
 
-내장 런타임은 Windows x64 CPU용 llama.cpp b10715입니다. GPU 가속은 이 배포본에
-포함하지 않습니다. 소스에서 실행할 때는 `python scripts/prepare_llama_runtime.py --smoke`로
+내장 런타임은 Vulkan GPU·Windows x64 CPU용 llama.cpp b10715입니다. CUDA는 기본
+설치에 포함하지 않습니다. NVIDIA GPU 가속이 필요할 때 AI 설정의 CUDA 선택 설치에서
+약 642MB 다운로드에 동의하면 설치합니다. CUDA Toolkit을 따로 설치할 필요는 없지만
+호환 NVIDIA 드라이버는 필요합니다. 설치된 CUDA → Vulkan → CPU 순으로 시도하며
+GPU 초기화에 실패하면 다음 방식으로 전환합니다.
+소스에서 실행할 때는 `python scripts/prepare_llama_runtime.py --smoke`로
 런타임을 먼저 준비하세요. 설치 프로그램을 빌드할 때는 자동으로 준비합니다.
 
 설치 후에는 다음 순서로 준비합니다.
+
+AI가 필요 없으면 AI 설정에서 `AI 분석 없이 서지만 정리`를 선택하세요. 모델·API 키
+없이 서지와 분류를 정리하고 검색할 수 있습니다. 제목·DOI는 PubMed·Crossref에 조회할
+수 있지만 PDF 본문은 전송하지 않습니다. 기존 요약과 사용자 수정값은 보존하며,
+AI 번역 요청은 AI를 다시 켤 때까지 대기열에 유지합니다.
 
 1. `AI 설정`을 엽니다.
 2. `내장 로컬 AI`를 선택합니다.

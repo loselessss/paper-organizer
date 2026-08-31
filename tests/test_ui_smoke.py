@@ -59,6 +59,30 @@ class UiSmokeTests(unittest.TestCase):
         self.assertNotIn("QSpinBox:focus", stylesheet)
         self.assertIn("QCheckBox {\n            background: transparent;", stylesheet)
 
+    def test_cuda_dialog_waits_for_explicit_download(self):
+        from paper_organizer.ui.cuda_runtime_dialog import CudaRuntimeDialog
+
+        manager = mock.Mock()
+        manager.installed.return_value = False
+        dialog = CudaRuntimeDialog(manager=manager)
+        manager.install.assert_not_called()
+        self.assertTrue(dialog.download_button.isEnabled())
+        self.assertIsNone(dialog._worker)
+        dialog.reject()
+
+    def test_bibliography_only_ui_saves_without_a_model(self):
+        from paper_organizer.application.ai_settings import AiSettingsController
+        from paper_organizer.ui.ai_settings_dialog import AiSettingsDialog
+
+        with tempfile.TemporaryDirectory() as temp:
+            controller = AiSettingsController(MemorySecretStore(), Path(temp) / "settings.json")
+            dialog = AiSettingsDialog(controller)
+            dialog.bibliography_only_check.setChecked(True)
+            self.assertFalse(dialog.provider_group.isEnabled())
+            self.assertFalse(dialog.local_model_group.isEnabled())
+            dialog._save_preferences()
+            self.assertTrue(controller.settings().bibliography_only)
+            self.assertEqual(dialog.result(), dialog.Accepted)
     def test_selection_ai_uses_a_separate_dialog(self):
         from PyQt5.QtCore import Qt
 
