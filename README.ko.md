@@ -81,6 +81,10 @@ Paper Organizer 2.4.0부터 기본 로컬 AI는 앱이 직접 관리하는 GGUF 
 설치본에는 앱, sPDF 연동, OCR 런타임, 로컬 AI 실행 기반이 포함되지만 대용량 모델
 가중치는 포함하지 않습니다.
 
+내장 런타임은 Windows x64 CPU용 llama.cpp b10715입니다. GPU 가속은 이 배포본에
+포함하지 않습니다. 소스에서 실행할 때는 `python scripts/prepare_llama_runtime.py --smoke`로
+런타임을 먼저 준비하세요. 설치 프로그램을 빌드할 때는 자동으로 준비합니다.
+
 설치 후에는 다음 순서로 준비합니다.
 
 1. `AI 설정`을 엽니다.

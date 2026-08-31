@@ -8,6 +8,11 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
 sys.path.insert(0, os.path.abspath("vendor/spdf"))
+sys.path.insert(0, os.path.abspath("."))
+
+from scripts.prepare_llama_runtime import BUNDLE_DIR, validate_bundle
+
+validate_bundle(BUNDLE_DIR)
 
 
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
@@ -60,16 +65,8 @@ coll_ocr = COLLECT(
 )
 
 spdf_hidden = collect_submodules("pdfeditor")
-LLAMA_SERVER_CANDIDATES = (
-    "vendor/llama.cpp/build/bin/Release/llama-server.exe",
-    "vendor/llama.cpp/build/bin/llama-server.exe",
-    "tools/llama.cpp/llama-server.exe",
-)
-llm_datas = []
-for candidate in LLAMA_SERVER_CANDIDATES:
-    if os.path.exists(candidate):
-        llm_datas.append((candidate, "llm"))
-        break
+# Keep llama-server.exe, all companion DLLs and licenses in one directory.
+llm_datas = [(str(BUNDLE_DIR), "llm")]
 main_datas = [
     ("paper_organizer/assets", "paper_organizer/assets"),
     ("paper_organizer/models", "paper_organizer/models"),

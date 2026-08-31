@@ -16,6 +16,13 @@
 
 ## 1. 개발 환경 준비
 
+내장 로컬 AI의 Windows x64 CPU 런타임은 `python scripts/prepare_llama_runtime.py --smoke`로
+준비합니다. llama.cpp b10715 공식 배포 ZIP의 SHA-256을 검증한 뒤 `build/llama-runtime/`에
+서버·DLL·라이선스를 보관합니다. `build_exe.bat`은 이를 자동 준비하며, 패키징 전후
+전체 파일 해시와 실제 서버 실행을 검증합니다. GGUF 모델은 별도 다운로드합니다.
+런타임 버전 변경 시 준비 스크립트의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
+함께 갱신하세요. sPDF는 기존 서브모듈 커밋으로 유지합니다.
+
 Python 3.12 이상이 필요합니다. sPDF는 submodule이라 `--recurse-submodules` 없이
 clone 했다면 반드시 따로 받아야 합니다. 받지 않으면 `test_spdf_bridge`가 실패합니다.
 sPDF 버전은 문서에 따로 적지 않고 `vendor/spdf` 서브모듈이 체크아웃한 태그/커밋과

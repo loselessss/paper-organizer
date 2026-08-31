@@ -2,6 +2,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from paper_organizer.application.local_ai import LocalAiAssessmentService
 from paper_organizer.core.model_recommendation import (
@@ -381,7 +382,11 @@ class LocalAiTests(unittest.TestCase):
                 ollama=FailingOllamaInspector(),
             )
 
-            assessment = service.scan()
+            with patch(
+                "paper_organizer.application.local_ai.default_model_dir",
+                return_value=Path(temp) / "models",
+            ):
+                assessment = service.scan()
 
             self.assertFalse(assessment.ollama.reachable)
             self.assertEqual(assessment.local_model_count, 0)

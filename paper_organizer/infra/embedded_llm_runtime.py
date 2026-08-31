@@ -69,6 +69,7 @@ def bundled_llama_server() -> Path | None:
     project_root = Path(__file__).resolve().parents[2]
     candidates.extend(
         [
+            project_root / "build" / "llama-runtime" / "b10715" / "llama-server.exe",
             project_root / "vendor" / "llama.cpp" / "build" / "bin" / "Release" / "llama-server.exe",
             project_root / "vendor" / "llama.cpp" / "build" / "bin" / "llama-server.exe",
             project_root / "tools" / "llama.cpp" / "llama-server.exe",
@@ -120,6 +121,8 @@ def start_runtime(settings: AppSettings) -> bool:
         str(state.executable),
         "--model",
         str(state.model_path),
+        "--host",
+        "127.0.0.1",
         "--port",
         str(DEFAULT_PORT),
         "--ctx-size",

@@ -7,7 +7,13 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 
+".venv\Scripts\python.exe" scripts\prepare_llama_runtime.py --smoke
+if errorlevel 1 exit /b %errorlevel%
+
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean paper-organizer.spec
+if errorlevel 1 exit /b %errorlevel%
+
+".venv\Scripts\python.exe" scripts\prepare_llama_runtime.py --verify "dist\PaperOrganizer\_internal\llm" --smoke
 if errorlevel 1 exit /b %errorlevel%
 
 if not exist "dist\PaperOrganizer-ocr\spdf-ocr.exe" (

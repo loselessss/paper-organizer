@@ -82,6 +82,10 @@ the papers can be found again when they matter.
 
 ## Local AI Setup
 
+The bundled runtime is llama.cpp b10715 for Windows x64 CPUs; this release does not
+include GPU acceleration. For source runs, prepare it with
+`python scripts/prepare_llama_runtime.py --smoke`. Installer builds do this automatically.
+
 Paper Organizer 2.4.0 uses app-managed local GGUF models by default. The Windows
 installer includes the application, bundled sPDF integration, OCR runtime, and
 local AI runtime support, but it does not include large model weights.

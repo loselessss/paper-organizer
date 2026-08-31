@@ -56,8 +56,10 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          python scripts/extract_release_notes.py $version |
+          "# Paper Organizer $version — $(Get-Date -Format yyyy-MM-dd)`n" |
             Set-Content -Encoding utf8 -LiteralPath release-notes.md
+          python scripts/extract_release_notes.py $version |
+            Add-Content -Encoding utf8 -LiteralPath release-notes.md
 
       - name: Preserve installer as workflow artifact
         uses: actions/upload-artifact@v6
