@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -176,6 +177,8 @@ def smoke_check(directory: Path) -> None:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", type=Path, default=ROOT / "build" / "runtime-download")
     parser.add_argument("--verify", type=Path)
