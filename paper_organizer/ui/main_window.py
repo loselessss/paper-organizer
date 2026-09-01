@@ -623,7 +623,7 @@ class PaperOrganizerWindow(QMainWindow):
             "Paper Organizer는 기본 요약 AI로 내장 로컬 AI를 이용합니다.\n\n다음 설정 화면에서 "
             "내장 로컬 AI를 선택한 뒤 추천 모델의 설치·검증을 진행하세요. "
             "OpenAI 또는 Anthropic을 대신 사용하려면 API 키와 클라우드 전송 "
-            "동의를 설정할 수 있습니다.\n\nAI가 필요 없으면 ‘AI 분석 없이 서지만 정리’를 선택하세요. "
+            "동의를 설정할 수 있습니다.\n\nAI가 필요 없으면 ‘서지정보와 초록만 입력 (AI 사용 안 함)’을 선택하세요. "
             "CUDA는 기본 설치에 포함되지 않으며, NVIDIA GPU 가속이 필요할 때 AI 설정에서 별도로 다운로드할 수 있습니다.",
         )
         AiSettingsDialog(self._ai_settings, self).exec_()

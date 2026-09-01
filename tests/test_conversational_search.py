@@ -6,6 +6,7 @@ from pathlib import Path
 import fitz
 
 from paper_organizer.application.conversational_search import (
+    ConversationalSearchError,
     ConversationalSearchController,
     _expanded_queries,
     requires_ai_search,
@@ -196,6 +197,27 @@ class ConversationalSearchTests(unittest.TestCase):
                 "papers using directed evolution after 2022 for stable enzymes"
             )
         )
+
+    def test_bibliography_only_mode_uses_plain_search_not_ai_search(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workflow, settings_path, _file_id, _pack = create_library(root)
+            settings = load_settings(settings_path)
+            settings.bibliography_only = True
+            save_settings(settings, settings_path)
+            client = SequentialHttpClient([])
+            controller = ConversationalSearchController(
+                workflow,
+                MemorySecretStore(),
+                settings_path,
+                http_client=client,
+                start_local_runtime=lambda: False,
+            )
+
+            with self.assertRaisesRegex(ConversationalSearchError, "서지 전용"):
+                controller.prepare("열에 강한 효소를 만든 논문은?")
+
+            self.assertEqual(client.calls, [])
 
     def test_retrieves_pages_and_filters_unknown_ai_citations(self):
         with tempfile.TemporaryDirectory() as temp:

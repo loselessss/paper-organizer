@@ -95,10 +95,12 @@ local AI runtime support, but it does not include large model weights.
 
 After installing the app:
 
-For bibliography management without AI, select `Organize bibliography without AI`
-in AI Settings. No model or API key is required. Titles and DOIs may be looked up in
-PubMed/Crossref; PDF text is not uploaded. Existing summaries and user edits are preserved.
-AI translation jobs remain queued until AI is enabled again.
+For non-AI processing, select `Bibliography and abstract only (no AI)` in AI
+Settings. No model or API key is required. The app stores bibliography fields and
+any abstract text it can read from the PDF. Bibliography fields are extracted with
+regular rules and may be checked against PubMed/Crossref, but they can still be
+inaccurate. PDF body text is not uploaded. Existing summaries and user edits are
+preserved. AI translation jobs remain queued until AI is enabled again.
 
 1. Open `AI Settings`.
 2. Choose `Built-in Local AI`.

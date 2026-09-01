@@ -77,6 +77,12 @@ class UiSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             controller = AiSettingsController(MemorySecretStore(), Path(temp) / "settings.json")
             dialog = AiSettingsDialog(controller)
+            self.assertEqual(
+                dialog.bibliography_only_check.text(),
+                "서지정보와 초록만 입력 (AI 사용 안 함)",
+            )
+            self.assertIn("정규식 추출", dialog.bibliography_note.text())
+            self.assertIn("부정확할 수 있습니다", dialog.bibliography_note.text())
             dialog.bibliography_only_check.setChecked(True)
             self.assertFalse(dialog.provider_group.isEnabled())
             self.assertFalse(dialog.local_model_group.isEnabled())

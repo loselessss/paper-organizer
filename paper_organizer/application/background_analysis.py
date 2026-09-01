@@ -144,7 +144,7 @@ class BackgroundAnalysisService:
         )
         provider = settings.summary_provider
         if settings.bibliography_only:
-            return AnalysisReadiness(True, "AI 없이 서지만 정리합니다.")
+            return AnalysisReadiness(True, "AI 없이 서지정보와 초록만 정리합니다.")
         if provider == "local":
             model = settings.selected_model.strip()
             if not model:

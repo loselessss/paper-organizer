@@ -4,13 +4,11 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: v1.10.2 개인정보 경로 보안 검사 오탐 수정 완료
-- 현재 개발 범위: PDF 제목 복구와 모델 선택 시 용도·환각 위험·요약 전략 안내,
-  8B 미만 계층형 요약 및 8B 이상 고급 분석 경계, 한국어 자연어 검색의 영문
-  원문 검색어 확장과 설치 Ollama 모델 우선 사용, PC 사양별 모델 상주 정책,
-  PaperPack 등록/분석 날짜 표시와 원문 보존형 한국어 번역 캐시·직렬 번역 큐,
-  라이브러리 기본 화면·정렬, 새 PDF·분석 큐 통합 탭, 파일 이동 없는 제외 목록,
-  HiDPI sPDF 렌더링
+- 상태: 2.4.0 준비 흐름. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
+  전환했고, 모델·API 키 없이 서지정보와 초록만 입력하는 전용 모드를 추가했습니다.
+- 현재 개발 범위: 내장 로컬 AI 런타임·모델 다운로드, 선택 CUDA 설치,
+  bibliography-only 처리, PubMed/Crossref 서지 검증, 라이브러리 열 설정,
+  PaperPack 서지·분석 표시 정리, sPDF 국제판 연동, README/HANDOFF 문서 정리.
 
 ---
 
@@ -24,16 +22,17 @@ CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 �
 `CudaRuntimeManager`가 약 642MB를 해시 검증 후 앱 데이터의 `runtimes/b10715-cuda`에
 원자적으로 설치합니다. CUDA → Vulkan → CPU 순으로 초기화하고, 실패 시 다음 방식으로
 전환합니다. 개발 검증용은 `--with-cuda`로 세 가지를 준비할 수 있습니다.
-`bibliography_only` 설정은 모델·키 없이 서지 큐만 처리하고 번역 큐는 보존합니다.
-처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며 AI 분석 날짜로 표시하지
-않습니다. 기존 요약·사용자 수정값은 유지합니다.
+`bibliography_only` 설정은 모델·키 없이 PDF에서 읽은 서지정보와 초록만 저장합니다.
+서지정보는 정규식 추출과 PubMed/Crossref 확인으로 보완하지만 부정확할 수 있습니다.
+번역 큐는 보존하고, 처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며
+AI 분석 날짜로 표시하지 않습니다. 기존 요약·사용자 수정값은 유지합니다.
 런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
 함께 갱신하세요. sPDF는 기존 서브모듈 커밋으로 유지합니다.
 
-2026-08-31 작업은 사용자 요청으로 커밋·푸시까지만 진행하며 2.4.0 태그와
-GitHub Release는 아직 게시하지 않습니다. CUDA·Vulkan 실제 모델 응답과 실행 파일
-패키징을 확인했습니다. 이 PC에는 Inno Setup 6가 없어 설치 프로그램 생성은
-완료하지 못했으므로, 다음 릴리스 시 설치 안내 화면까지 검증해야 합니다.
+2026-09-01 기준 사용자가 설치본·모델 다운로드·CUDA/Vulkan·Ollama 제거 후 첫 실행
+흐름을 수동 QA했습니다. 2.4.0 릴리스 전에는 서지정보·초록 전용 모드와 문서가 현재 동작을
+정확히 설명하는지 마지막으로 확인하세요. GitHub Release를 게시할 때는
+`RELEASE_NOTE_RULES.md`의 언어별 규칙을 따릅니다.
 
 모델 카탈로그의 다운로드 URL은 확인한 Hugging Face 커밋으로 고정하고 SHA-256을
 저장합니다. 모델 주소를 바꾸면 `python scripts/check_model_downloads.py`를 명시적으로
@@ -82,8 +81,8 @@ GUI 실행은 다음과 같습니다.
 | core | `paper_organizer/core/` | PDF 지문·판별, paperpack ZIP, 분류기, 검색 색인, 통합 인덱스 |
 | application | `paper_organizer/application/` | 워크플로 컨트롤러, 분석 큐, 백그라운드 실행기, 요약 서비스 |
 | ui | `paper_organizer/ui/` | PyQt5 위젯과 다이얼로그 |
-| infra | `paper_organizer/infra/` | 설정, 비밀키, Ollama 런타임·설치 |
-| providers | `paper_organizer/providers/` | Ollama / OpenAI / Anthropic 요약 제공자 |
+| infra | `paper_organizer/infra/` | 설정, 비밀키, 내장 GGUF 런타임·모델·선택 CUDA·legacy Ollama |
+| providers | `paper_organizer/providers/` | 내장 로컬 / legacy Ollama / OpenAI / Anthropic 요약 제공자 |
 
 가장 자주 건드리게 되는 파일은 이 셋입니다.
 
@@ -219,11 +218,12 @@ PaperPack 절대 경로로 현재 선택과 다중 선택을 복원하고, 기�
 표시줄의 불필요한 `?`를 제거합니다. 스플래시 이미지는 null 여부를 확인하기 전에
 확대하지 말고, 먼저 만든 단색 캔버스를 안전한 대체 화면으로 유지합니다.
 
-**요약 모델 변경은 Ollama 프로세스 재시작 사유가 아닙니다.**
-Ollama 요청이 모델 ID를 직접 전달하므로 실행 중인 서버는 그대로 재사용합니다.
-꺼져 있을 때만 `start_runtime()`으로 창 없는 `ollama serve`를 시작하세요. GPU
-환경값 변경처럼 재시작이 필요한 경우에도 `restart_runtime()`은 트레이 앱을 열지
-않고 숨김 서버만 다시 시작합니다.
+**legacy Ollama 요약 모델 변경은 프로세스 재시작 사유가 아닙니다.**
+기본 경로는 내장 로컬 AI입니다. legacy Ollama 제공자를 유지할 때도 요청마다 모델
+ID를 직접 전달하므로 실행 중인 서버는 그대로 재사용합니다. 꺼져 있을 때만
+`start_runtime()`으로 창 없는 `ollama serve`를 시작하세요. GPU 환경값 변경처럼
+재시작이 필요한 경우에도 `restart_runtime()`은 트레이 앱을 열지 않고 숨김 서버만
+다시 시작합니다.
 
 **sPDF 편집본의 파일명은 PaperPack 원본 PDF 이름을 사용합니다.**
 편집 작업공간은 계속 해시 디렉터리로 격리하되 탭·창 제목에는 manifest의
@@ -237,11 +237,14 @@ Ollama 요청이 모델 ID를 직접 전달하므로 실행 중인 서버는 그
 
 ### 실제 남은 우선순위
 
-1. Qwen3.5 2B를 16GB PC에서 반복 실행해 백그라운드 상주·언로드 안정성을
-   확인하고 Qwen3 1.7B 교체 여부를 결정합니다.
-2. sPDF 선택 영역에 텍스트 레이어가 없을 때 사용자가 명시적으로 실행하는
+1. 2.4.0 태그와 GitHub Release 게시 전 README, CHANGELOG, 설치 안내가 현재
+   기능과 맞는지 마지막으로 확인합니다.
+2. 서지정보·초록 전용 모드를 실제 라이브러리 샘플에서 한 번 더 확인합니다.
+   모델·API 키 없이 분석 큐의 서지 정리만 처리하고, 기존 요약·사용자 수정값·번역
+   큐를 보존해야 합니다.
+3. sPDF 선택 영역에 텍스트 레이어가 없을 때 사용자가 명시적으로 실행하는
    선택 영역 OCR을 공개 DTO 흐름에 연결합니다.
-3. 새로운 실제 오분류가 확인될 때만 taxonomy 키워드와 회귀 사례를 보강합니다.
+4. 새로운 실제 오분류가 확인될 때만 taxonomy 키워드와 회귀 사례를 보강합니다.
 
 ### 최근 동작 변경
 

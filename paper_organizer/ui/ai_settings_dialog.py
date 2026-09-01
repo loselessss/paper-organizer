@@ -126,15 +126,17 @@ class AiSettingsDialog(QDialog):
         scroll_layout = QVBoxLayout(scroll_content)
         engine_group = QGroupBox("요약 엔진 옵션")
         engine_layout = QVBoxLayout(engine_group)
-        self.bibliography_only_check = QCheckBox("AI 분석 없이 서지만 정리")
-        engine_layout.addWidget(self.bibliography_only_check)
-        bibliography_note = QLabel(
-            "모델·API 키 없이 PDF의 서지와 분류를 정리하고 검색할 수 있습니다. "
-            "서지 보완을 위해 제목·DOI를 PubMed·Crossref에 조회할 수 있으며, PDF 본문은 전송하지 않습니다. "
-            "AI 요약·번역은 실행하지 않고 기존 분석과 직접 수정한 정보는 보존합니다."
+        self.bibliography_only_check = QCheckBox(
+            "서지정보와 초록만 입력 (AI 사용 안 함)"
         )
-        bibliography_note.setWordWrap(True)
-        engine_layout.addWidget(bibliography_note)
+        engine_layout.addWidget(self.bibliography_only_check)
+        self.bibliography_note = QLabel(
+            "모델·API 키 없이 PDF에서 읽은 서지정보와 초록만 저장합니다. "
+            "서지정보는 정규식 추출과 PubMed·Crossref 확인으로 보완하지만 부정확할 수 있습니다. "
+            "AI 요약·번역은 실행하지 않고 PDF 본문은 외부로 전송하지 않으며, 기존 분석과 직접 수정한 정보는 보존합니다."
+        )
+        self.bibliography_note.setWordWrap(True)
+        engine_layout.addWidget(self.bibliography_note)
         self.bibliography_only_check.toggled.connect(self._bibliography_mode_changed)
 
         self.engine_columns = QBoxLayout(QBoxLayout.LeftToRight)
