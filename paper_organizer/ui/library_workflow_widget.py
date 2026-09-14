@@ -77,6 +77,7 @@ from paper_organizer.integrations.spdf_bridge import (
     open_pdf,
 )
 from paper_organizer.ui.dialog_utils import suppress_context_help_button
+from paper_organizer.ui.project_sidebar import ProjectSidebar
 from paper_organizer.ui.fluent_style import decorate_action, decorate_button
 
 
@@ -2350,9 +2351,12 @@ class LibraryWidget(QWidget):
         self._translation_path = ""
         self._translation_cache: dict[str, LibraryTranslation] = {}
         self._entries: list[LibraryEntry] = []
+        self.project_sidebar = ProjectSidebar(controller, self)
+        self.project_sidebar.project_changed.connect(lambda _key: self.refresh())
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 6)
         root.setSpacing(6)
+        self.project_sidebar.hide()
         search_row = QHBoxLayout()
         search_row.setSpacing(6)
         self.library_title_label = QLabel("라이브러리")
@@ -2724,11 +2728,24 @@ class LibraryWidget(QWidget):
             self._controller.invalidate_library_cache()
         query = self.search_edit.text().strip()
         try:
+            all_entries = self._controller.list_library()
+            self.project_sidebar.refresh(all_entries)
             self._entries = (
-                self._controller.search_library(query)
+                (self._controller.search_library(query, limit=max(50, len(all_entries)))
+                 if self.project_sidebar.project_id else self._controller.search_library(query))
                 if query
                 else self._controller.list_library()
             )
+            project_id = self.project_sidebar.project_id
+            if project_id:
+                self._entries = [entry for entry in self._entries
+                    if project_id in entry.record.get("curation", {}).get("project_ids", [])]
+            self.library_title_label.setText(next(
+                (p["name"] for p in self.project_sidebar.projects if p["id"] == project_id),
+                "라이브러리",
+            ))
+            self.library_title_label.setMaximumWidth(180)
+            self.library_title_label.setToolTip(self.library_title_label.text())
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
@@ -3588,6 +3605,17 @@ class LibraryWidget(QWidget):
         if not entries:
             return
         menu = QMenu(self)
+        projects_menu = menu.addMenu("프로젝트에 추가")
+        decorate_action(projects_menu.menuAction(), "folder")
+        for project in self.project_sidebar.projects:
+            action = projects_menu.addAction(project["name"])
+            action.triggered.connect(lambda _checked=False, key=project["id"]: self._set_selected_project(key, True))
+        projects_menu.addSeparator()
+        projects_menu.addAction("새 프로젝트에 추가…", self._create_project_with_selection)
+        if self.project_sidebar.project_id:
+            remove_project_action = menu.addAction("이 프로젝트에서 제외", lambda: self._set_selected_project(self.project_sidebar.project_id, False))
+            decorate_action(remove_project_action, "cancel")
+        menu.addSeparator()
         open_action = menu.addAction("PDF 열기")
         decorate_action(open_action, "open")
         open_action.setEnabled(self.open_button.isEnabled())
@@ -3656,6 +3684,28 @@ class LibraryWidget(QWidget):
             self._permanently_delete_library_selected
         )
         menu.exec_(self.table.viewport().mapToGlobal(position))
+
+    def _set_selected_project(self, project_id: str, included: bool) -> None:
+        self._update_project_membership(self._selected_entries(), project_id, included)
+
+    def _create_project_with_selection(self) -> None:
+        entries = self._selected_entries()
+        key = self.project_sidebar.edit_project()
+        if key:
+            self._update_project_membership(entries, key, True)
+
+    def _update_project_membership(self, entries, project_id: str, included: bool) -> None:
+        try:
+            changed, problems = self._controller.set_project_membership(
+                entries, project_id, included=included)
+        except Exception as exc:
+            QMessageBox.warning(self, "프로젝트 변경 실패", str(exc))
+            return
+        self.refresh()
+        if problems:
+            QMessageBox.warning(self, "일부 논문 변경 실패", "\n".join(problems[:10]))
+        if changed:
+            self.metadata_changed.emit()
 
     def _open_in_explorer(self) -> None:
         failures: list[str] = []

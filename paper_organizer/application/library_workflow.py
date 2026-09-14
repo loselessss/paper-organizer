@@ -3817,6 +3817,90 @@ class LibraryWorkflowController:
             )
         return matches
 
+    def list_projects(self) -> list[dict[str, str]]:
+        _input, root = self.configured_paths()
+        path = root / "projects.json"
+        if not path.exists():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            projects = raw["projects"]
+            if not isinstance(projects, list) or any(
+                not isinstance(p, dict) or not all(isinstance(p.get(k), str) for k in ("id", "name", "description"))
+                for p in projects
+            ):
+                raise ValueError()
+            return projects
+        except (ValueError, KeyError, TypeError) as exc:
+            raise LibraryWorkflowError("프로젝트 설정을 읽을 수 없습니다. projects.json을 확인하세요.") from exc
+
+    def save_project(self, name: str, description: str = "", *, project_id: str = "") -> str:
+        name = name.strip()
+        description = description.strip()
+        if not name or len(name) > 80:
+            raise LibraryWorkflowError("프로젝트 이름은 1~80자로 입력하세요.")
+        if len(description) > 2000:
+            raise LibraryWorkflowError("프로젝트 설명은 2,000자 이하로 입력하세요.")
+        projects = self.list_projects()
+        if project_id and not any(p["id"] == project_id for p in projects):
+            raise LibraryWorkflowError("프로젝트를 찾을 수 없습니다.")
+        if any(p["name"].casefold() == name.casefold() and p["id"] != project_id for p in projects):
+            raise LibraryWorkflowError("같은 이름의 프로젝트가 있습니다.")
+        project_id = project_id or uuid.uuid4().hex
+        projects = [p for p in projects if p["id"] != project_id]
+        projects.append({"id": project_id, "name": name, "description": description})
+        _input, root = self.configured_paths()
+        _atomic_json_write(root / "projects.json", {"projects": projects})
+        return project_id
+
+    def delete_project(self, project_id: str) -> None:
+        projects = self.list_projects()
+        if not any(p["id"] == project_id for p in projects):
+            raise LibraryWorkflowError("프로젝트를 찾을 수 없습니다.")
+        # Membership IDs remain in packs, but cannot match a new UUID project.
+        # This also keeps documents and their edit history untouched on deletion.
+        _input, root = self.configured_paths()
+        _atomic_json_write(root / "projects.json", {
+            "projects": [p for p in projects if p["id"] != project_id]
+        })
+
+    def set_project_membership(
+        self, entries: Iterable[LibraryEntry], project_id: str, *, included: bool
+    ) -> tuple[int, tuple[str, ...]]:
+        if not any(p["id"] == project_id for p in self.list_projects()):
+            raise LibraryWorkflowError("프로젝트를 찾을 수 없습니다.")
+        _input, root = self.configured_paths()
+        changed = 0
+        problems = []
+        seen = set()
+        for entry in entries:
+            path = entry.sidecar_path.resolve()
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                if not _inside(root.resolve(), path) or path.suffix != PAPERPACK_SUFFIX:
+                    raise LibraryWorkflowError("현재 라이브러리의 PaperPack만 추가할 수 있습니다.")
+                record = load_paperpack_metadata(path)
+                curation = record.setdefault("curation", {})
+                ids = set(curation.get("project_ids", []))
+                if (project_id in ids) == included:
+                    continue
+                if included:
+                    ids.add(project_id)
+                else:
+                    ids.discard(project_id)
+                curation["project_ids"] = sorted(ids)
+                curation["revision"] = int(curation.get("revision", 0)) + 1
+                curation["last_edited_at"] = _now_iso()
+                curation["last_edited_by"] = "user"
+                update_paperpack(path, record, changed_by="user:project")
+                changed += 1
+            except Exception as exc:
+                problems.append(f"{entry.metadata.title}: {exc}")
+        self.invalidate_library_cache()
+        return changed, tuple(problems)
+
     def suggested_document_type(self, entry: LibraryEntry) -> str | None:
         """Return a deterministic reclassification candidate without changing data."""
 

@@ -464,6 +464,7 @@ class UiSmokeTests(unittest.TestCase):
                 [
                     "새 PDF",
                     "분석 큐",
+                    "프로젝트",
                     "감시 설정",
                     "AI 설정",
                     "업데이트",
@@ -557,6 +558,17 @@ class UiSmokeTests(unittest.TestCase):
             window.toggle_analysis_queue()
             self.app.processEvents()
             self.assertFalse(analysis_popup.isVisible())
+            window.toggle_projects()
+            self.app.processEvents()
+            self.assertTrue(window._project_popup.isVisible())
+            self.assertEqual(window.size(), stable_size)
+            window.toggle_projects()
+            self.assertFalse(window._project_popup.isVisible())
+            window.toggle_projects()
+            window.toggle_analysis_queue()
+            self.assertFalse(window._project_popup.isVisible())
+            self.assertTrue(analysis_popup.isVisible())
+            window.toggle_analysis_queue()
             with mock.patch.object(
                 window.collection_widget, "scan_now"
             ) as scan_now:
@@ -1813,6 +1825,7 @@ class UiSmokeTests(unittest.TestCase):
                     )
 
             controller = FakeLibraryController()
+            controller.list_projects = lambda: []
             translation_service = FakeTranslationService()
             with mock.patch(
                 "paper_organizer.ui.library_workflow_widget."

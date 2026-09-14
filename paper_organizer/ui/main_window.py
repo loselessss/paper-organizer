@@ -98,6 +98,7 @@ class PaperOrganizerWindow(QMainWindow):
         self._library_workflow = library_workflow
         self._new_pdf_popup: QFrame | None = None
         self._analysis_queue_popup: QFrame | None = None
+        self._project_popup: QFrame | None = None
         self.collection_widget = None
         self.queue_widget = None
         self.library_widget = None
@@ -113,6 +114,14 @@ class PaperOrganizerWindow(QMainWindow):
                 self,
                 translation_service=library_translation,
                 selection_ai=selection_ai,
+            )
+            self._project_popup = self._create_workflow_popup(
+                "projectPopup", self.library_widget.project_sidebar,
+                minimum_size=QSize(320, 240),
+            )
+            self.library_widget.project_sidebar.show()
+            self.library_widget.project_sidebar.project_changed.connect(
+                lambda _key: self._project_popup.hide()
             )
             self.collection_widget.library_changed.connect(self.library_widget.refresh)
             self.collection_widget.queue_changed.connect(self.queue_widget.refresh)
@@ -349,6 +358,8 @@ class PaperOrganizerWindow(QMainWindow):
             )
         if self._analysis_queue_popup is not None:
             add_command("분석 큐", "menu", self.toggle_analysis_queue)
+        if self._project_popup is not None:
+            add_command("프로젝트", "folder", self.toggle_projects)
 
         if self.library_widget is not None:
             ribbon.addSeparator()
@@ -515,9 +526,19 @@ class PaperOrganizerWindow(QMainWindow):
         if self.queue_widget is not None:
             self.queue_widget.refresh()
 
+    def toggle_projects(self) -> None:
+        if self._project_popup is None:
+            return
+        if self._project_popup.isVisible():
+            self._project_popup.hide()
+            return
+        self.library_widget.project_sidebar.refresh(self._library_workflow.list_library())
+        self._show_workflow_popup(self._project_popup)
+
     def _show_workflow_popup(self, popup: QFrame | None) -> None:
         if popup is None:
             return
+        self._hide_workflow_popups()
         self._position_workflow_popup(popup)
         popup.show()
         popup.raise_()
@@ -534,6 +555,9 @@ class PaperOrganizerWindow(QMainWindow):
         available_width = max(320, self.width() - 16)
         available_height = max(240, status_top - top - 8)
         popup_width = min(max(760, int(self.width() * 0.72)), available_width)
+        if popup is self._project_popup:
+            popup_width = min(440, available_width)
+            available_height = min(480, available_height)
         popup.resize(popup_width, available_height)
         popup.move(QPoint(8, top))
 
@@ -550,10 +574,12 @@ class PaperOrganizerWindow(QMainWindow):
     def _hide_workflow_popups(self) -> None:
         self._hide_new_pdf_popup()
         self._hide_analysis_queue_popup()
+        if self._project_popup is not None:
+            self._project_popup.hide()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        for popup in (self._new_pdf_popup, self._analysis_queue_popup):
+        for popup in (self._new_pdf_popup, self._analysis_queue_popup, self._project_popup):
             if popup is not None and popup.isVisible():
                 self._position_workflow_popup(popup)
 

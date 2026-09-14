@@ -51,6 +51,14 @@ content JSON to 64 MiB.
 bibliography, classification, language-selected summary, contributions, limitations,
 experimental details, curation, and provenance fields.
 
+`curation.project_ids` is an optional list of project UUIDs. Membership is stored
+in the PaperPack itself and survives rebuilding either index. Adding or removing
+membership appends a normal metadata revision without changing bibliography or PDF.
+The library's `projects.json` stores project configuration (UUID, name, description),
+including empty projects; it is not an index and must be included in library backups.
+Deleting a project removes its configuration, not documents. Unrecognized project
+IDs are ignored; creating a project always allocates a fresh UUID.
+
 An optional `translations.analysis.<language>` object may cache a user-requested
 translation for display without replacing the canonical analysis. It records the
 translated plain text, source analysis SHA-256, provider, model, prompt version, and
