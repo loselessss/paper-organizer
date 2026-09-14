@@ -330,9 +330,11 @@ class EmbeddedModelDialog(QDialog):
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.progress.setFormat("완료")
-        if operation in {"download", "select"}:
+        if operation == "select":
             self.model_selected.emit(model)
             self.progress_status.setText("모델을 선택했습니다.")
+        elif operation == "download":
+            self.progress_status.setText("다운로드가 완료되었습니다. 사용할 모델을 선택하세요.")
         elif operation == "delete":
             self.model_deleted.emit(model, bool(result))
             self.progress_status.setText("선택한 모델을 제거했습니다.")

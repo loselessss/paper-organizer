@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import Callable
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from paper_organizer.core.model_recommendation import (
     ModelSpec,
@@ -78,7 +79,7 @@ class EmbeddedModelManagerService:
         catalog_path: Path | None = None,
         hardware: HardwareInspector | None = None,
         model_dir: Path | None = None,
-        opener: Callable[[str], object] | None = None,
+        opener: Callable[[str | Request], object] | None = None,
     ) -> None:
         self._settings_path = settings_path or default_settings_path()
         self._catalog_path = catalog_path
@@ -141,12 +142,41 @@ class EmbeddedModelManagerService:
         temp_path = plan.target.with_suffix(plan.target.suffix + ".part")
         digest = hashlib.sha256()
         received = 0
+        spec = _find_spec(model, self._catalog_path)
+        # Only resume files whose complete contents can be verified against the catalog.
+        if temp_path.exists() and spec.sha256:
+            with open(temp_path, "rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    if cancel is not None and cancel.is_set():
+                        raise RuntimeError("모델 다운로드가 취소되었습니다.")
+                    digest.update(chunk)
+                    received += len(chunk)
         if on_progress is not None:
             on_progress(EmbeddedDownloadProgress("downloading"))
         try:
-            with self._opener(plan.url) as response:
+            if cancel is not None and cancel.is_set():
+                raise RuntimeError("모델 다운로드가 취소되었습니다.")
+            request = Request(plan.url, headers={"Range": f"bytes={received}-", "Accept-Encoding": "identity"}) if received else plan.url
+            try:
+                response = self._opener(request)
+            except HTTPError as exc:
+                if exc.code != 416 or not received:
+                    raise
+                exc.close()
+                response = self._opener(plan.url)
+                received = 0
+                digest = hashlib.sha256()
+            with response:
                 total = _content_length(response)
-                with open(temp_path, "wb") as stream:
+                if received and getattr(response, "status", None) == 206:
+                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
+                    if not match or int(match[1]) != received or int(match[2]) + 1 != int(match[3]):
+                        raise RuntimeError("모델 이어받기 응답이 올바르지 않습니다. 다시 시도하세요.")
+                    total = int(match[3])
+                else:
+                    received = 0
+                    digest = hashlib.sha256()
+                with open(temp_path, "ab" if received else "wb") as stream:
                     while True:
                         if cancel is not None and cancel.is_set():
                             raise RuntimeError("모델 다운로드가 취소되었습니다.")
@@ -166,15 +196,13 @@ class EmbeddedModelManagerService:
                             )
                     stream.flush()
                     os.fsync(stream.fileno())
-            spec = _find_spec(model, self._catalog_path)
+            if total is not None and received != total:
+                raise RuntimeError("모델 다운로드가 중단되었습니다. 다시 다운로드하면 이어받습니다.")
             if spec.sha256 and digest.hexdigest().lower() != spec.sha256:
+                temp_path.unlink(missing_ok=True)
                 raise RuntimeError("모델 파일 SHA-256 검증에 실패했습니다.")
             os.replace(temp_path, plan.target)
         except Exception as exc:
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
             if isinstance(exc, HTTPError):
                 if exc.code == 404:
                     message = "배포처에서 모델 파일을 찾을 수 없습니다(HTTP 404). 앱을 최신 버전으로 업데이트하거나 다른 모델을 선택하세요."
@@ -184,12 +212,6 @@ class EmbeddedModelManagerService:
                     message = f"모델 배포 서버 오류(HTTP {exc.code})입니다. 잠시 후 다시 시도하세요."
                 raise RuntimeError(message) from None
             raise
-        settings = load_settings(self._settings_path)
-        settings.selected_model = plan.model_id
-        settings.background_model = plan.model_id
-        settings.manual_model = settings.manual_model or plan.model_id
-        settings.summary_provider = "local"
-        save_settings(settings, self._settings_path)
         if on_progress is not None:
             on_progress(EmbeddedDownloadProgress("complete", received, received))
         return plan.target

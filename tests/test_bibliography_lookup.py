@@ -59,6 +59,33 @@ class BibliographyLookupTests(unittest.TestCase):
         )
         self.assertEqual(result.year, 1993)
         self.assertEqual(result.source, "verified:crossref")
+        self.assertEqual(len(client.urls), 1)
+
+    def test_reference_identifier_cannot_override_unrelated_title(self):
+        client = FakeGetClient([
+            {"message": {"title": ["Unrelated cancer study"], "author": [{"family": "Other"}]}},
+            {"esearchresult": {"idlist": []}},
+            {"message": {"items": []}},
+        ])
+        result = BibliographyLookupService(client).verify(
+            title="Bacterial heat shock protein DnaK", doi="10.1234/reference")
+        self.assertIsNone(result)
+        self.assertEqual(len(client.urls), 3)
+
+    def test_incomplete_identifier_result_continues_to_title_search(self):
+        title = "Bacterial heat shock protein DnaK"
+        client = FakeGetClient([
+            {"message": {"title": [title]}},
+            {"esearchresult": {"idlist": []}},
+            {"message": {"items": [{"title": [title], "author": [{"family": "Author"}]}]}},
+        ])
+        result = BibliographyLookupService(client).verify(title=title, doi="10.1234/test")
+        self.assertIsNotNone(result)
+        self.assertEqual(len(client.urls), 3)
+
+    def test_blank_title_does_not_trust_identifier_alone(self):
+        client = FakeGetClient([{"message": {"title": ["Unrelated study"]}}])
+        self.assertIsNone(BibliographyLookupService(client).verify(title="", doi="10.1234/test"))
 
     def test_pubmed_title_search_supplies_abbreviated_authors(self):
         client = FakeGetClient(

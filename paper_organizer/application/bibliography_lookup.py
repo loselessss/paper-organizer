@@ -85,15 +85,22 @@ class BibliographyLookupService:
         pmid = _extract_pmid(front_text)
         pmcid = _extract_pmcid(front_text)
         candidates: list[VerifiedBibliography] = []
-        for candidate in (
-            self._pubmed_by_pmid(pmid) if pmid else None,
-            self._pubmed_by_pmcid(pmcid) if pmcid else None,
-            self._crossref_by_doi(doi) if doi else None,
-            self._pubmed_by_title(title),
-            self._crossref_by_title(title),
+        for lookup in (
+            lambda: self._pubmed_by_pmid(pmid) if pmid else None,
+            lambda: self._pubmed_by_pmcid(pmcid) if pmcid else None,
+            lambda: self._crossref_by_doi(doi) if doi else None,
+            lambda: self._pubmed_by_title(title),
+            lambda: self._crossref_by_title(title),
         ):
+            candidate = lookup()
             if candidate is not None:
+                candidate = _with_score(candidate, title)
+                if not title.strip() or candidate.score < 0.72:
+                    continue
                 candidates.append(candidate)
+                if (candidate.score >= 0.95 and candidate.authors
+                        and candidate.year and candidate.venue):
+                    return candidate
         scored = [
             _with_score(candidate, title)
             for candidate in candidates
@@ -102,7 +109,7 @@ class BibliographyLookupService:
         scored = [
             candidate
             for candidate in scored
-            if candidate.matched_identifier or not title.strip() or candidate.score >= 0.72
+            if title.strip() and candidate.score >= 0.72
         ]
         if not scored:
             return None

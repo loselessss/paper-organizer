@@ -113,7 +113,7 @@ class EmbeddedModelManagerTests(unittest.TestCase):
         self.assertFalse(plan.can_download)
         self.assertIn("다운로드 주소", plan.reason)
 
-    def test_download_writes_gguf_atomically_and_selects_local_provider(self):
+    def test_download_writes_gguf_atomically_without_changing_settings(self):
         payload = b"fake gguf"
         digest = hashlib.sha256(payload).hexdigest()
         with tempfile.TemporaryDirectory() as temp:
@@ -128,17 +128,50 @@ class EmbeddedModelManagerTests(unittest.TestCase):
                 opener=lambda _url: FakeResponse(payload),
             )
 
+            settings_path = root / "settings.json"
+            settings_path.write_text('{"background_model":"existing","summary_provider":"openai"}', encoding="utf-8")
+            original = settings_path.read_bytes()
             target = service.download("qwen3:1.7b")
 
-            saved = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+            self.assertEqual(settings_path.read_bytes(), original)
             target_name = target.name
             target_bytes = target.read_bytes()
 
         self.assertEqual(target_name, "qwen3_1.7b.gguf")
         self.assertEqual(target_bytes, payload)
-        self.assertEqual(saved["summary_provider"], "local")
-        self.assertEqual(saved["selected_model"], "qwen3:1.7b")
-        self.assertEqual(saved["background_model"], "qwen3:1.7b")
+
+    def test_interrupted_download_resumes_and_verifies_complete_hash(self):
+        payload = b"GGUFmodel contents"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            catalog = root / "catalog.json"
+            write_catalog(catalog, url="https://example.test/model.gguf", sha256=hashlib.sha256(payload).hexdigest())
+            first = FakeResponse(payload[:4])
+            first.headers["Content-Length"] = str(len(payload))
+            second = FakeResponse(payload[4:])
+            second.status = 206
+            second.headers["Content-Range"] = f"bytes 4-{len(payload)-1}/{len(payload)}"
+            opener = Mock(side_effect=[first, second])
+            service = EmbeddedModelManagerService(root / "settings.json", catalog_path=catalog,
+                hardware=FakeHardware(), model_dir=root / "models", opener=opener)
+            with self.assertRaisesRegex(RuntimeError, "중단"):
+                service.download("qwen3:1.7b")
+            target = service.download("qwen3:1.7b")
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertEqual(opener.call_args.args[0].get_header("Range"), "bytes=4-")
+
+    def test_range_ignored_restarts_without_appending(self):
+        payload = b"GGUFcomplete"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            catalog = root / "catalog.json"
+            write_catalog(catalog, url="https://example.test/model.gguf", sha256=hashlib.sha256(payload).hexdigest())
+            service = EmbeddedModelManagerService(root / "settings.json", catalog_path=catalog,
+                hardware=FakeHardware(), model_dir=root / "models", opener=lambda _: FakeResponse(payload))
+            target = service.plan_download("qwen3:1.7b").target
+            target.parent.mkdir()
+            target.with_suffix(".gguf.part").write_bytes(b"GGUF")
+            self.assertEqual(service.download("qwen3:1.7b").read_bytes(), payload)
 
 
 if __name__ == "__main__":
