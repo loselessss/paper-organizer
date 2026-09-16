@@ -125,6 +125,8 @@ def open_pdf(
         workspace_mode="reader", read_only=True,
         annotations_enabled=False, updates_enabled=False,
     )
+    from paper_organizer.ui.spdf_style import apply_spdf_caption_style
+    apply_spdf_caption_style(window)
     window.destroyed.connect(lambda: _forget_window(window))
     tab = window.open_in_tab(str(pdf_path))
     _attach_selection(tab, document_id, selection_callback)

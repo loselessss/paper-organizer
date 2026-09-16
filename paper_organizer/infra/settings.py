@@ -67,6 +67,7 @@ class AppSettings:
     skipped_update_version: str = ""
     library_column_order: list[str] = field(default_factory=list)
     library_hidden_columns: list[str] = field(default_factory=list)
+    library_column_widths: dict[str, int] = field(default_factory=dict)
     minimum_age_seconds: int = 30
     scan_interval_seconds: int = 300
 
@@ -245,6 +246,12 @@ class AppSettings:
                 or len({column.strip() for column in value}) != len(value)
             ):
                 raise ValueError(f"{name} must contain unique non-empty column ids")
+        if not isinstance(self.library_column_widths, dict) or any(
+            not isinstance(key, str) or not key.strip()
+            or type(width) is not int or not 1 <= width <= 10000
+            for key, width in self.library_column_widths.items()
+        ):
+            raise ValueError("library_column_widths must map column ids to positive widths")
         if self.cloud_request_profile not in {
             "conservative",
             "standard",

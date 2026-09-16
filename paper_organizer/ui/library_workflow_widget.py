@@ -2431,6 +2431,7 @@ class LibraryWidget(QWidget):
         self.table.setColumnWidth(2, 72)
         self.table.setColumnWidth(8, 165)
         self._applying_column_layout = False
+        header.sectionResized.connect(self._library_column_resized)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.itemSelectionChanged.connect(self._selection_changed)
@@ -2648,6 +2649,10 @@ class LibraryWidget(QWidget):
         header = self.table.horizontalHeader()
         self._applying_column_layout = True
         try:
+            for column_id, width in settings.library_column_widths.items():
+                logical_index = self._column_index(column_id)
+                if logical_index >= 0:
+                    self.table.setColumnWidth(logical_index, width)
             for visual_index, column_id in enumerate(order):
                 logical_index = self._column_index(column_id)
                 current_visual = header.visualIndex(logical_index)
@@ -2680,6 +2685,19 @@ class LibraryWidget(QWidget):
                 order=order,
                 hidden=hidden,
             )
+        except Exception as exc:
+            self.status_label.setText(f"라이브러리 열 설정 저장 실패: {exc}")
+
+    def _library_column_resized(self, logical_index, _old_size, new_size) -> None:
+        if self._applying_column_layout or new_size <= 0:
+            return
+        column_id = self._library_column_id(logical_index)
+        if not column_id or self.table.isColumnHidden(logical_index):
+            return
+        try:
+            widths = dict(self._controller.settings().library_column_widths)
+            widths[column_id] = new_size
+            self._controller.save_library_column_preferences(widths=widths)
         except Exception as exc:
             self.status_label.setText(f"라이브러리 열 설정 저장 실패: {exc}")
 

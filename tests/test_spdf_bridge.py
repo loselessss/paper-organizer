@@ -20,11 +20,14 @@ class SpdfBridgeTests(unittest.TestCase):
         widgets.QApplication = Mock()
         app = types.ModuleType("pdfeditor.app")
         app.new_window = factory
+        style = types.ModuleType("paper_organizer.ui.spdf_style")
+        style.apply_spdf_caption_style = Mock()
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "test.pdf"
             path.write_bytes(b"%PDF-1.4")
-            with patch.dict("sys.modules", {"PyQt5.QtWidgets": widgets, "pdfeditor.app": app}), patch.object(spdf_bridge, "_windows", []), patch.object(spdf_bridge, "_ensure_import_path"), patch.object(spdf_bridge, "_attach_selection"):
+            with patch.dict("sys.modules", {"PyQt5.QtWidgets": widgets, "pdfeditor.app": app, "paper_organizer.ui.spdf_style": style}), patch.object(spdf_bridge, "_windows", []), patch.object(spdf_bridge, "_ensure_import_path"), patch.object(spdf_bridge, "_attach_selection"):
                 spdf_bridge.open_pdf(path)
+        style.apply_spdf_caption_style.assert_called_once_with(factory.return_value)
         factory.assert_called_once_with(workspace_mode="reader", read_only=True,
             annotations_enabled=False, updates_enabled=False)
 

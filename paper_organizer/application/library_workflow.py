@@ -1873,12 +1873,15 @@ class LibraryWorkflowController:
         *,
         order: list[str] | None = None,
         hidden: list[str] | None = None,
+        widths: dict[str, int] | None = None,
     ) -> AppSettings:
         settings = self.settings()
         if order is not None:
             settings.library_column_order = [
                 column.strip() for column in order if column.strip()
             ]
+        if widths is not None:
+            settings.library_column_widths = dict(widths)
         if hidden is not None:
             settings.library_hidden_columns = [
                 column.strip() for column in hidden if column.strip()

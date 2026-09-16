@@ -125,3 +125,25 @@ class ProjectUiTests(unittest.TestCase):
             widget.project_sidebar.list.setCurrentRow(0)
             self.assertEqual(widget.table.rowCount(), 2)
             widget.close()
+
+    def test_column_widths_shared_between_projects_and_reopening(self):
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+        with tempfile.TemporaryDirectory() as temp:
+            controller = project_fixture(Path(temp))
+            controller.save_project("Project")
+            widget = LibraryWidget(controller)
+            widget.resize(1200, 760)
+            widget.show()
+            self.app.processEvents()
+            widget.table.setColumnWidth(0, 380)
+            widget.project_sidebar.list.setCurrentRow(1)
+            self.app.processEvents()
+            self.assertEqual(widget.table.columnWidth(0), 380)
+            widget.table.setColumnWidth(0, 420)
+            widget.project_sidebar.list.setCurrentRow(0)
+            self.app.processEvents()
+            self.assertEqual(widget.table.columnWidth(0), 420)
+            widget.close()
+            reopened = LibraryWidget(LibraryWorkflowController(Path(temp) / "settings.json"))
+            self.assertEqual(reopened.table.columnWidth(0), 420)
+            reopened.close()
