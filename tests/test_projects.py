@@ -106,6 +106,10 @@ class ProjectUiTests(unittest.TestCase):
             second = controller.save_project("Second")
             widget._set_selected_project(second, True)
             self.assertEqual(widget.project_membership_label.text(), "Project · Second")
+            project_column = widget._column_index("projects")
+            self.assertEqual(widget.table.horizontalHeaderItem(project_column).text(), "프로젝트")
+            self.assertEqual(widget.table.item(widget.table.currentRow(), project_column).text(), "Project · Second")
+            self.assertEqual(widget.table.item(widget.table.currentRow(), project_column).toolTip(), "Project · Second")
             widget.project_sidebar.list.setCurrentRow(1)
             self.app.processEvents()
             self.assertEqual(widget.search_edit.x(), search_x)
@@ -124,6 +128,7 @@ class ProjectUiTests(unittest.TestCase):
             self.assertEqual(widget.table.rowCount(), 0)
             widget.project_sidebar.list.setCurrentRow(0)
             self.assertEqual(widget.table.rowCount(), 2)
+            self.assertEqual(sorted(widget.table.item(row, project_column).text() for row in range(2)), ["", "Second"])
             widget.close()
 
     def test_column_widths_shared_between_projects_and_reopening(self):

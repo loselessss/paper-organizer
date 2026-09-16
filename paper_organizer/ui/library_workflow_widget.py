@@ -98,6 +98,7 @@ _LIBRARY_COLUMNS = (
     ("created_at", "등록일"),
     ("analysis_at", "분석일"),
     ("search_location", "검색 위치"),
+    ("projects", "프로젝트"),
 )
 _LIBRARY_COLUMN_IDS = tuple(column_id for column_id, _label in _LIBRARY_COLUMNS)
 _LIBRARY_COLUMN_LABELS = {
@@ -2409,7 +2410,7 @@ class LibraryWidget(QWidget):
         search_result_layout.addWidget(self.search_result_label, 1)
         self.search_result_bar.setVisible(False)
         root.addWidget(self.search_result_bar)
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, len(_LIBRARY_COLUMNS))
         self.table.setHorizontalHeaderLabels(
             [label for _column_id, label in _LIBRARY_COLUMNS]
         )
@@ -2430,6 +2431,7 @@ class LibraryWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.setColumnWidth(2, 72)
         self.table.setColumnWidth(8, 165)
+        self.table.setColumnWidth(9, 180)
         self._applying_column_layout = False
         header.sectionResized.connect(self._library_column_resized)
         self.table.setSortingEnabled(True)
@@ -2794,6 +2796,7 @@ class LibraryWidget(QWidget):
             for item in queue_items
             if item.task_type == "translation"
         }
+        project_names = {project["id"]: project["name"] for project in self.project_sidebar.projects}
         for row, entry in enumerate(self._entries):
             metadata = entry.metadata
             queue_item = queue_by_path.get(str(entry.sidecar_path.resolve()))
@@ -2857,12 +2860,18 @@ class LibraryWidget(QWidget):
                 _format_library_date(entry.paperpack_created_at),
                 _format_library_date(entry.analysis_completed_at),
                 search_location_text,
+                " · ".join(sorted(
+                    {project_names[key] for key in entry.record.get("curation", {}).get("project_ids", [])
+                     if key in project_names}, key=str.casefold)),
             ]
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setData(Qt.UserRole, str(entry.sidecar_path.resolve()))
+                if column == self._column_index("projects"):
+                    cell.setToolTip(value or "소속 프로젝트 없음")
                 if entry.search_locations:
-                    cell.setToolTip(search_tooltip)
+                    if column != self._column_index("projects"):
+                        cell.setToolTip(search_tooltip)
                     if column == 8:
                         cell.setBackground(QColor(232, 244, 255))
                         cell.setForeground(QColor(23, 63, 104))
