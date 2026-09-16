@@ -51,6 +51,13 @@ content JSON to 64 MiB.
 bibliography, classification, language-selected summary, contributions, limitations,
 experimental details, curation, and provenance fields.
 
+`curation.project_overrides` optionally maps project UUIDs to booleans for manual
+inclusion or exclusion. Automatic classification only adds matching memberships
+and respects manual exclusions; it never removes existing memberships.
+`analysis.project_classification` records classification status and, when available,
+matched IDs, provider, model and prompt version. Classification failure does not
+prevent the summary from being saved.
+
 `curation.project_ids` is an optional list of project UUIDs. Membership is stored
 in the PaperPack itself and survives rebuilding either index. Adding or removing
 membership appends a normal metadata revision without changing bibliography or PDF.

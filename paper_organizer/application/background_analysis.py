@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event, Thread
 from typing import Callable
@@ -408,6 +408,15 @@ class BackgroundAnalysisService:
                 )
             self._raise_if_cancelled()
             execution = self._summary.run(prepared, purpose=purpose)
+            self._raise_if_cancelled()
+            try:
+                projects = getattr(self._workflow, "list_projects", lambda: [])()
+                if projects:
+                    execution = self._summary.classify_projects(
+                        execution, projects, purpose=purpose, cancel_event=self._cancel_requested,
+                        title=item.title)
+            except Exception:
+                execution = replace(execution, project_classification_status="failed")
             self._raise_if_cancelled()
             self._workflow.apply_analysis_result(Path(item.path), execution)
             self._workflow.remove_from_queue(item.queue_id)

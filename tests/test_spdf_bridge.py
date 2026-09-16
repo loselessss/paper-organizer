@@ -1,4 +1,8 @@
 import unittest
+import tempfile
+import types
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from paper_organizer.integrations.spdf_bridge import (
     _attach_selection,
@@ -9,6 +13,29 @@ from paper_organizer.integrations.spdf_bridge import (
 
 
 class SpdfBridgeTests(unittest.TestCase):
+    def test_open_uses_gpu_reader_policy_with_updates_disabled(self):
+        from paper_organizer.integrations import spdf_bridge
+        factory = Mock()
+        widgets = types.ModuleType("PyQt5.QtWidgets")
+        widgets.QApplication = Mock()
+        app = types.ModuleType("pdfeditor.app")
+        app.new_window = factory
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "test.pdf"
+            path.write_bytes(b"%PDF-1.4")
+            with patch.dict("sys.modules", {"PyQt5.QtWidgets": widgets, "pdfeditor.app": app}), patch.object(spdf_bridge, "_windows", []), patch.object(spdf_bridge, "_ensure_import_path"), patch.object(spdf_bridge, "_attach_selection"):
+                spdf_bridge.open_pdf(path)
+        factory.assert_called_once_with(workspace_mode="reader", read_only=True,
+            annotations_enabled=False, updates_enabled=False)
+
+    def test_gpu_worker_is_dispatched_before_gui_startup(self):
+        from paper_organizer.gui import main
+        worker = types.ModuleType("pdfeditor.gpu_scene_worker")
+        worker.main = Mock(return_value=0)
+        with patch.dict("sys.modules", {"pdfeditor.gpu_scene_worker": worker}), patch("sys.argv", ["app", "--gpu-scene-worker", "snapshot", "result"]), patch("paper_organizer.integrations.spdf_bridge._ensure_import_path"):
+            self.assertEqual(main(), 0)
+        worker.main.assert_called_once_with(["snapshot", "result"])
+
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
         self.assertRegex(spdf_version() or "", r"^\d+\.\d+\.\d+$")

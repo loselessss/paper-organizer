@@ -2944,6 +2944,21 @@ class LibraryWorkflowController:
         curation["revision"] = int(curation.get("revision", 0)) + 1
         curation["last_edited_at"] = now
         curation["last_edited_by"] = f"ai:{result.provider}"
+        project_status = getattr(execution, "project_classification_status", "skipped")
+        if project_status != "skipped":
+            try:
+                valid_ids = {p["id"] for p in self.list_projects()}
+                matched = set(execution.project_ids) & valid_ids if project_status == "completed" else set()
+                overrides = curation.get("project_overrides", {})
+                matched = {key for key in matched if overrides.get(key) is not False}
+                curation["project_ids"] = sorted(set(curation.get("project_ids", [])) | matched)
+                analysis_result["project_classification"] = {
+                    "status": project_status, "project_ids": sorted(matched),
+                    "provider": result.provider, "model": result.model,
+                    "prompt_version": "project-classification-v1",
+                }
+            except Exception:
+                analysis_result["project_classification"] = {"status": "failed"}
         _refresh_bibliography_quality(record)
         workflow = record.setdefault("workflow", {})
         workflow.update(
@@ -3884,8 +3899,10 @@ class LibraryWorkflowController:
                 record = load_paperpack_metadata(path)
                 curation = record.setdefault("curation", {})
                 ids = set(curation.get("project_ids", []))
-                if (project_id in ids) == included:
+                overrides = curation.setdefault("project_overrides", {})
+                if (project_id in ids) == included and overrides.get(project_id) is included:
                     continue
+                overrides[project_id] = included
                 if included:
                     ids.add(project_id)
                 else:

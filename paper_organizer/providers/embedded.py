@@ -67,7 +67,7 @@ class EmbeddedLlamaProvider:
             context_window=request.context_window,
             schema=(
                 None
-                if request.stage in {"section", "translation"}
+                if request.stage in {"section", "translation", "project"}
                 else summary_response_schema(request)
             ),
         )
@@ -78,7 +78,7 @@ class EmbeddedLlamaProvider:
             prompt_version=request.prompt_version,
             data=(
                 SummaryData.from_section_text(content)
-                if request.stage in {"section", "translation"}
+                if request.stage in {"section", "translation", "project"}
                 else parse_summary_json(
                     content,
                     advanced_analysis=request.advanced_analysis,

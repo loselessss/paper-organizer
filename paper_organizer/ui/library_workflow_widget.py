@@ -2360,8 +2360,10 @@ class LibraryWidget(QWidget):
         search_row = QHBoxLayout()
         search_row.setSpacing(6)
         self.library_title_label = QLabel("라이브러리")
+        self.library_title_label.setFixedWidth(180)
         self.library_title_label.setObjectName("libraryTitleLabel")
         self.library_count_label = QLabel("문서 0개")
+        self.library_count_label.setFixedWidth(90)
         self.library_count_label.setObjectName("libraryCountLabel")
         self.status_label = QLabel("")
         self.status_label.setMinimumWidth(0)
@@ -2461,6 +2463,14 @@ class LibraryWidget(QWidget):
         self.type_suggestion_label.setVisible(False)
         detail_layout.addWidget(self.type_suggestion_label)
         self.form = MetadataForm("", compact=True)
+        self.project_membership_label = QLabel("논문을 선택하세요")
+        self.project_membership_label.setTextFormat(Qt.PlainText)
+        self.project_membership_label.setWordWrap(True)
+        self.project_membership_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.project_membership_label.setMinimumWidth(0)
+        self.project_membership_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.project_membership_label.setContentsMargins(6, 4, 6, 4)
+        self.form._form_layout.addRow("프로젝트", self.project_membership_label)
         self.form.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.form.set_metadata(None)
         detail_layout.addWidget(self.form, 1)
@@ -2740,12 +2750,13 @@ class LibraryWidget(QWidget):
             if project_id:
                 self._entries = [entry for entry in self._entries
                     if project_id in entry.record.get("curation", {}).get("project_ids", [])]
-            self.library_title_label.setText(next(
+            project_title = next(
                 (p["name"] for p in self.project_sidebar.projects if p["id"] == project_id),
                 "라이브러리",
-            ))
-            self.library_title_label.setMaximumWidth(180)
-            self.library_title_label.setToolTip(self.library_title_label.text())
+            )
+            self.library_title_label.setText(self.library_title_label.fontMetrics().elidedText(
+                project_title, Qt.ElideRight, self.library_title_label.width()))
+            self.library_title_label.setToolTip(project_title)
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
@@ -3099,6 +3110,14 @@ class LibraryWidget(QWidget):
         return False
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
+        project_ids = set(entry.record.get("curation", {}).get("project_ids", [])) if entry else set()
+        names = sorted(
+            (project["name"] for project in self.project_sidebar.projects if project["id"] in project_ids),
+            key=str.casefold,
+        )
+        self.project_membership_label.setText(
+            " · ".join(names) if names else "소속 프로젝트 없음" if entry else "논문을 선택하세요"
+        )
         """선택 문서의 description/analysis 내용을 읽기 전용으로 보여준다."""
         if entry is None:
             self._set_analysis_rows(

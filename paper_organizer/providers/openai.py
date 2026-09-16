@@ -73,7 +73,7 @@ class OpenAIProvider:
             "store": False,
             "reasoning": {"effort": "none"},
         }
-        if request.stage not in {"section", "translation"}:
+        if request.stage not in {"section", "translation", "project"}:
             payload["text"] = {
                 "format": {
                     "type": "json_schema",
@@ -97,7 +97,7 @@ class OpenAIProvider:
             prompt_version=request.prompt_version,
             data=(
                 SummaryData.from_section_text(text)
-                if request.stage in {"section", "translation"}
+                if request.stage in {"section", "translation", "project"}
                 else parse_summary_json(
                     text,
                     advanced_analysis=request.advanced_analysis,

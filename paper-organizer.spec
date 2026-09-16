@@ -78,12 +78,14 @@ main_datas = [
     ("vendor/spdf/assets/spdf.ico", "assets"),
     ("vendor/spdf/assets/spdf_doc.ico", "assets"),
     ("vendor/spdf/LICENSES.md", "."),
+    ("vendor/spdf/SOURCE_CODE.md", "."),
+    ("vendor/spdf/licenses", "licenses"),
     *llm_datas,
 ]
 a_gui = Analysis(
     ["run_gui.py"],
     pathex=[".", "vendor/spdf"],
-    binaries=[],
+    binaries=[("vendor/spdf/native/bin/spdf_d2d_renderer.dll", "native")],
     datas=main_datas,
     hiddenimports=[
         "fitz",

@@ -36,6 +36,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("paper_organizer/ocr_worker_main.py", spec)
         self.assertIn("korean_PP-OCRv5_rec_mobile.onnx", spec)
         self.assertIn("llama-server.exe", spec)
+        self.assertIn('("vendor/spdf/native/bin/spdf_d2d_renderer.dll", "native")', spec)
         self.assertIn('"llm/cpu"', spec)
         self.assertIn('"llm/vulkan"', spec)
         self.assertNotIn('"llm/cuda"', spec)

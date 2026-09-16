@@ -6,6 +6,20 @@ import sys
 
 
 def main() -> int:
+    if "--gpu-scene-worker" in sys.argv[1:]:
+        from paper_organizer.integrations.spdf_bridge import _ensure_import_path
+        _ensure_import_path()
+        from pdfeditor.gpu_scene_worker import main as worker_main
+        index = sys.argv.index("--gpu-scene-worker")
+        return worker_main(sys.argv[index + 1:])
+    if "--workspace" in sys.argv[1:]:
+        from paper_organizer.integrations.spdf_bridge import _ensure_import_path
+        _ensure_import_path()
+        from pdfeditor.__main__ import main as spdf_main
+        if "--no-updates" not in sys.argv:
+            sys.argv.append("--no-updates")
+        spdf_main()
+        return 0
     if "--delete-credentials" in sys.argv[1:]:
         from paper_organizer.infra.secrets import (
             default_secret_store,

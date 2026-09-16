@@ -170,6 +170,8 @@ class SummaryExecution:
     bibliography_status: str = "ok"
     bibliography_verified_fields: tuple[str, ...] = ()
     patent_claims_text: str = field(default="", repr=False)
+    project_ids: tuple[str, ...] = ()
+    project_classification_status: str = "skipped"
 
     @property
     def provenance(self) -> dict[str, object]:
@@ -213,6 +215,31 @@ class SummaryController:
         self._http_client = http_client
         self._ollama_starter = ollama_starter
         self._execution_queue = execution_queue or global_ai_execution_queue()
+
+    def classify_projects(self, execution, projects, *, purpose="manual", cancel_event=None, title=""):
+        from paper_organizer.application.project_classification import classify_projects
+
+        settings = settings_for_summary_purpose(load_settings(self._settings_path), purpose)
+        if settings.bibliography_only or not projects or not execution.result.data.summary.strip():
+            return execution
+        try:
+            provider = build_provider(settings, self._secret_store, http_client=self._http_client)
+            if provider.name != execution.result.provider or provider.model != execution.result.model:
+                return replace(execution, project_classification_status="skipped")
+            with self._execution_queue.slot(
+                "project_classification", execution.preview.pdf_path.name,
+                priority=AI_PRIORITY_MANUAL if purpose == "manual" else AI_PRIORITY_BACKGROUND,
+                cancel_event=cancel_event,
+            ):
+                ids = classify_projects(
+                    provider, projects, title=execution.result.data.title or title,
+                    summary=execution.result.data.summary,
+                    consent=settings.cloud_processing_consent,
+                    cancelled=cancel_event.is_set if cancel_event else lambda: False,
+                )
+            return replace(execution, project_ids=ids, project_classification_status="completed")
+        except Exception:
+            return replace(execution, project_classification_status="failed")
 
     def prepare(
         self,
