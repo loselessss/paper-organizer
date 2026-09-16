@@ -2095,7 +2095,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("분석 요약", widget.analysis_view.toPlainText())
             widget.search_edit.clear()
             widget.refresh()
-            self.assertEqual(widget.table.columnCount(), 9)
+            self.assertEqual(widget.table.columnCount(), 10)
             self.assertEqual(widget.table.horizontalHeaderItem(8).text(), "검색 위치")
             self.assertEqual(
                 [
