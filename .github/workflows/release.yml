@@ -27,6 +27,9 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install -e .[gui,build]
 
+      - name: Prepare matching source and build information
+        run: .\.venv\Scripts\python.exe scripts/create_release_source.py --version $env:GITHUB_REF_NAME.TrimStart("v")
+
       - name: Run tests
         run: .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
@@ -56,18 +59,19 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          "# Paper Organizer $version — $(Get-Date -Format yyyy-MM-dd)`n" |
+          python scripts/extract_release_notes.py $version --full |
             Set-Content -Encoding utf8 -LiteralPath release-notes.md
-          python scripts/extract_release_notes.py $version |
-            Add-Content -Encoding utf8 -LiteralPath release-notes.md
 
-      - name: Preserve installer as workflow artifact
+      - name: Preserve release assets as workflow artifact
         uses: actions/upload-artifact@v6
         with:
           name: PaperOrganizer-${{ github.ref_name }}-windows
           path: |
             Output/PaperOrganizer_Setup_*.exe
             Output/PaperOrganizer_Setup_*.exe.sha256
+            Output/PaperOrganizer_Source_*.zip
+            Output/PaperOrganizer_Source_*.zip.sha256
+            Output/PaperOrganizer_Dependency_Sources_*.md
           compression-level: 0
 
       - name: Publish GitHub release
@@ -81,7 +85,26 @@ jobs:
           $checksum = "$installer.sha256"
           $latestInstaller = "Output\PaperOrganizer_Setup_latest.exe"
           $latestChecksum = "$latestInstaller.sha256"
+          $sourceArchive = "Output\PaperOrganizer_Source_$version.zip"
+          $sourceChecksum = "$sourceArchive.sha256"
+          $dependencySources = "Output\PaperOrganizer_Dependency_Sources_$version.md"
           gh release create $tag $installer $checksum $latestInstaller $latestChecksum `
+            $sourceArchive $sourceChecksum $dependencySources `
             --verify-tag `
+            --draft --latest=false `
             --title "Paper Organizer $version" `
             --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = @(
+            (Split-Path $installer -Leaf), (Split-Path $checksum -Leaf),
+            (Split-Path $latestInstaller -Leaf), (Split-Path $latestChecksum -Leaf),
+            (Split-Path $sourceArchive -Leaf), (Split-Path $sourceChecksum -Leaf),
+            (Split-Path $dependencySources -Leaf)
+          ) | Sort-Object
+          $actual = gh release view $tag --json assets --jq '.assets[].name' | Sort-Object
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Compare-Object $expected $actual) {
+            throw "Draft release assets do not match the required set"
+          }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

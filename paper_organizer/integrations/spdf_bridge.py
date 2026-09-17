@@ -86,6 +86,15 @@ def _ensure_import_path() -> None:
         sys.path.insert(0, value)
 
 
+def _configure_source_link() -> None:
+    """Point the hosted reader's source link at this app's matching release."""
+    from paper_organizer import __version__
+    from pdfeditor import license_dialog
+
+    release_url = f"https://github.com/loselessss/paper-organizer/releases/tag/v{__version__}"
+    license_dialog.source_url = lambda: release_url
+
+
 def open_pdf(
     path: str | Path,
     parent: Any = None,
@@ -106,6 +115,7 @@ def open_pdf(
         raise SpdfUnavailable("sPDF를 열려면 PyQt5 런타임이 필요합니다.") from exc
     if QApplication.instance() is None:
         raise SpdfUnavailable("Paper Organizer QApplication이 시작되지 않았습니다.")
+    _configure_source_link()
 
     for window in tuple(_windows):
         try:

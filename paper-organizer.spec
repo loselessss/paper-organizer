@@ -78,7 +78,7 @@ main_datas = [
     ("vendor/spdf/assets/spdf.ico", "assets"),
     ("vendor/spdf/assets/spdf_doc.ico", "assets"),
     ("vendor/spdf/LICENSES.md", "."),
-    ("vendor/spdf/SOURCE_CODE.md", "."),
+    ("SOURCE_CODE.md", "."),
     ("vendor/spdf/licenses", "licenses"),
     *llm_datas,
 ]

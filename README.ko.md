@@ -122,6 +122,12 @@ PDF 본문은 외부로 전송하지 않습니다. 기존 요약과 사용자 �
 
 - `PaperOrganizer_Setup_latest.exe`
 - `PaperOrganizer_Setup_<버전>.exe`
+- `PaperOrganizer_Source_<버전>.zip`과 `.sha256` 체크섬
+- `PaperOrganizer_Dependency_Sources_<버전>.md`
+
+설치 파일과 대응 소스는 하나의 정식 릴리스 Assets에 함께 게시합니다. GitHub가 자동
+생성하는 소스 압축 파일에는 고정된 sPDF 서브모듈이 빠지므로 Assets의 소스 ZIP을
+사용하세요.
 
 로컬 AI 모델은 몇 GB가 될 수 있으므로 설치 후 앱 안에서 별도로 다운로드합니다.
 

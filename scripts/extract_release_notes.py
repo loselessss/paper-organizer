@@ -40,9 +40,31 @@ def extract_release_notes(changelog: str, version: str) -> str:
     return body + "\n"
 
 
+def render_release_notes(changelog: str, version: str) -> str:
+    normalized = version.strip().removeprefix("v")
+    date_match = re.search(
+        rf"^## \[{re.escape(normalized)}\]\s+-\s+([^\s]+)\s*$",
+        changelog,
+        re.MULTILINE,
+    )
+    if date_match is None:
+        raise ValueError(f"CHANGELOG.md에서 {normalized} 릴리스 날짜를 찾지 못했습니다.")
+    intro = (
+        "Windows installers and their matching source ZIP, source checksum, and "
+        "dependency/build information are available together under Assets.\n\n"
+        "Windows 설치 파일과 대응 소스 ZIP, 소스 체크섬, 의존성·빌드 정보는 "
+        "아래 Assets에서 함께 받을 수 있습니다."
+    )
+    return (
+        f"# Paper Organizer {normalized} — {date_match.group(1)}\n\n"
+        f"{intro}\n\n{extract_release_notes(changelog, normalized)}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
+    parser.add_argument("--full", action="store_true")
     parser.add_argument(
         "--changelog",
         type=Path,
@@ -52,7 +74,8 @@ def main() -> int:
     text = args.changelog.read_text(encoding="utf-8")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    print(extract_release_notes(text, args.version), end="")
+    notes = render_release_notes(text, args.version) if args.full else extract_release_notes(text, args.version)
+    print(notes, end="")
     return 0
 
 

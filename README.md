@@ -128,6 +128,12 @@ Download one of these files from the
 
 - `PaperOrganizer_Setup_latest.exe`
 - `PaperOrganizer_Setup_<version>.exe`
+- `PaperOrganizer_Source_<version>.zip` and its `.sha256` checksum
+- `PaperOrganizer_Dependency_Sources_<version>.md`
+
+The installers and their matching source files are published together under the
+same regular release. Use the attached source ZIP rather than GitHub's automatic
+source archive because the attached ZIP includes the pinned sPDF submodule.
 
 Local AI model downloads can be several gigabytes, so they are handled after
 installation from inside the app.

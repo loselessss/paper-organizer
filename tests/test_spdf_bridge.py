@@ -25,11 +25,24 @@ class SpdfBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "test.pdf"
             path.write_bytes(b"%PDF-1.4")
-            with patch.dict("sys.modules", {"PyQt5.QtWidgets": widgets, "pdfeditor.app": app, "paper_organizer.ui.spdf_style": style}), patch.object(spdf_bridge, "_windows", []), patch.object(spdf_bridge, "_ensure_import_path"), patch.object(spdf_bridge, "_attach_selection"):
+            with patch.dict("sys.modules", {"PyQt5.QtWidgets": widgets, "pdfeditor.app": app, "paper_organizer.ui.spdf_style": style}), patch.object(spdf_bridge, "_windows", []), patch.object(spdf_bridge, "_ensure_import_path"), patch.object(spdf_bridge, "_configure_source_link"), patch.object(spdf_bridge, "_attach_selection"):
                 spdf_bridge.open_pdf(path)
         style.apply_spdf_caption_style.assert_called_once_with(factory.return_value)
         factory.assert_called_once_with(workspace_mode="reader", read_only=True,
             annotations_enabled=False, updates_enabled=False)
+
+    def test_hosted_source_link_uses_matching_regular_release(self):
+        from paper_organizer import __version__
+        from paper_organizer.integrations import spdf_bridge
+        license_dialog = types.ModuleType("pdfeditor.license_dialog")
+        package = types.ModuleType("pdfeditor")
+        package.license_dialog = license_dialog
+        with patch.dict("sys.modules", {"pdfeditor": package, "pdfeditor.license_dialog": license_dialog}):
+            spdf_bridge._configure_source_link()
+        self.assertEqual(
+            license_dialog.source_url(),
+            f"https://github.com/loselessss/paper-organizer/releases/tag/v{__version__}",
+        )
 
     def test_gpu_worker_is_dispatched_before_gui_startup(self):
         from paper_organizer.gui import main
