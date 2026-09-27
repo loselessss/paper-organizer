@@ -69,7 +69,7 @@ class SelectionAiService:
         if action not in {"translate", "summarize"}:
             raise ValueError("지원하지 않는 선택 영역 작업입니다.")
         if selection.requires_ocr or not selection.text.strip():
-            raise ValueError("텍스트 레이어가 없습니다. sPDF에서 선택 영역 OCR을 먼저 실행하세요.")
+            raise ValueError("텍스트 레이어가 없습니다. Leaflet에서 선택 영역 OCR을 먼저 실행하세요.")
         if cancel_event is not None and cancel_event.is_set():
             raise SelectionAiCancelled("선택 영역 AI 작업이 취소됐습니다.")
         settings = settings_for_summary_purpose(

@@ -54,7 +54,7 @@ the papers can be found again when they matter.
    - Provides keyword search and natural-language paper search.
    - Shows evidence snippets from actual PaperPack full-text pages.
    - Lets users customize library columns and ordering.
-   - Opens PDFs through the bundled sPDF integration and can apply saved PDF
+   - Opens PDFs through bundled Leaflet (the successor to sPDF) and can apply saved PDF
      edits back into the PaperPack.
 
 ## Features
@@ -75,7 +75,7 @@ the papers can be found again when they matter.
 - SQLite FTS5 full-text search
 - Natural-language search with evidence snippets
 - User-configurable library columns and ordering
-- Bundled sPDF integration for PDF viewing and edit application
+- Bundled Leaflet integration for PDF viewing and edit application
 - Bundled RapidOCR-based text recovery
 - GitHub Releases-based update checks
 - PyInstaller and Inno Setup Windows installer build
@@ -90,7 +90,7 @@ then Vulkan, then CPU if GPU startup fails. For source runs, prepare it with
 `python scripts/prepare_llama_runtime.py --smoke`. Installer builds do this automatically.
 
 Paper Organizer 2.4.0 uses app-managed local GGUF models by default. The Windows
-installer includes the application, bundled sPDF integration, OCR runtime, and
+installer includes the application, bundled Leaflet integration, OCR runtime, and
 local AI runtime support, but it does not include large model weights.
 
 After installing the app:
@@ -133,14 +133,14 @@ Download one of these files from the
 
 The installers and their matching source files are published together under the
 same regular release. Use the attached source ZIP rather than GitHub's automatic
-source archive because the attached ZIP includes the pinned sPDF submodule.
+source archive because the attached ZIP includes the pinned Leaflet submodule.
 
 Local AI model downloads can be several gigabytes, so they are handled after
 installation from inside the app.
 
 ## Development
 
-Python 3.12 or newer is required. sPDF is pinned as a submodule, so initialize it
+Python 3.12 or newer is required. Leaflet is pinned as a submodule, so initialize it
 after cloning.
 
 ```powershell
@@ -180,5 +180,5 @@ The installer is written to `Output\PaperOrganizer_Setup_<version>.exe`.
 ## License And Bundled Assets
 
 Pretendard font files and their license are included for future UI font testing.
-sPDF is pinned through `vendor/spdf`; Paper Organizer disables sPDF's own update
-notifications and self-update behavior when sPDF is opened internally.
+Leaflet (the successor to sPDF) is pinned through `vendor/spdf`; Paper Organizer
+disables Leaflet's own update notifications and self-update behavior when opened internally.

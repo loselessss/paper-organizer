@@ -54,7 +54,11 @@ class SpdfBridgeTests(unittest.TestCase):
 
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
-        self.assertRegex(spdf_version() or "", r"^\d+\.\d+\.\d+$")
+        self.assertEqual(spdf_version(), "1.33.12")
+
+    def test_submodule_uses_leaflet_source_repository(self):
+        config = (Path(__file__).resolve().parents[1] / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/loselessss/Leaflet.git", config)
 
     def test_public_selection_payload_is_normalized_without_qt_objects(self):
         class Payload:

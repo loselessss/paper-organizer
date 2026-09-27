@@ -3486,7 +3486,7 @@ class LibraryWorkflowController:
                     "last_edited_by": "user:spdf",
                 }
             )
-            record.setdefault("provenance", {})["last_pdf_editor"] = "sPDF"
+            record.setdefault("provenance", {})["last_pdf_editor"] = "Leaflet"
             info = replace_paperpack_pdf(
                 status.paperpack_path,
                 status.pdf_path,
@@ -4294,7 +4294,7 @@ class LibraryWorkflowController:
                 )
                 problems.append(
                     f"{title}: 앱 휴지통 이동 실패: {exc}{detail}. "
-                    "sPDF와 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
+                    "Leaflet과 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
                 )
                 continue
             deleted += 1
@@ -4470,7 +4470,7 @@ class LibraryWorkflowController:
             except OSError as exc:
                 problems.append(
                     f"{source.name}: 완전 삭제 실패: {exc}. "
-                    "sPDF와 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
+                    "Leaflet과 탐색기 미리보기를 닫은 뒤 다시 시도하세요."
                 )
                 continue
             deleted += 1

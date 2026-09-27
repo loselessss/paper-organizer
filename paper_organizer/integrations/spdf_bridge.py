@@ -1,4 +1,4 @@
-"""Lazy integration boundary for the tracked sPDF submodule."""
+"""Lazy integration boundary for the tracked Leaflet submodule."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _normalized_selection(value: Any) -> SpdfSelection | None:
         for box in value.bounding_boxes
     )
     if any(len(box) != 4 for box in boxes):
-        raise SpdfUnavailable("sPDF 선택 영역 좌표 형식이 올바르지 않습니다.")
+        raise SpdfUnavailable("Leaflet 선택 영역 좌표 형식이 올바르지 않습니다.")
     return SpdfSelection(
         text=str(value.text),
         pdf_page=int(value.pdf_page),
@@ -78,7 +78,7 @@ def _ensure_import_path() -> None:
     root = spdf_root()
     if not spdf_available():
         raise SpdfUnavailable(
-            "이 Paper Organizer 배포본에 포함된 sPDF를 찾을 수 없습니다. "
+            "이 Paper Organizer 배포본에 포함된 Leaflet을 찾을 수 없습니다. "
             "Paper Organizer를 다시 설치하세요."
         )
     value = str(root)
@@ -102,7 +102,7 @@ def open_pdf(
     document_id: str = "",
     selection_callback: Any = None,
 ) -> Any:
-    """Open a PDF in an sPDF top-level window using the current QApplication."""
+    """Open a PDF in a Leaflet top-level window using the current QApplication."""
     del parent  # Reserved for a future embedded SpdfWorkspace implementation.
     pdf_path = Path(path).resolve()
     if not pdf_path.is_file():
@@ -112,7 +112,7 @@ def open_pdf(
         from PyQt5.QtWidgets import QApplication
         from pdfeditor.app import new_window
     except ImportError as exc:
-        raise SpdfUnavailable("sPDF를 열려면 PyQt5 런타임이 필요합니다.") from exc
+        raise SpdfUnavailable("Leaflet을 열려면 PyQt5 런타임이 필요합니다.") from exc
     if QApplication.instance() is None:
         raise SpdfUnavailable("Paper Organizer QApplication이 시작되지 않았습니다.")
     _configure_source_link()
@@ -148,7 +148,7 @@ def open_pdf(
 
 
 def active_spdf_window() -> Any | None:
-    """Return the most recently used visible sPDF top-level window."""
+    """Return the most recently used visible Leaflet top-level window."""
 
     for window in reversed(tuple(_windows)):
         try:

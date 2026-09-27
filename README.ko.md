@@ -50,7 +50,7 @@ AI 요약을 만들고, 전문 색인을 만들어 나중에 다시 찾을 수 �
    - 키워드 검색과 자연어 질문 검색을 지원합니다.
    - 실제 PaperPack 본문 페이지에서 찾은 근거 문맥을 보여줍니다.
    - 라이브러리 열 표시 여부와 순서를 사용자가 정할 수 있습니다.
-   - 내장 sPDF 연동으로 PDF를 열고 편집본을 PaperPack에 다시 적용할 수 있습니다.
+   - 내장 Leaflet(sPDF 후속 버전) 연동으로 PDF를 열고 편집본을 PaperPack에 다시 적용할 수 있습니다.
 
 ## 주요 기능
 
@@ -70,7 +70,7 @@ AI 요약을 만들고, 전문 색인을 만들어 나중에 다시 찾을 수 �
 - SQLite FTS5 전문 검색
 - 자연어 논문 검색과 근거 문맥 표시
 - 라이브러리 열 표시·순서 사용자 설정
-- sPDF 연동 PDF 열기와 편집본 적용
+- Leaflet(sPDF 후속 버전) 연동 PDF 열기와 편집본 적용
 - 내장 RapidOCR 기반 텍스트 보강
 - GitHub Releases 기반 업데이트 확인
 - PyInstaller와 Inno Setup 기반 Windows 설치 파일
@@ -78,7 +78,7 @@ AI 요약을 만들고, 전문 색인을 만들어 나중에 다시 찾을 수 �
 ## 로컬 AI 준비
 
 Paper Organizer 2.4.0부터 기본 로컬 AI는 앱이 직접 관리하는 GGUF 모델을 사용합니다.
-설치본에는 앱, sPDF 연동, OCR 런타임, 로컬 AI 실행 기반이 포함되지만 대용량 모델
+설치본에는 앱, Leaflet PDF 연동, OCR 런타임, 로컬 AI 실행 기반이 포함되지만 대용량 모델
 가중치는 포함하지 않습니다.
 
 내장 런타임은 Vulkan GPU·Windows x64 CPU용 llama.cpp b10715입니다. CUDA는 기본
@@ -126,14 +126,14 @@ PDF 본문은 외부로 전송하지 않습니다. 기존 요약과 사용자 �
 - `PaperOrganizer_Dependency_Sources_<버전>.md`
 
 설치 파일과 대응 소스는 하나의 정식 릴리스 Assets에 함께 게시합니다. GitHub가 자동
-생성하는 소스 압축 파일에는 고정된 sPDF 서브모듈이 빠지므로 Assets의 소스 ZIP을
+생성하는 소스 압축 파일에는 고정된 Leaflet 서브모듈이 빠지므로 Assets의 소스 ZIP을
 사용하세요.
 
 로컬 AI 모델은 몇 GB가 될 수 있으므로 설치 후 앱 안에서 별도로 다운로드합니다.
 
 ## 개발 실행
 
-Python 3.12 이상이 필요합니다. sPDF는 submodule로 고정되어 있으므로 처음 받은 뒤
+Python 3.12 이상이 필요합니다. Leaflet은 submodule로 고정되어 있으므로 처음 받은 뒤
 초기화해야 합니다.
 
 ```powershell
@@ -169,5 +169,5 @@ python -m pip install -e ".[gui,build]"
 ## 라이선스와 포함 자산
 
 앱 안에는 향후 UI 폰트 검토를 위한 Pretendard 파일과 라이선스가 포함되어 있습니다.
-sPDF는 `vendor/spdf` submodule로 고정된 국제판 버전을 사용하며, Paper Organizer가
-내부에서 sPDF를 열 때는 sPDF의 업데이트 알림과 자체 업데이트 동작을 끕니다.
+Leaflet(sPDF 후속 버전)은 `vendor/spdf` submodule로 고정하며, Paper Organizer가
+내부에서 열 때는 Leaflet의 업데이트 알림과 자체 업데이트 동작을 끕니다.

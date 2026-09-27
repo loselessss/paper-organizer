@@ -16,9 +16,9 @@ class ReleaseSourceTests(unittest.TestCase):
 
     def test_build_document_records_both_source_revisions(self):
         with patch("scripts.create_release_source._package_inventory", return_value=[("PyQt5", "5.15.11")]):
-            document = build_information("2.5.0", "a" * 40, "b" * 40)
+            document = build_information("2.5.1", "a" * 40, "b" * 40)
         self.assertIn("Paper Organizer: [" + "a" * 40, document)
-        self.assertIn("Bundled sPDF: [" + "b" * 40, document)
+        self.assertIn("Bundled Leaflet (formerly sPDF): [" + "b" * 40, document)
         self.assertIn("PyQt5/5.15.11/#files", document)
         self.assertIn("build_installer.bat", document)
 
@@ -42,12 +42,12 @@ class ReleaseSourceTests(unittest.TestCase):
             (root / "app.py").write_text("app = True\n", encoding="utf-8")
             git(root, "add", "app.py", "vendor/spdf")
             git(root, "commit", "-m", "release")
-            git(root, "tag", "v2.5.0")
+            git(root, "tag", "v2.5.1")
             with patch("scripts.create_release_source._package_inventory", return_value=[]):
-                archive = create_release_source(root, "2.5.0")
+                archive = create_release_source(root, "2.5.1")
             with zipfile.ZipFile(archive) as source:
                 names = set(source.namelist())
-            self.assertIn("PaperOrganizer-2.5.0/app.py", names)
-            self.assertIn("PaperOrganizer-2.5.0/vendor/spdf/reader.py", names)
-            self.assertIn("PaperOrganizer-2.5.0/DEPENDENCY_SOURCES_AND_BUILD.md", names)
+            self.assertIn("PaperOrganizer-2.5.1/app.py", names)
+            self.assertIn("PaperOrganizer-2.5.1/vendor/spdf/reader.py", names)
+            self.assertIn("PaperOrganizer-2.5.1/DEPENDENCY_SOURCES_AND_BUILD.md", names)
             self.assertTrue(Path(str(archive) + ".sha256").is_file())

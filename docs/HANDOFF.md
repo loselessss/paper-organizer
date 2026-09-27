@@ -4,7 +4,7 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: 2.5.0 릴리스 흐름. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
+- 상태: 2.5.1 릴리스 흐름. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
   전환했고, 모델·API 키 없이 서지정보와 초록만 입력하는 전용 모드를 추가했습니다.
 - 현재 개발 범위: 내장 로컬 AI 런타임·모델 다운로드, 선택 CUDA 설치,
   bibliography-only 처리, PubMed/Crossref 서지 검증, 라이브러리 열 설정,
@@ -27,7 +27,8 @@ CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 �
 번역 큐는 보존하고, 처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며
 AI 분석 날짜로 표시하지 않습니다. 기존 요약·사용자 수정값은 유지합니다.
 런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
-함께 갱신하세요. sPDF는 1.32.2 (`8753bec`)로 고정했습니다. `spdf_bridge.open_pdf`는
+함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.33.12 (`450eea6`)로 고정했습니다.
+서브모듈 경로는 호환성을 위해 `vendor/spdf`를 유지합니다. `spdf_bridge.open_pdf`는
 `workspace_mode="reader"`로 GPU 지원 TiledPageView를 사용하며 자체 업데이트를 끕니다.
 설치본에 `native/spdf_d2d_renderer.dll`을 포함하고, GUI 진입점에서
 `--gpu-scene-worker`와 sPDF의 `--workspace` 자식 실행을 먼저 분기합니다.

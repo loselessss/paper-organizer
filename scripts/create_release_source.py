@@ -19,7 +19,7 @@ from paper_organizer import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "https://github.com/loselessss/paper-organizer"
-SPDF_REPOSITORY = "https://github.com/loselessss/sPDF"
+SPDF_REPOSITORY = "https://github.com/loselessss/Leaflet"
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -49,10 +49,10 @@ def build_information(version: str, commit: str, spdf_commit: str) -> str:
         "## Source revisions",
         "",
         f"- Paper Organizer: [{commit}]({REPOSITORY}/commit/{commit})",
-        f"- Bundled sPDF: [{spdf_commit}]({SPDF_REPOSITORY}/commit/{spdf_commit})",
+        f"- Bundled Leaflet (formerly sPDF): [{spdf_commit}]({SPDF_REPOSITORY}/commit/{spdf_commit})",
         f"- Python: {platform.python_version()} ({platform.machine()})",
         "",
-        "The source ZIP contains the tracked Paper Organizer source and the complete pinned sPDF submodule source.",
+        "The source ZIP contains the tracked Paper Organizer source and the complete pinned Leaflet submodule source.",
         "GitHub-generated source archives do not include submodule contents; use the attached source ZIP.",
         "",
         "## Rebuild",
@@ -102,7 +102,7 @@ def create_release_source(root: Path, version: str) -> Path:
     spdf_commit = _git(spdf_root, "rev-parse", "HEAD").decode().strip()
     tree_entry = _git(root, "ls-tree", "HEAD", "vendor/spdf").decode().split()
     if len(tree_entry) < 3 or tree_entry[2] != spdf_commit:
-        raise ValueError("Checked-out sPDF does not match the release commit")
+        raise ValueError("Checked-out Leaflet does not match the release commit")
 
     document = build_information(version, commit, spdf_commit)
     output_dir = root / "Output"

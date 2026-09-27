@@ -2240,7 +2240,7 @@ class SelectionAiDialog(QDialog):
 
         self.selection_preview = QTextEdit()
         self.selection_preview.setReadOnly(True)
-        self.selection_preview.setPlaceholderText("sPDF에서 선택한 텍스트가 표시됩니다.")
+        self.selection_preview.setPlaceholderText("Leaflet에서 선택한 텍스트가 표시됩니다.")
         layout.addWidget(self.selection_preview, 2)
 
         actions = QHBoxLayout()
@@ -2298,12 +2298,12 @@ class SelectionAiDialog(QDialog):
         self.translate_button.setEnabled(available)
         self.summary_button.setEnabled(available)
         if selection is None:
-            self.selection_label.setText("sPDF에서 번역하거나 요약할 텍스트를 선택하세요.")
+            self.selection_label.setText("Leaflet에서 번역하거나 요약할 텍스트를 선택하세요.")
             self.selection_preview.clear()
         elif selection.requires_ocr:
             self.selection_label.setText(
                 f"PDF {selection.pdf_page}쪽 선택 영역에는 텍스트 레이어가 없습니다. "
-                "sPDF에서 OCR을 먼저 실행하세요."
+                "Leaflet에서 OCR을 먼저 실행하세요."
             )
             self.selection_preview.clear()
         else:
@@ -2483,7 +2483,7 @@ class LibraryWidget(QWidget):
         self.open_button.setToolTip("선택한 논문 PDF를 엽니다.")
         self.selection_ai_button = QPushButton("선택 AI")
         self.selection_ai_button.setToolTip(
-            "sPDF에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
+            "Leaflet에서 텍스트를 선택하면 번역·요약 창이 자동으로 열립니다. "
             "닫은 창을 다시 열 때 사용하세요."
         )
         self.translation_button = QPushButton("AI 번역")
@@ -4117,8 +4117,8 @@ class LibraryWidget(QWidget):
         if QMessageBox.question(
             self,
             "PaperPack에 편집본 적용",
-            f"선택한 PaperPack {len(entries)}개의 sPDF 저장본을 적용합니다. "
-            "sPDF에서 먼저 저장한 변경만 반영됩니다. 계속할까요?",
+            f"선택한 PaperPack {len(entries)}개의 Leaflet 저장본을 적용합니다. "
+            "Leaflet에서 먼저 저장한 변경만 반영됩니다. 계속할까요?",
         ) != QMessageBox.Yes:
             return
         applied = 0
