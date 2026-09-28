@@ -13,6 +13,7 @@ from paper_organizer.ui.fluent_style import decorate_button
 
 class ProjectSidebar(QWidget):
     project_changed = pyqtSignal(str)
+    close_requested = pyqtSignal()
 
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -42,6 +43,14 @@ class ProjectSidebar(QWidget):
         self.manage_menu.aboutToShow.connect(self._update_manage_menu)
         self.manage_button.setMenu(self.manage_menu)
         header.addWidget(self.manage_button)
+        self.close_button = QToolButton()
+        decorate_button(self.close_button, "cancel")
+        self.close_button.setToolTip("프로젝트 목록 닫기")
+        self.close_button.setAccessibleName("프로젝트 목록 닫기")
+        self.close_button.setFixedSize(28, 28)
+        self.close_button.setStyleSheet("QToolButton { padding: 0; min-height: 0; }")
+        self.close_button.clicked.connect(self.close_requested.emit)
+        header.addWidget(self.close_button)
         layout.addLayout(header)
         self.list = QListWidget()
         self.list.setFlow(QListView.TopToBottom)

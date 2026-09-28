@@ -464,7 +464,6 @@ class UiSmokeTests(unittest.TestCase):
                 [
                     "새 PDF",
                     "분석 큐",
-                    "프로젝트",
                     "감시 설정",
                     "AI 설정",
                     "업데이트",
@@ -540,8 +539,20 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(window.size(), stable_size)
             self.assertEqual(window._analysis_progress_bar.minimum(), 0)
             self.assertEqual(window._analysis_progress_bar.maximum(), 0)
+            window.library_widget._set_queue_notice(
+                "수동 재요약 3건을 분석 대기열에 넣었습니다."
+            )
             window._analysis_progress_changed("분석 큐 대기 0 · 실패 0", False)
             self.app.processEvents()
+            self.assertEqual(window.library_widget.status_label.text(), "")
+            window.library_widget._set_queue_notice(
+                "수동 재요약 1건을 분석 대기열에 넣었습니다."
+            )
+            window.library_widget.status_label.setText("새로운 작업 안내")
+            window._analysis_progress_changed("분석 큐 대기 0 · 실패 0", False)
+            self.assertEqual(
+                window.library_widget.status_label.text(), "새로운 작업 안내"
+            )
             self.assertEqual(window.size(), stable_size)
             self.assertEqual(window._analysis_progress_bar.minimum(), 0)
             self.assertEqual(window._analysis_progress_bar.maximum(), 1)
@@ -558,13 +569,16 @@ class UiSmokeTests(unittest.TestCase):
             window.toggle_analysis_queue()
             self.app.processEvents()
             self.assertFalse(analysis_popup.isVisible())
-            window.toggle_projects()
+            window.library_widget.library_title_label.click()
             self.app.processEvents()
             self.assertTrue(window._project_popup.isVisible())
             self.assertEqual(window.size(), stable_size)
-            window.toggle_projects()
+            selected_project = window.library_widget.project_sidebar.project_id
+            window.library_widget.project_sidebar.close_button.click()
             self.assertFalse(window._project_popup.isVisible())
-            window.toggle_projects()
+            self.assertEqual(window.library_widget.project_sidebar.project_id, selected_project)
+            window.library_widget.library_title_label.click()
+            self.assertTrue(window._project_popup.isVisible())
             window.toggle_analysis_queue()
             self.assertFalse(window._project_popup.isVisible())
             self.assertTrue(analysis_popup.isVisible())

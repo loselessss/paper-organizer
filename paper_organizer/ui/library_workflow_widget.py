@@ -1846,6 +1846,9 @@ class AnalysisQueueWidget(QWidget):
         self._selection_changed()
         self._emit_progress()
 
+    def has_items(self) -> bool:
+        return bool(self._items)
+
     def _emit_progress(self) -> None:
         waiting = sum(
             1 for item in self._items if item.status == "organized_pending_analysis"
@@ -2323,6 +2326,7 @@ class SelectionAiDialog(QDialog):
 
 
 class LibraryWidget(QWidget):
+    projects_requested = pyqtSignal()
     metadata_changed = pyqtSignal()
     reanalysis_queued = pyqtSignal(int)
     translation_queued = pyqtSignal(int)
@@ -2360,13 +2364,18 @@ class LibraryWidget(QWidget):
         self.project_sidebar.hide()
         search_row = QHBoxLayout()
         search_row.setSpacing(6)
-        self.library_title_label = QLabel("라이브러리")
+        self.library_title_label = QToolButton()
+        self.library_title_label.setText("라이브러리")
+        self.library_title_label.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        decorate_button(self.library_title_label, "folder")
+        self.library_title_label.clicked.connect(self.projects_requested.emit)
         self.library_title_label.setFixedWidth(180)
         self.library_title_label.setObjectName("libraryTitleLabel")
         self.library_count_label = QLabel("문서 0개")
         self.library_count_label.setFixedWidth(90)
         self.library_count_label.setObjectName("libraryCountLabel")
         self.status_label = QLabel("")
+        self._queue_notice_text = ""
         self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.search_edit = QLineEdit()
@@ -2611,6 +2620,15 @@ class LibraryWidget(QWidget):
         if not text.strip():
             self.refresh()
 
+    def _set_queue_notice(self, message: str) -> None:
+        self._queue_notice_text = message
+        self.status_label.setText(message)
+
+    def clear_queue_notice(self) -> None:
+        if self._queue_notice_text and self.status_label.text() == self._queue_notice_text:
+            self.status_label.clear()
+        self._queue_notice_text = ""
+
     def _submit_search(self) -> None:
         query = self.search_edit.text().strip()
         if query and requires_ai_search(query):
@@ -2775,8 +2793,8 @@ class LibraryWidget(QWidget):
                 "라이브러리",
             )
             self.library_title_label.setText(self.library_title_label.fontMetrics().elidedText(
-                project_title, Qt.ElideRight, self.library_title_label.width()))
-            self.library_title_label.setToolTip(project_title)
+                project_title, Qt.ElideRight, self.library_title_label.width() - 40))
+            self.library_title_label.setToolTip(f"{project_title} · 프로젝트 선택")
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
@@ -3102,7 +3120,7 @@ class LibraryWidget(QWidget):
             self._update_translation_button(entry)
             self.translation_queued.emit(1)
             self.refresh(True)
-            self.status_label.setText(
+            self._set_queue_notice(
                 "AI 번역을 분석 대기열에 넣었습니다. 다른 AI 작업과 한 건씩 처리합니다."
             )
             return
@@ -3523,22 +3541,28 @@ class LibraryWidget(QWidget):
 
     def _queue_reanalysis(
         self, entries: list[LibraryEntry], *, high: bool = False
-    ) -> None:
+    ) -> int:
         try:
             queued, problems = self._controller.queue_reanalysis(entries, high=high)
         except Exception as exc:
             QMessageBox.warning(self, "재요약 요청 실패", str(exc))
-            return
-        self.status_label.setText(
+            return 0
+        message = (
             f"수동 재요약 {queued}건을 분석 대기열에 넣었습니다."
             + (f" · 제외 {len(problems)}건" if problems else "")
         )
+        if queued:
+            self._set_queue_notice(message)
+        else:
+            self._queue_notice_text = ""
+            self.status_label.setText(message)
         if problems:
             QMessageBox.warning(
                 self, "일부 재요약 요청 실패", "\n".join(problems[:10])
             )
         if queued:
             self.reanalysis_queued.emit(queued)
+        return queued
 
     def _approve_category(self) -> None:
         entry = self._selected()
@@ -3619,8 +3643,11 @@ class LibraryWidget(QWidget):
         self.refresh()
         self.metadata_changed.emit()
         if clicked is save_and_reanalyze:
-            self._queue_reanalysis([updated], high=True)
-            status += " 재요약을 분석 대기열에 넣었습니다."
+            queued = self._queue_reanalysis([updated], high=True)
+            if queued:
+                status += " 재요약을 분석 대기열에 넣었습니다."
+                self._set_queue_notice(status)
+                return
         self.status_label.setText(status)
 
     def _reverify_selected_bibliography(self) -> None:
@@ -3655,7 +3682,7 @@ class LibraryWidget(QWidget):
         decorate_action(projects_menu.menuAction(), "folder")
         for project in self.project_sidebar.projects:
             action = projects_menu.addAction(project["name"])
-            action.triggered.connect(lambda _checked=False, key=project["id"]: self._set_selected_project(key, True))
+            action.triggered.connect(lambda _checked=False, key=project["id"]: self._update_project_membership(entries, key, True))
         projects_menu.addSeparator()
         projects_menu.addAction("새 프로젝트에 추가…", self._create_project_with_selection)
         if self.project_sidebar.project_id:
@@ -3747,7 +3774,7 @@ class LibraryWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "프로젝트 변경 실패", str(exc))
             return
-        self.refresh()
+        self.refresh(True)
         if problems:
             QMessageBox.warning(self, "일부 논문 변경 실패", "\n".join(problems[:10]))
         if changed:

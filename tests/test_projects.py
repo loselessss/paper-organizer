@@ -152,3 +152,24 @@ class ProjectUiTests(unittest.TestCase):
             reopened = LibraryWidget(LibraryWorkflowController(Path(temp) / "settings.json"))
             self.assertEqual(reopened.table.columnWidth(0), 420)
             reopened.close()
+
+    def test_refresh_reads_membership_changed_by_another_controller(self):
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller = project_fixture(root)
+            key = controller.save_project("Project")
+            widget = LibraryWidget(controller)
+            widget.table.selectRow(0)
+            entry = widget._selected()
+            other = LibraryWorkflowController(root / "settings.json")
+            other.set_project_membership([entry], key, included=True)
+            self.assertNotIn(key, controller.list_library()[0].record["curation"].get("project_ids", []))
+            widget.refresh(True)
+            self.assertEqual(widget.project_membership_label.text(), "Project")
+            self.assertEqual(widget.project_sidebar.list.item(1).text(), "Project  (1)")
+            column = widget._column_index("projects")
+            self.assertEqual(widget.table.item(widget.table.currentRow(), column).text(), "Project")
+            widget.project_sidebar.list.setCurrentRow(1)
+            self.assertEqual(widget.table.rowCount(), 1)
+            widget.close()

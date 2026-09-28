@@ -120,6 +120,10 @@ class PaperOrganizerWindow(QMainWindow):
                 minimum_size=QSize(320, 240),
             )
             self.library_widget.project_sidebar.show()
+            self.library_widget.projects_requested.connect(self.toggle_projects)
+            self.library_widget.project_sidebar.close_requested.connect(
+                self._project_popup.hide
+            )
             self.library_widget.project_sidebar.project_changed.connect(
                 lambda _key: self._project_popup.hide()
             )
@@ -225,6 +229,12 @@ class PaperOrganizerWindow(QMainWindow):
             self._analysis_progress_bar.setRange(0, 1)
             self._analysis_progress_bar.setValue(0)
             self._analysis_progress_bar.setMaximumWidth(0)
+            if (
+                self.library_widget is not None
+                and self.queue_widget is not None
+                and not self.queue_widget.has_items()
+            ):
+                self.library_widget.clear_queue_notice()
 
     def changeEvent(self, event) -> None:
         if event.type() == event.WindowStateChange and self.isMinimized():
@@ -358,8 +368,6 @@ class PaperOrganizerWindow(QMainWindow):
             )
         if self._analysis_queue_popup is not None:
             add_command("분석 큐", "menu", self.toggle_analysis_queue)
-        if self._project_popup is not None:
-            add_command("프로젝트", "folder", self.toggle_projects)
 
         if self.library_widget is not None:
             ribbon.addSeparator()
@@ -532,7 +540,7 @@ class PaperOrganizerWindow(QMainWindow):
         if self._project_popup.isVisible():
             self._project_popup.hide()
             return
-        self.library_widget.project_sidebar.refresh(self._library_workflow.list_library())
+        self.library_widget.refresh(True)
         self._show_workflow_popup(self._project_popup)
 
     def _show_workflow_popup(self, popup: QFrame | None) -> None:
