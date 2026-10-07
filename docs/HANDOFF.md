@@ -27,7 +27,7 @@ CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 �
 번역 큐는 보존하고, 처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며
 AI 분석 날짜로 표시하지 않습니다. 기존 요약·사용자 수정값은 유지합니다.
 런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
-함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.33.12 (`450eea6`)로 고정했습니다.
+함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.34.8 (`4bc0e5d`)로 고정했습니다.
 서브모듈 경로는 호환성을 위해 `vendor/spdf`를 유지합니다. `spdf_bridge.open_pdf`는
 `workspace_mode="reader"`로 GPU 지원 TiledPageView를 사용하며 자체 업데이트를 끕니다.
 설치본에 `native/spdf_d2d_renderer.dll`을 포함하고, GUI 진입점에서

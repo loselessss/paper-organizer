@@ -54,7 +54,7 @@ class SpdfBridgeTests(unittest.TestCase):
 
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
-        self.assertEqual(spdf_version(), "1.33.12")
+        self.assertEqual(spdf_version(), "1.34.8")
 
     def test_submodule_uses_leaflet_source_repository(self):
         config = (Path(__file__).resolve().parents[1] / ".gitmodules").read_text(encoding="utf-8")
