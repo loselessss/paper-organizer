@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-organizer"
-version = "2.5.2"
+version = "2.5.3"
 description = "Local-first academic PDF organizer with portable paperpack archives"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "PyMuPDF>=1.24",
+  "PyMuPDF>=1.24,<2.0",
 ]
 
 [project.optional-dependencies]
