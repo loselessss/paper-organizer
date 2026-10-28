@@ -55,6 +55,7 @@ class FolderSettingsDialog(QDialog):
         self._lifecycle = lifecycle
         self._subcategory_overrides: dict[str, list[str]] = {}
         self.setWindowTitle("요약 감시 옵션")
+        self.setStyleSheet("QGroupBox { background: #f7f7f7; } QRadioButton { background: transparent; }")
         self.setMinimumWidth(920)
 
         root = QVBoxLayout(self)
@@ -71,6 +72,8 @@ class FolderSettingsDialog(QDialog):
         categories_root = QVBoxLayout(categories_panel)
         categories_root.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
         library_row, self.library_edit = self._path_row(self._browse_library)
 
         watch_group = QGroupBox("요약할 논문·특허 감시 폴더")

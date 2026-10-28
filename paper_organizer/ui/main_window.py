@@ -451,7 +451,7 @@ class PaperOrganizerWindow(QMainWindow):
             "cancel",
         )
         paperpack_menu.addSeparator()
-        export_action = paperpack_menu.addAction("PDF 환원…")
+        export_action = paperpack_menu.addAction("PDF 일괄 추출…")
         decorate_action(export_action, "pdf")
         export_action.triggered.connect(self.show_pdf_export)
         rebuild_action = paperpack_menu.addAction("검색 색인 재구축")
@@ -751,7 +751,11 @@ class PaperOrganizerWindow(QMainWindow):
     def show_pdf_export(self) -> None:
         if self._library_workflow is None:
             return
-        PdfExportDialog(self._library_workflow, self).exec_()
+        selected = (
+            [entry.sidecar_path for entry in self.library_widget._selected_entries()]
+            if self.library_widget is not None else None
+        )
+        PdfExportDialog(self._library_workflow, self, selected_sources=selected).exec_()
 
     def show_folder_settings(self) -> None:
         if self._library_workflow is None:

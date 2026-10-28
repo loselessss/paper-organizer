@@ -2607,9 +2607,9 @@ class LibraryWidget(QWidget):
         self.paperpack_manage_button.setText("PaperPack 관리")
         self.paperpack_manage_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.paperpack_manage_button.setPopupMode(QToolButton.InstantPopup)
-        self.paperpack_manage_button.setToolTip("PDF 환원, 검색 색인 재구축, 구버전 마이그레이션")
+        self.paperpack_manage_button.setToolTip("PDF 일괄 추출, 검색 색인 재구축, 구버전 마이그레이션")
         manage_menu = QMenu(self.paperpack_manage_button)
-        pdf_export_action = manage_menu.addAction("PDF 환원…")
+        pdf_export_action = manage_menu.addAction("PDF 일괄 추출…")
         decorate_action(pdf_export_action, "pdf")
         pdf_export_action.triggered.connect(self.pdf_export_requested.emit)
         rebuild_action = manage_menu.addAction("검색 색인 재구축")
@@ -3134,7 +3134,7 @@ class LibraryWidget(QWidget):
                 escape(f"{value.category} / {value.subcategory}"),
             ]
             self.bibliography_view.setText(
-                f"<p style='font-size:16px; margin:0 0 6px'>{escape(value.title)}</p>"
+                f"<p style='margin:0 0 8px'><b>{escape(value.title)}</b></p>"
                 + "<br>".join(part for part in details if part)
             )
         else:

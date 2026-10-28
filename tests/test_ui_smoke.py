@@ -57,7 +57,12 @@ class UiSmokeTests(unittest.TestCase):
         self.assertNotIn("QComboBox,\n        QSpinBox", stylesheet)
         self.assertNotIn("QComboBox:focus", stylesheet)
         self.assertNotIn("QSpinBox:focus", stylesheet)
-        self.assertIn("QCheckBox {\n            background: transparent;", stylesheet)
+        self.assertIn("QCheckBox, QRadioButton {\n            background: transparent;", stylesheet)
+        self.assertIn("QCheckBox::indicator:checked", stylesheet)
+        self.assertNotIn("__CHECK_ICON__", stylesheet)
+        from PyQt5.QtGui import QIcon
+        icon_path = Path(__file__).resolve().parents[1] / "paper_organizer/assets/checkbox-check.svg"
+        self.assertFalse(QIcon(str(icon_path)).pixmap(16, 16).isNull())
 
     def test_cuda_dialog_waits_for_explicit_download(self):
         from paper_organizer.ui.cuda_runtime_dialog import CudaRuntimeDialog
@@ -505,7 +510,7 @@ class UiSmokeTests(unittest.TestCase):
             ]
             self.assertEqual(
                 paperpack_visible_actions,
-                ["적용", "편집 취소", "PDF 환원…", "검색 색인 재구축"],
+                ["적용", "편집 취소", "PDF 일괄 추출…", "검색 색인 재구축"],
             )
             with mock.patch.object(
                 workflow_controller,
@@ -1866,7 +1871,7 @@ class UiSmokeTests(unittest.TestCase):
                     action.text()
                     for action in widget.paperpack_manage_button.menu().actions()
                 ],
-                ["PDF 환원…", "검색 색인 재구축", "구버전 PaperPack 마이그레이션"],
+                ["PDF 일괄 추출…", "검색 색인 재구축", "구버전 PaperPack 마이그레이션"],
             )
             self.assertEqual(widget.library_title_label.text(), "전체 라이브러리")
             self.assertEqual(widget.library_count_label.text(), "문서 2개")

@@ -34,6 +34,7 @@ include = ["paper_organizer*"]
 [tool.setuptools.package-data]
 paper_organizer = [
   "assets/*.png",
+  "assets/*.svg",
   "assets/*.ico",
   "assets/fonts/*.otf",
   "assets/fonts/*.txt",

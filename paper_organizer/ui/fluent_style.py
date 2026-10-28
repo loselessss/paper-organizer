@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import (
     QColor,
@@ -102,8 +104,28 @@ def apply_fluent_theme(app: QApplication | None) -> None:
             background: transparent;
         }
 
-        QCheckBox {
+        QCheckBox, QRadioButton {
             background: transparent;
+            spacing: 8px;
+        }
+
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #888888;
+            border-radius: 2px;
+            background: #ffffff;
+        }
+
+        QCheckBox::indicator:checked {
+            background: #555555;
+            border-color: #555555;
+            image: url("__CHECK_ICON__");
+        }
+
+        QCheckBox::indicator:disabled {
+            border-color: #c8c8c8;
+            background: #dddddd;
         }
 
         QMenuBar {
@@ -171,6 +193,28 @@ def apply_fluent_theme(app: QApplication | None) -> None:
         QToolBar#commandRibbon QToolButton:pressed {
             background: #e8e8e8;
             border-color: #d1d1d1;
+        }
+
+        QToolBar#commandRibbon QToolButton[popupMode="1"] {
+            padding-right: 24px;
+        }
+
+        QToolBar#commandRibbon QToolButton::menu-button {
+            subcontrol-origin: padding;
+            subcontrol-position: right center;
+            width: 18px;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid #e0e0e0;
+        }
+
+        QToolBar#commandRibbon QToolButton::menu-button:hover {
+            background: #e8e8e8;
+        }
+
+        QToolBar#commandRibbon QToolButton::menu-arrow {
+            width: 8px;
+            height: 8px;
         }
 
         QTabWidget::pane {
@@ -415,6 +459,7 @@ def apply_fluent_theme(app: QApplication | None) -> None:
         }
         """
         .replace("__UI_FONT_FAMILY__", ui_font_family)
+        .replace("__CHECK_ICON__", (Path(__file__).resolve().parents[1] / "assets" / "checkbox-check.svg").as_posix())
     )
     app.setProperty(_THEME_PROPERTY, True)
 
