@@ -34,3 +34,22 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("Paper Organizer 2.5.0 — 2026-09-16", notes)
         self.assertIn("matching source ZIP", notes)
         self.assertIn("함께 받을 수 있습니다", notes)
+
+    def test_full_notes_include_previous_feature_highlights(self):
+        changelog = "## [2.5.2] - 2026-10-27\n\n- Patch fix\n"
+        release_notes = (
+            "# Paper Organizer 2.5.2 — 2026-10-27\n\n"
+            "## 2.5.2 변경\n\n- Patch fix\n\n"
+            "## 2.5.0 주요 변경\n\n- Project support\n"
+        )
+        notes = render_release_notes(changelog, "2.5.2", release_notes)
+        self.assertEqual(notes.count("# Paper Organizer 2.5.2"), 1)
+        self.assertIn("## 2.5.0 주요 변경", notes)
+        self.assertIn("matching source ZIP", notes)
+
+    def test_full_notes_reject_mismatched_version(self):
+        changelog = "## [2.5.2] - 2026-10-27\n\n- Patch fix\n"
+        with self.assertRaisesRegex(ValueError, "버전과 날짜"):
+            render_release_notes(
+                changelog, "2.5.2", "# Paper Organizer 2.5.1 — 2026-09-27\n\n- Old notes"
+            )

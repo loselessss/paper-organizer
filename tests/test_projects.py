@@ -131,6 +131,45 @@ class ProjectUiTests(unittest.TestCase):
             self.assertEqual(sorted(widget.table.item(row, project_column).text() for row in range(2)), ["", "Second"])
             widget.close()
 
+    def test_detail_project_menu_updates_current_paper(self):
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+
+        with tempfile.TemporaryDirectory() as temp:
+            controller = project_fixture(Path(temp))
+            first = controller.save_project("First")
+            second = controller.save_project("Second")
+            widget = LibraryWidget(controller)
+            widget.table.selectRow(0)
+            paper_path = widget._selected().sidecar_path
+
+            for name in ("First", "Second"):
+                widget._populate_project_membership_menu()
+                action = next(
+                    item for item in widget.project_membership_menu.actions()
+                    if item.text() == name
+                )
+                self.assertFalse(action.isChecked())
+                action.trigger()
+
+            self.assertEqual(widget.project_membership_label.text(), "First · Second")
+            self.assertEqual(
+                set(load_paperpack_metadata(paper_path)["curation"]["project_ids"]),
+                {first, second},
+            )
+            widget._populate_project_membership_menu()
+            first_action = next(
+                item for item in widget.project_membership_menu.actions()
+                if item.text() == "First"
+            )
+            self.assertTrue(first_action.isChecked())
+            first_action.trigger()
+            self.assertEqual(widget.project_membership_label.text(), "Second")
+            self.assertEqual(
+                load_paperpack_metadata(paper_path)["curation"]["project_ids"],
+                [second],
+            )
+            widget.close()
+
     def test_column_widths_shared_between_projects_and_reopening(self):
         from paper_organizer.ui.library_workflow_widget import LibraryWidget
         with tempfile.TemporaryDirectory() as temp:

@@ -4,7 +4,7 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: 2.5.1 릴리스 흐름. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
+- 상태: 2.5.2 릴리스 흐름. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
   전환했고, 모델·API 키 없이 서지정보와 초록만 입력하는 전용 모드를 추가했습니다.
 - 현재 개발 범위: 내장 로컬 AI 런타임·모델 다운로드, 선택 CUDA 설치,
   bibliography-only 처리, PubMed/Crossref 서지 검증, 라이브러리 열 설정,

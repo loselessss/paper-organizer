@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 import zipfile
 
+from paper_organizer import __version__
 from scripts.create_release_source import _safe_archive_name, build_information, create_release_source
 
 
@@ -42,12 +43,12 @@ class ReleaseSourceTests(unittest.TestCase):
             (root / "app.py").write_text("app = True\n", encoding="utf-8")
             git(root, "add", "app.py", "vendor/spdf")
             git(root, "commit", "-m", "release")
-            git(root, "tag", "v2.5.1")
+            git(root, "tag", f"v{__version__}")
             with patch("scripts.create_release_source._package_inventory", return_value=[]):
-                archive = create_release_source(root, "2.5.1")
+                archive = create_release_source(root, __version__)
             with zipfile.ZipFile(archive) as source:
                 names = set(source.namelist())
-            self.assertIn("PaperOrganizer-2.5.1/app.py", names)
-            self.assertIn("PaperOrganizer-2.5.1/vendor/spdf/reader.py", names)
-            self.assertIn("PaperOrganizer-2.5.1/DEPENDENCY_SOURCES_AND_BUILD.md", names)
+            self.assertIn(f"PaperOrganizer-{__version__}/app.py", names)
+            self.assertIn(f"PaperOrganizer-{__version__}/vendor/spdf/reader.py", names)
+            self.assertIn(f"PaperOrganizer-{__version__}/DEPENDENCY_SOURCES_AND_BUILD.md", names)
             self.assertTrue(Path(str(archive) + ".sha256").is_file())

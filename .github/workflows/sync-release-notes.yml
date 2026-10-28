@@ -29,6 +29,7 @@ jobs:
         shell: bash
         run: |
           python scripts/extract_release_notes.py "${{ steps.version.outputs.value }}" --full \
+            --release-notes RELEASE_NOTES.md \
             > release-notes.md
 
       - name: Update existing release

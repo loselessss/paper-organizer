@@ -59,8 +59,11 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          python scripts/extract_release_notes.py $version --full |
-            Set-Content -Encoding utf8 -LiteralPath release-notes.md
+          $notes = python scripts/extract_release_notes.py $version --full --release-notes RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($notes -join ""))) {
+            throw "Release notes could not be generated"
+          }
+          $notes | Set-Content -Encoding utf8 -LiteralPath release-notes.md
 
       - name: Preserve release assets as workflow artifact
         uses: actions/upload-artifact@v6
@@ -105,6 +108,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (Compare-Object $expected $actual) {
             throw "Draft release assets do not match the required set"
+          }
+          $publishedNotes = gh release view $tag --json body --jq '.body'
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($publishedNotes -join ""))) {
+            throw "Draft release notes are empty"
           }
           gh release edit $tag --draft=false --latest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

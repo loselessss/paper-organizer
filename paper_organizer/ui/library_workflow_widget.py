@@ -2482,7 +2482,22 @@ class LibraryWidget(QWidget):
         self.project_membership_label.setMinimumWidth(0)
         self.project_membership_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.project_membership_label.setContentsMargins(6, 4, 6, 4)
-        self.form._form_layout.addRow("프로젝트", self.project_membership_label)
+        self.project_membership_button = QToolButton()
+        decorate_button(self.project_membership_button, "folder")
+        self.project_membership_button.setToolTip("소속 프로젝트 선택")
+        self.project_membership_button.setAccessibleName("소속 프로젝트 선택")
+        self.project_membership_button.setFixedSize(32, 28)
+        self.project_membership_button.setPopupMode(QToolButton.InstantPopup)
+        self.project_membership_menu = QMenu(self.project_membership_button)
+        self.project_membership_menu.aboutToShow.connect(self._populate_project_membership_menu)
+        self.project_membership_button.setMenu(self.project_membership_menu)
+        project_field = QWidget()
+        project_row = QHBoxLayout(project_field)
+        project_row.setContentsMargins(0, 0, 0, 0)
+        project_row.setSpacing(6)
+        project_row.addWidget(self.project_membership_label, 1)
+        project_row.addWidget(self.project_membership_button)
+        self.form._form_layout.addRow("프로젝트", project_field)
         self.form.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.form.set_metadata(None)
         detail_layout.addWidget(self.form, 1)
@@ -3155,6 +3170,7 @@ class LibraryWidget(QWidget):
         return False
 
     def _render_analysis(self, entry: LibraryEntry | None) -> None:
+        self.project_membership_button.setEnabled(entry is not None)
         project_ids = set(entry.record.get("curation", {}).get("project_ids", [])) if entry else set()
         names = sorted(
             (project["name"] for project in self.project_sidebar.projects if project["id"] in project_ids),
@@ -3760,6 +3776,33 @@ class LibraryWidget(QWidget):
 
     def _set_selected_project(self, project_id: str, included: bool) -> None:
         self._update_project_membership(self._selected_entries(), project_id, included)
+
+    def _populate_project_membership_menu(self) -> None:
+        menu = self.project_membership_menu
+        menu.clear()
+        entry = self._selected()
+        if entry is None:
+            return
+        project_ids = set(entry.record.get("curation", {}).get("project_ids", []))
+        for project in self.project_sidebar.projects:
+            action = menu.addAction(project["name"])
+            action.setCheckable(True)
+            action.setChecked(project["id"] in project_ids)
+            action.triggered.connect(
+                lambda checked, key=project["id"], paper=entry:
+                    self._update_project_membership([paper], key, checked)
+            )
+        if self.project_sidebar.projects:
+            menu.addSeparator()
+        menu.addAction("새 프로젝트에 추가…", self._create_project_for_current)
+
+    def _create_project_for_current(self) -> None:
+        entry = self._selected()
+        if entry is None:
+            return
+        key = self.project_sidebar.edit_project()
+        if key:
+            self._update_project_membership([entry], key, True)
 
     def _create_project_with_selection(self) -> None:
         entries = self._selected_entries()
