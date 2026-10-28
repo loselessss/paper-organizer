@@ -727,10 +727,31 @@ class _BackgroundAnalysisWorker(QThread):
         self.queue_changed.emit()
 
 
+class _TransientNotice(QLabel):
+    """Show a temporary result without presenting it as ongoing work."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.clear)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+        self.timer.start(10000) if text else self.timer.stop()
+
+    def clear(self):
+        self.timer.stop()
+        super().clear()
+        self.setToolTip("")
+
+
 class MetadataForm(QGroupBox):
     def __init__(self, title: str, parent=None, *, compact: bool = False) -> None:
         super().__init__(title, parent)
         self._compact = compact
+        self._reading_rows = []
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         if not title:
             self.setFlat(True)
@@ -820,6 +841,23 @@ class MetadataForm(QGroupBox):
             form.addRow(self.subcategory_label, self.subcategory_edit)
             form.addRow(self.tags_label, self.tags_edit)
 
+    def set_reading_mode(self, reading: bool) -> None:
+        if reading and not self._reading_rows:
+            last = self._form_layout.getWidgetPosition(self.category_row)[0]
+            for _ in range(last + 1):
+                result = self._form_layout.takeRow(0)
+                label = result.labelItem.widget()
+                field = result.fieldItem.widget()
+                self._reading_rows.append((label, field))
+                label.hide()
+                field.hide()
+        elif not reading and self._reading_rows:
+            for index, (label, field) in enumerate(self._reading_rows):
+                self._form_layout.insertRow(index, label, field)
+                label.show()
+                field.show()
+            self._reading_rows = []
+
     def set_analysis_rows(self, rows: list[tuple[str, str]]) -> None:
         self.clear_analysis_rows()
         for label_text, body in rows:
@@ -886,6 +924,7 @@ class MetadataForm(QGroupBox):
         return min(170, max(82, 34 + estimated_lines * 21))
 
     def set_metadata(self, metadata: EditablePaperMetadata | None) -> None:
+        self.set_reading_mode(False)
         value = metadata or EditablePaperMetadata()
         self.title_edit.setText(value.title)
         self.authors_edit.setText(", ".join(value.authors))
@@ -2371,10 +2410,21 @@ class LibraryWidget(QWidget):
         self.library_title_label.clicked.connect(self.projects_requested.emit)
         self.library_title_label.setFixedWidth(180)
         self.library_title_label.setObjectName("libraryTitleLabel")
+        self.library_title_label.setArrowType(Qt.DownArrow)
+        self.library_title_label.setAccessibleName("프로젝트 선택")
+        self.all_library_button = QToolButton()
+        decorate_button(self.all_library_button, "restore")
+        self.all_library_button.setToolTip("전체 라이브러리")
+        self.all_library_button.setAccessibleName("전체 라이브러리")
+        self.all_library_button.setFixedSize(32, 32)
+        self.all_library_button.setStyleSheet("QToolButton { padding: 0; min-height: 0; }")
+        self.all_library_button.clicked.connect(
+            lambda: self.project_sidebar.list.setCurrentRow(0)
+        )
         self.library_count_label = QLabel("문서 0개")
         self.library_count_label.setFixedWidth(90)
         self.library_count_label.setObjectName("libraryCountLabel")
-        self.status_label = QLabel("")
+        self.status_label = _TransientNotice(self)
         self._queue_notice_text = ""
         self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -2394,6 +2444,7 @@ class LibraryWidget(QWidget):
         self.search_edit.returnPressed.connect(self._submit_search)
         self.search_edit.textChanged.connect(self._search_text_changed)
         search_row.addWidget(self.library_title_label)
+        search_row.addWidget(self.all_library_button)
         search_row.addWidget(self.library_count_label)
         search_row.addSpacing(8)
         search_row.addWidget(self.search_edit, 1)
@@ -2467,6 +2518,14 @@ class LibraryWidget(QWidget):
         save_row.setContentsMargins(0, 0, 0, 0)
         save_row.setSpacing(6)
         save_row.addStretch(1)
+        self.edit_metadata_button = QPushButton("색인 편집")
+        decorate_button(self.edit_metadata_button, "edit")
+        self.edit_metadata_button.clicked.connect(lambda: self._set_detail_editing(True))
+        self.cancel_metadata_button = QPushButton("취소")
+        decorate_button(self.cancel_metadata_button, "cancel")
+        self.cancel_metadata_button.clicked.connect(self._selection_changed)
+        save_row.addWidget(self.edit_metadata_button)
+        save_row.addWidget(self.cancel_metadata_button)
         save_row.addWidget(self.reverify_bibliography_button)
         save_row.addWidget(self.save_button)
         detail_layout.addLayout(save_row)
@@ -2474,6 +2533,14 @@ class LibraryWidget(QWidget):
         self.type_suggestion_label.setWordWrap(True)
         self.type_suggestion_label.setVisible(False)
         detail_layout.addWidget(self.type_suggestion_label)
+        self.bibliography_view = QLabel()
+        self.bibliography_view.setTextFormat(Qt.RichText)
+        self.bibliography_view.setWordWrap(True)
+        self.bibliography_view.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.bibliography_view.setMinimumWidth(0)
+        self.bibliography_view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.bibliography_view.setContentsMargins(6, 4, 6, 8)
+        detail_layout.addWidget(self.bibliography_view)
         self.form = MetadataForm("", compact=True)
         self.project_membership_label = QLabel("논문을 선택하세요")
         self.project_membership_label.setTextFormat(Qt.PlainText)
@@ -2486,7 +2553,8 @@ class LibraryWidget(QWidget):
         decorate_button(self.project_membership_button, "folder")
         self.project_membership_button.setToolTip("소속 프로젝트 선택")
         self.project_membership_button.setAccessibleName("소속 프로젝트 선택")
-        self.project_membership_button.setFixedSize(32, 28)
+        self.project_membership_button.setFixedSize(36, 32)
+        self.project_membership_button.setStyleSheet("QToolButton { padding: 0 7px 0 0; min-height: 0; }")
         self.project_membership_button.setPopupMode(QToolButton.InstantPopup)
         self.project_membership_menu = QMenu(self.project_membership_button)
         self.project_membership_menu.aboutToShow.connect(self._populate_project_membership_menu)
@@ -2630,6 +2698,15 @@ class LibraryWidget(QWidget):
             aggregate.append(f"<h3>{html.escape(label)}</h3>{body}")
         self.analysis_view.setHtml(_analysis_html(aggregate))
         self.form.set_analysis_rows(rows)
+
+    def _set_detail_editing(self, editing: bool) -> None:
+        self.form.set_reading_mode(not editing)
+        self.bibliography_view.setVisible(not editing)
+        self.edit_metadata_button.setVisible(not editing)
+        self.cancel_metadata_button.setVisible(editing)
+        self.save_button.setVisible(editing)
+        if editing:
+            self.form.title_edit.setFocus()
 
     def _search_text_changed(self, text: str) -> None:
         if not text.strip():
@@ -2805,11 +2882,12 @@ class LibraryWidget(QWidget):
                     if project_id in entry.record.get("curation", {}).get("project_ids", [])]
             project_title = next(
                 (p["name"] for p in self.project_sidebar.projects if p["id"] == project_id),
-                "라이브러리",
+                "전체 라이브러리",
             )
             self.library_title_label.setText(self.library_title_label.fontMetrics().elidedText(
                 project_title, Qt.ElideRight, self.library_title_label.width() - 40))
             self.library_title_label.setToolTip(f"{project_title} · 프로젝트 선택")
+            self.all_library_button.setEnabled(bool(project_id))
         except Exception as exc:
             self.status_label.setText(f"라이브러리 읽기 실패: {exc}")
             return
@@ -2965,6 +3043,7 @@ class LibraryWidget(QWidget):
             self.delete_button.setEnabled(False)
             self.permanent_delete_button.setEnabled(False)
             self.reanalyze_selected_button.setEnabled(False)
+            self._selection_changed()
 
     def _update_search_result_bar(self, query: str) -> None:
         if query:
@@ -3042,6 +3121,26 @@ class LibraryWidget(QWidget):
                 self.translation_button.setChecked(False)
                 self.translation_button.blockSignals(False)
         self.form.set_metadata(entry.metadata if entry else None)
+        value = entry.metadata if entry else None
+        if value:
+            escape = html.escape
+            details = [
+                escape(", ".join(value.authors)),
+                " · ".join(escape(str(part)) for part in
+                           ({"patent": "특허", "review_paper": "리뷰논문"}.get(value.document_type, "연구논문"),
+                            value.year, value.venue, value.patent_office,
+                            value.publication_number or value.application_number,
+                            value.assignee) if part),
+                escape(f"{value.category} / {value.subcategory}"),
+            ]
+            self.bibliography_view.setText(
+                f"<p style='font-size:16px; margin:0 0 6px'>{escape(value.title)}</p>"
+                + "<br>".join(part for part in details if part)
+            )
+        else:
+            self.bibliography_view.setText("논문을 선택하세요")
+        self.edit_metadata_button.setEnabled(entry is not None)
+        self._set_detail_editing(False)
         candidate = (
             self._controller.suggested_document_type(entry)
             if entry and hasattr(self._controller, "suggested_document_type")

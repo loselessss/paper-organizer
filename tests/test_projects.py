@@ -170,6 +170,52 @@ class ProjectUiTests(unittest.TestCase):
             )
             widget.close()
 
+    def test_reading_edit_cancel_and_empty_selection(self):
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+        with tempfile.TemporaryDirectory() as temp:
+            widget = LibraryWidget(project_fixture(Path(temp)))
+            widget.table.selectRow(0)
+            original = widget._selected().metadata.title
+            self.assertIn(original, widget.bibliography_view.text())
+            self.assertTrue(widget.form.title_edit.isHidden())
+            self.assertTrue(widget.save_button.isHidden())
+            widget.edit_metadata_button.click()
+            self.assertFalse(widget.form.title_edit.isHidden())
+            widget.form.title_edit.setText("Unsaved")
+            widget.cancel_metadata_button.click()
+            self.assertEqual(widget.form.title_edit.text(), original)
+            self.assertTrue(widget.form.title_edit.isHidden())
+            for _ in range(3):
+                widget.refresh()
+            widget.edit_metadata_button.click()
+            self.assertEqual(widget.form._form_layout.getWidgetPosition(widget.form.title_edit)[0], 0)
+            widget.search_edit.setText("no matches")
+            widget.refresh()
+            self.assertEqual(widget.bibliography_view.text(), "논문을 선택하세요")
+            self.assertFalse(widget.edit_metadata_button.isEnabled())
+            widget.close()
+
+    def test_navigation_return_and_notice_expiry(self):
+        from paper_organizer.ui.library_workflow_widget import LibraryWidget
+        with tempfile.TemporaryDirectory() as temp:
+            controller = project_fixture(Path(temp))
+            controller.save_project("Project")
+            widget = LibraryWidget(controller)
+            widget.project_sidebar.list.setCurrentRow(1)
+            self.assertTrue(widget.all_library_button.isEnabled())
+            widget.all_library_button.click()
+            self.assertEqual(widget.project_sidebar.project_id, "")
+            self.assertEqual(widget.table.rowCount(), 2)
+            widget._set_queue_notice("Queued")
+            self.assertTrue(widget.status_label.timer.isActive())
+            widget.status_label.timer.timeout.emit()
+            self.assertEqual(widget.status_label.text(), "")
+            self.assertEqual(widget.status_label.toolTip(), "")
+            widget.status_label.setText("Latest result")
+            widget.clear_queue_notice()
+            self.assertEqual(widget.status_label.text(), "Latest result")
+            widget.close()
+
     def test_column_widths_shared_between_projects_and_reopening(self):
         from paper_organizer.ui.library_workflow_widget import LibraryWidget
         with tempfile.TemporaryDirectory() as temp:

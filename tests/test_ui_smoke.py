@@ -464,11 +464,6 @@ class UiSmokeTests(unittest.TestCase):
                 [
                     "새 PDF",
                     "분석 큐",
-                    "감시 설정",
-                    "AI 설정",
-                    "업데이트",
-                    "단축키",
-                    "정보",
                 ],
             )
             ribbon_menus = [
@@ -478,7 +473,12 @@ class UiSmokeTests(unittest.TestCase):
             ]
             self.assertEqual(
                 ribbon_menus,
-                ["PDF 열기", "AI 번역", "PaperPack", "삭제", "재요약"],
+                ["PDF 열기", "AI 번역", "PaperPack", "삭제", "재요약", "설정"],
+            )
+            self.assertEqual(
+                [a.text() for a in window.settings_menu_button.menu().actions()
+                 if not a.isSeparator()],
+                ["감시 설정", "AI 설정", "업데이트", "단축키", "정보"],
             )
             reanalysis_menu = next(
                 button.menu()
@@ -1868,7 +1868,7 @@ class UiSmokeTests(unittest.TestCase):
                 ],
                 ["PDF 환원…", "검색 색인 재구축", "구버전 PaperPack 마이그레이션"],
             )
-            self.assertEqual(widget.library_title_label.text(), "라이브러리")
+            self.assertEqual(widget.library_title_label.text(), "전체 라이브러리")
             self.assertEqual(widget.library_count_label.text(), "문서 2개")
             self.assertNotIn("라이브러리 문서", widget.status_label.text())
             self.assertEqual(widget.form.title(), "")
@@ -1879,6 +1879,7 @@ class UiSmokeTests(unittest.TestCase):
                 detail_layout.indexOf(widget.form),
             )
             form_labels = []
+            widget.edit_metadata_button.click()
             for row in range(widget.form._form_layout.rowCount()):
                 item = widget.form._form_layout.itemAt(row, QFormLayout.LabelRole)
                 label = item.widget() if item is not None else None

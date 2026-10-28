@@ -374,14 +374,28 @@ class PaperOrganizerWindow(QMainWindow):
             self._create_library_ribbon_menus(ribbon)
 
         ribbon.addSeparator()
-        if self._library_workflow is not None:
-            add_command("감시 설정", "folder", self.show_folder_settings)
-        add_command("AI 설정", "settings", self.show_ai_settings)
+        self.settings_menu_button = QToolButton(self)
+        self.settings_menu_button.setText("설정")
+        self.settings_menu_button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.settings_menu_button.setPopupMode(QToolButton.InstantPopup)
+        decorate_button(self.settings_menu_button, "settings")
+        settings_menu = QMenu(self.settings_menu_button)
+        self.settings_menu_button.setMenu(settings_menu)
+        ribbon.addWidget(self.settings_menu_button)
 
-        ribbon.addSeparator()
-        add_command("업데이트", "download", lambda: self.check_for_updates(True))
-        add_command("단축키", "select", self._show_shortcuts)
-        add_command("정보", "help", self._show_about)
+        def add_setting(text, icon, slot):
+            action = settings_menu.addAction(text)
+            decorate_action(action, icon)
+            action.triggered.connect(slot)
+
+        if self._library_workflow is not None:
+            add_setting("감시 설정", "folder", self.show_folder_settings)
+        add_setting("AI 설정", "settings", self.show_ai_settings)
+
+        settings_menu.addSeparator()
+        add_setting("업데이트", "download", lambda: self.check_for_updates(True))
+        add_setting("단축키", "select", self._show_shortcuts)
+        add_setting("정보", "help", self._show_about)
         self._sync_library_ribbon_actions()
 
     def _create_library_ribbon_menus(self, ribbon: QToolBar) -> None:
@@ -410,6 +424,9 @@ class PaperOrganizerWindow(QMainWindow):
             return action
 
         _button, spdf_menu = add_menu_button("PDF 열기", "open")
+        _button.setPopupMode(QToolButton.MenuButtonPopup)
+        _button.clicked.connect(self.library_widget.open_button.click)
+        _button.setToolTip("선택한 PDF 열기")
         add_button_action(spdf_menu, self.library_widget.open_button, "open")
         add_button_action(spdf_menu, self.library_widget.open_with_ai_button, "ai")
         add_button_action(spdf_menu, self.library_widget.selection_ai_button, "ai")
