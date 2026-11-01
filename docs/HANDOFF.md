@@ -4,7 +4,7 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: 2.6.0 개발 중. 라이브러리 상세 읽기/편집 전환, 프로젝트 탐색,
+- 상태: 2.6.0 릴리스 준비. 라이브러리 상세 읽기/편집 전환, 프로젝트 탐색,
   임시 작업 알림, 설정 메뉴 통합을 적용했습니다. 릴리스 완료 후 처음 들어온
   작업의 규모에 맞춰 버전을 올리고 푸시하며, 다음 릴리스 전까지 같은 버전의
   변경 기록을 누적합니다. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
@@ -30,7 +30,7 @@ CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 �
 번역 큐는 보존하고, 처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며
 AI 분석 날짜로 표시하지 않습니다. 기존 요약·사용자 수정값은 유지합니다.
 런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
-함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.37.1 (`e453a39`)로 고정했습니다.
+함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.37.3 (`96242f4`)로 고정했습니다.
 서브모듈 경로는 호환성을 위해 `vendor/spdf`를 유지합니다. `spdf_bridge.open_pdf`는
 `workspace_mode="reader"`로 GPU 지원 TiledPageView를 사용하며 자체 업데이트를 끕니다.
 설치본에 `native/spdf_d2d_renderer.dll`을 포함하고, GUI 진입점에서
