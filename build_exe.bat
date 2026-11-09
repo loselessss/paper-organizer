@@ -10,13 +10,18 @@ if not exist ".venv\Scripts\python.exe" (
 ".venv\Scripts\python.exe" scripts\prepare_llama_runtime.py --smoke
 if errorlevel 1 exit /b %errorlevel%
 
+".venv\Scripts\python.exe" vendor\spdf\native\build_path_packer.py
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" vendor\spdf\native\build_mupdf_path.py
+if errorlevel 1 exit /b %errorlevel%
+
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean paper-organizer.spec
 if errorlevel 1 exit /b %errorlevel%
 
 ".venv\Scripts\python.exe" scripts\prepare_llama_runtime.py --verify "dist\PaperOrganizer\_internal\llm" --smoke
 if errorlevel 1 exit /b %errorlevel%
 
-if not exist "dist\PaperOrganizer-ocr\spdf-ocr.exe" (
+if not exist "dist\PaperOrganizer-ocr\leaflet-ocr.exe" (
   echo [ERROR] The isolated sPDF OCR worker was not built.
   exit /b 1
 )

@@ -1,0 +1,38 @@
+name: Windows build check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Prepare build environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -e .[gui,build]
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo --version
+      - name: Build application without publishing
+        run: cmd /c build_exe.bat
+      - name: Check packaged reader workers
+        run: .\.venv\Scripts\python.exe scripts/check_leaflet_bundle.py
+      - name: Preserve native reader modules
+        uses: actions/upload-artifact@v6
+        with:
+          name: leaflet-native-windows
+          retention-days: 7
+          path: |
+            vendor/spdf/pdfeditor/_path_packer.pyd
+            vendor/spdf/native/bin/leaflet_mupdf_path.dll
+            vendor/spdf/native/bin/leaflet-gpu-scene-worker.exe
+            vendor/spdf/native/bin/path-packer-legal/

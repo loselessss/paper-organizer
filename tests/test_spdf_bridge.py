@@ -54,7 +54,18 @@ class SpdfBridgeTests(unittest.TestCase):
 
     def test_submodule_and_version_are_detected_without_importing_pyqt(self):
         self.assertTrue(spdf_available())
-        self.assertEqual(spdf_version(), "1.37.3")
+        self.assertEqual(spdf_version(), "1.39.1")
+
+    def test_headless_workers_are_dispatched_before_gui_startup(self):
+        from paper_organizer.gui import main
+        for flag, module in (("--pdf-layout-worker", "layout_worker"),
+                             ("--ocr-render-worker", "ocr_render_worker")):
+            with self.subTest(flag=flag):
+                worker = types.ModuleType(f"pdfeditor.{module}")
+                worker.main = Mock(return_value=0)
+                with patch.dict("sys.modules", {f"pdfeditor.{module}": worker}), patch("sys.argv", ["app", flag]), patch("paper_organizer.integrations.spdf_bridge._ensure_import_path"):
+                    self.assertEqual(main(), 0)
+                worker.main.assert_called_once()
 
     def test_submodule_uses_leaflet_source_repository(self):
         config = (Path(__file__).resolve().parents[1] / ".gitmodules").read_text(encoding="utf-8")

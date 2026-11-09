@@ -39,6 +39,9 @@ jobs:
       - name: Build Windows installer
         run: cmd /c build_installer.bat
 
+      - name: Check packaged reader workers
+        run: .\.venv\Scripts\python.exe scripts/check_leaflet_bundle.py
+
       - name: Create SHA-256 file
         shell: pwsh
         run: |

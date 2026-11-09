@@ -6,6 +6,15 @@ import sys
 
 
 def main() -> int:
+    if "--pdf-layout-worker" in sys.argv[1:] or "--ocr-render-worker" in sys.argv[1:]:
+        from paper_organizer.integrations.spdf_bridge import _ensure_import_path
+        _ensure_import_path()
+        if "--pdf-layout-worker" in sys.argv[1:]:
+            from pdfeditor.layout_worker import main as worker_main
+            index = sys.argv.index("--pdf-layout-worker")
+            return worker_main(sys.argv[index + 1:])
+        from pdfeditor.ocr_render_worker import main as worker_main
+        return worker_main()
     if "--gpu-scene-worker" in sys.argv[1:]:
         from paper_organizer.integrations.spdf_bridge import _ensure_import_path
         _ensure_import_path()

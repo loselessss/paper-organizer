@@ -28,12 +28,12 @@ class ReleaseNotesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "찾지 못했습니다"):
             extract_release_notes("## [1.0.0]\n\n- first\n", "2.0.0")
 
-    def test_full_notes_point_installers_and_sources_to_same_assets(self):
+    def test_full_notes_do_not_add_asset_instructions(self):
         changelog = "## [2.5.0] - 2026-09-16\n\n- Project support\n"
         notes = render_release_notes(changelog, "2.5.0")
         self.assertIn("Paper Organizer 2.5.0 — 2026-09-16", notes)
-        self.assertIn("matching source ZIP", notes)
-        self.assertIn("함께 받을 수 있습니다", notes)
+        self.assertEqual(notes, "# Paper Organizer 2.5.0 — 2026-09-16\n\n- Project support\n")
+        self.assertNotIn("Assets", notes)
 
     def test_full_notes_include_previous_feature_highlights(self):
         changelog = "## [2.5.2] - 2026-10-27\n\n- Patch fix\n"
@@ -45,7 +45,7 @@ class ReleaseNotesTests(unittest.TestCase):
         notes = render_release_notes(changelog, "2.5.2", release_notes)
         self.assertEqual(notes.count("# Paper Organizer 2.5.2"), 1)
         self.assertIn("## 2.5.0 주요 변경", notes)
-        self.assertIn("matching source ZIP", notes)
+        self.assertEqual(notes, release_notes)
 
     def test_full_notes_reject_mismatched_version(self):
         changelog = "## [2.5.2] - 2026-10-27\n\n- Patch fix\n"

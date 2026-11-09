@@ -61,15 +61,7 @@ def render_release_notes(
         details = "\n".join(lines[1:]).strip()
         if not details:
             raise ValueError("RELEASE_NOTES.md의 변경 내용이 비어 있습니다.")
-    intro = (
-        "Windows installers and their matching source ZIP, source checksum, and "
-        "dependency/build information are available together under Assets.\n\n"
-        "Windows 설치 파일과 대응 소스 ZIP, 소스 체크섬, 의존성·빌드 정보는 "
-        "아래 Assets에서 함께 받을 수 있습니다."
-    )
-    return (
-        f"{heading}\n\n{intro}\n\n{details}\n"
-    )
+    return f"{heading}\n\n{details}\n"
 
 
 def main() -> int:

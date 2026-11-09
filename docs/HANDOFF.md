@@ -4,7 +4,7 @@
 되고, Claude Code나 GPT Codex 같은 코딩 에이전트에게 그대로 물려줘도 됩니다.
 
 - 대상 브랜치: `main`
-- 상태: 2.6.0 릴리스 준비. 라이브러리 상세 읽기/편집 전환, 프로젝트 탐색,
+- 상태: 2.6.1 개발 중. 라이브러리 상세 읽기/편집 전환, 프로젝트 탐색,
   임시 작업 알림, 설정 메뉴 통합을 적용했습니다. 릴리스 완료 후 처음 들어온
   작업의 규모에 맞춰 버전을 올리고 푸시하며, 다음 릴리스 전까지 같은 버전의
   변경 기록을 누적합니다. 기본 로컬 AI를 Ollama에서 앱 내장 GGUF 런타임으로
@@ -12,6 +12,13 @@
 - 현재 개발 범위: 내장 로컬 AI 런타임·모델 다운로드, 선택 CUDA 설치,
   bibliography-only 처리, PubMed/Crossref 서지 검증, 라이브러리 열 설정,
   PaperPack 서지·분석 표시 정리, sPDF 국제판 연동, README/HANDOFF 문서 정리.
+
+2.6.1에서 RapidOCR 3.10.0, ONNX Runtime 1.31.1, PyInstaller 6.22.3과
+hooks 2026.9를 갱신했습니다. Leaflet 1.39.1에 맞춰 PyMuPDF 2.1을 고정하고
+NumPy 2.5.4, Pillow 13, Qt sip 12.20을 적용했습니다. PyMuPDF layout은
+GUI Analysis에서 제외하고 데이터로 수집하며 headless 작업은 Qt 훅을 건너뜁니다.
+llama.cpp는 별도 실행 검증 전까지 b10715를 유지합니다.
+릴리스 노트에는 Assets 안내 문단을 자동 삽입하지 않습니다.
 
 ---
 
@@ -30,7 +37,12 @@ CUDA는 기본 설치에서 제외합니다. 사용자가 AI 설정의 선택 �
 번역 큐는 보존하고, 처리 결과는 PaperPack의 `workflow.bibliography_*`에 저장하며
 AI 분석 날짜로 표시하지 않습니다. 기존 요약·사용자 수정값은 유지합니다.
 런타임 버전 변경 시 `infra/llama_bundle.py`의 버전·해시와 `embedded_llm_runtime.py`의 개발 경로를
-함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.37.3 (`96242f4`)로 고정했습니다.
+함께 갱신하세요. sPDF의 후속 프로젝트 Leaflet은 1.39.1 (`c4070cc`)로 고정했습니다.
+새 native 엔진은 Rust MSVC와 Visual Studio C++ Build Tools가 필요합니다.
+`build_exe.bat`에서 upstream의 Rust compiler/worker와 MuPDF bridge를 빌드하며,
+작업 프로세스와 런타임 DLL, Rust 의존 라이선스를 함께 패키징합니다.
+로컬에 Rust가 없으면 GitHub Actions의 Windows build check를 수동 실행해
+패키징과 실제 PDF raster/GPU worker를 확인합니다. 이 검사는 릴리스를 게시하지 않습니다.
 서브모듈 경로는 호환성을 위해 `vendor/spdf`를 유지합니다. `spdf_bridge.open_pdf`는
 `workspace_mode="reader"`로 GPU 지원 TiledPageView를 사용하며 자체 업데이트를 끕니다.
 설치본에 `native/spdf_d2d_renderer.dll`을 포함하고, GUI 진입점에서

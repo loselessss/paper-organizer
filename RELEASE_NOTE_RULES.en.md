@@ -19,6 +19,7 @@ Release notes are shown directly in the app update window and on GitHub Releases
 - Example: if `1.5.1` follows `1.5.0`, include both `1.5.0 Highlights` and `1.5.1 Fixes`.
 - Do not include internal validation, CI, build environment changes, or workflow maintenance.
 - Do not include installer filenames, hashes, or test pass status unless users need them to decide whether to update.
+- Do not automatically prepend Assets download, source ZIP, or checksum instructions to the body.
 
 ## Style
 

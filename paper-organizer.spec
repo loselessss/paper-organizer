@@ -4,7 +4,8 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 
 sys.path.insert(0, os.path.abspath("vendor/spdf"))
@@ -15,6 +16,22 @@ from paper_organizer.infra.llama_bundle import BUNDLE_DIR, VULKAN_DIR, validate_
 validate_bundle(BUNDLE_DIR)
 validate_bundle(VULKAN_DIR, backend="vulkan")
 
+from tools.build.build_payload import native_worker_runtime_binaries, prefer_ocr_runtimes, runtime_ssl_datas
+import pymupdf
+from PyQt5.QtCore import QLibraryInfo
+
+native = Path("vendor/spdf/native/bin")
+scene_worker = native / "leaflet-gpu-scene-worker.exe"
+mupdf_bridge = native / "leaflet_mupdf_path.dll"
+for required in (scene_worker, mupdf_bridge, Path("vendor/spdf/pdfeditor/_path_packer.pyd")):
+    if not required.is_file():
+        raise FileNotFoundError(f"Build the Leaflet native modules first: {required}")
+worker_runtimes = native_worker_runtime_binaries(
+    scene_worker, mupdf_bridge, Path(pymupdf.__file__).parent / "mupdfcpp64.dll",
+    search_paths=[str(Path(pymupdf.__file__).parent), sys.base_prefix,
+                  QLibraryInfo.location(QLibraryInfo.BinariesPath)],
+)
+
 
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
 for package in ("rapidocr", "onnxruntime"):
@@ -22,7 +39,7 @@ for package in ("rapidocr", "onnxruntime"):
     ocr_datas += datas
     ocr_bins += binaries
     ocr_hidden += hidden
-ocr_hidden += ["cv2", "numpy", "fitz", "pdfeditor.ocr_subprocess"]
+ocr_hidden += ["cv2", "numpy", "pdfeditor.ocr_subprocess"]
 
 _OCR_MODELS = (
     "PP-OCRv6_det_small.onnx",
@@ -47,15 +64,16 @@ a_ocr = Analysis(
     binaries=ocr_bins,
     datas=ocr_datas,
     hiddenimports=ocr_hidden,
-    excludes=["PyQt5", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle"],
+    excludes=["PyQt5", "pymupdf", "fitz", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle", "PIL.AvifImagePlugin"],
 )
+a_ocr.binaries = prefer_ocr_runtimes(a_ocr.binaries)
 pyz_ocr = PYZ(a_ocr.pure)
 exe_ocr = EXE(
     pyz_ocr,
     a_ocr.scripts,
     [],
     exclude_binaries=True,
-    name="spdf-ocr",
+    name="leaflet-ocr",
     console=True,
 )
 coll_ocr = COLLECT(
@@ -77,22 +95,35 @@ main_datas = [
     ("vendor/spdf/pdfeditor", "vendor/spdf/pdfeditor"),
     ("vendor/spdf/assets/spdf.ico", "assets"),
     ("vendor/spdf/assets/spdf_doc.ico", "assets"),
+    ("vendor/spdf/assets/leaflet_ai.ico", "assets"),
+    ("vendor/spdf/assets/leaflet_eps.ico", "assets"),
     ("vendor/spdf/LICENSES.md", "."),
     ("SOURCE_CODE.md", "."),
     ("vendor/spdf/licenses", "licenses"),
+    ("vendor/spdf/native/bin/path-packer-legal", "third-party/leaflet-path-packer"),
     *llm_datas,
+    *runtime_ssl_datas(),
+    *collect_data_files("pymupdf", include_py_files=True, includes=["layout/**"]),
 ]
 a_gui = Analysis(
     ["run_gui.py"],
     pathex=[".", "vendor/spdf"],
-    binaries=[("vendor/spdf/native/bin/spdf_d2d_renderer.dll", "native")],
+    runtime_hooks=["vendor/spdf/tools/build/rth_headless_workers.py"],
+    binaries=[("vendor/spdf/native/bin/spdf_d2d_renderer.dll", "native"),
+              (str(scene_worker), "native"), (str(mupdf_bridge), "native"),
+              ("vendor/spdf/pdfeditor/_path_packer.pyd", "pdfeditor"), *worker_runtimes],
     datas=main_datas,
     hiddenimports=[
         "fitz",
         "keyring.backends.Windows",
+        "pymupdf.features",
+        "packaging.version",
+        "yaml",
         *spdf_hidden,
     ],
     excludes=[
+        "pymupdf.layout",
+        "PIL.AvifImagePlugin",
         "rapidocr",
         "onnxruntime",
         "cv2",
@@ -103,6 +134,7 @@ a_gui = Analysis(
         "matplotlib",
     ],
 )
+a_gui.binaries = prefer_ocr_runtimes(a_gui.binaries)
 pyz_gui = PYZ(a_gui.pure)
 exe_gui = EXE(
     pyz_gui,

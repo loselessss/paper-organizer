@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable
+from collections import deque
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock, Thread
@@ -94,7 +95,7 @@ def _run_ocr_page_texts(
     if not pages:
         return [""] * page_count
     if getattr(sys, "frozen", False):
-        command = [str(Path(sys.executable).parent / "ocr" / "spdf-ocr.exe")]
+        command = [str(Path(sys.executable).parent / "ocr" / "leaflet-ocr.exe")]
         environment = sanitized_child_environment()
     else:
         command = [sys.executable, "-m", "paper_organizer.ocr_worker_main"]
@@ -157,6 +158,16 @@ def _run_ocr_page_texts(
 
         reader = Thread(target=read_stdout, daemon=True)
         reader.start()
+        diagnostics = deque(maxlen=16)
+
+        def read_stderr() -> None:
+            if process.stderr is not None:
+                while chunk := process.stderr.read(4096):
+                    diagnostics.append(chunk)
+
+        # OCR/native libraries may fill stderr before producing their first page.
+        error_reader = Thread(target=read_stderr, daemon=True)
+        error_reader.start()
         deadline = time.monotonic() + timeout_seconds
         recognized: dict[int, list[str]] = {}
         error = ""
@@ -195,7 +206,8 @@ def _run_ocr_page_texts(
                 error = str(event.get("message") or "")
         reader.join(timeout=1)
         return_code = process.wait(timeout=max(1, int(deadline - time.monotonic())))
-        stderr = process.stderr.read().strip() if process.stderr is not None else ""
+        error_reader.join(timeout=1)
+        stderr = "".join(diagnostics).strip()
         if return_code or error:
             raise BackgroundOcrError(redact_text(error or stderr or "OCR worker failed"))
         return ["\n".join(recognized.get(page, [])) for page in range(page_count)]

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 
 def _limit_background_runtime() -> None:
@@ -34,6 +36,11 @@ def _limit_background_runtime() -> None:
 
 def main() -> int:
     _limit_background_runtime()
+    if getattr(sys, "frozen", False):
+        from pdfeditor import ocr_page_source
+        # The hosted OCR process renders PDFs through the organizer executable.
+        executable = Path(sys.executable).resolve().parent.parent / "PaperOrganizer.exe"
+        ocr_page_source.renderer_command = lambda: [str(executable), "--ocr-render-worker"]
     from pdfeditor.ocr_subprocess import main as spdf_ocr_main
 
     return spdf_ocr_main()

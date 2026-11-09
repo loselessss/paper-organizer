@@ -32,7 +32,7 @@ class PackagingTests(unittest.TestCase):
         spec = (ROOT / "paper-organizer.spec").read_text(encoding="utf-8")
         build_script = (ROOT / "build_exe.bat").read_text(encoding="utf-8")
 
-        self.assertIn('name="spdf-ocr"', spec)
+        self.assertIn('name="leaflet-ocr"', spec)
         self.assertIn("paper_organizer/ocr_worker_main.py", spec)
         self.assertIn("korean_PP-OCRv5_rec_mobile.onnx", spec)
         self.assertIn("llama-server.exe", spec)
@@ -44,6 +44,15 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn('"llm/cuda"', spec)
         self.assertIn("PaperOrganizer-ocr", build_script)
         self.assertIn("PaperOrganizer\\ocr", build_script)
+        self.assertIn("leaflet-ocr.exe", build_script)
+        self.assertIn("native/build_path_packer.py".replace("/", "\\"), build_script)
+        self.assertIn("native/build_mupdf_path.py".replace("/", "\\"), build_script)
+        self.assertIn("leaflet-gpu-scene-worker.exe", spec)
+        self.assertIn("leaflet_mupdf_path.dll", spec)
+        self.assertIn("pdfeditor/_path_packer.pyd", spec)
+        self.assertIn("rth_headless_workers.py", spec)
+        self.assertIn('"pymupdf.layout"', spec)
+        self.assertIn("path-packer-legal", spec)
 
     def test_version_tags_build_and_publish_a_windows_installer(self):
         workflow = (

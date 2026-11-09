@@ -4,24 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-organizer"
-version = "2.6.0"
+version = "2.6.1"
 description = "Local-first academic PDF organizer with portable paperpack archives"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "PyMuPDF>=1.24,<2.0",
+  "PyMuPDF==2.1",
 ]
 
 [project.optional-dependencies]
-gui = ["PyQt5>=5.15", "keyring>=25"]
+gui = ["PyQt5>=5.15", "PyQt5-sip>=12.20.0", "keyring>=25"]
 cloud = ["keyring>=25"]
 build = [
-  "pyinstaller>=6.15",
-  "numpy>=2",
+  "pyinstaller>=6.22.3",
+  "pyinstaller-hooks-contrib>=2026.9",
+  "numpy>=2.5.4,<3",
   "opencv-python-headless>=4.11",
-  "onnxruntime>=1.22",
-  "rapidocr>=3",
-  "pillow>=10",
+  "onnxruntime>=1.31.1",
+  "rapidocr>=3.10.0",
+  "pillow>=13.0.0",
 ]
 
 [project.scripts]
