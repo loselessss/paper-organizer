@@ -1,4 +1,4 @@
-# Paper Organizer 2.6.1 — 2026-11-09
+# Paper Organizer 2.6.1 — 2026-11-10
 
 ## 2.6.1 변경
 
